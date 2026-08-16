@@ -17,6 +17,7 @@ from auto_cpufreq.config.config import config
 from auto_cpufreq.globals import (
     ALL_GOVERNORS, AVAILABLE_GOVERNORS, AVAILABLE_GOVERNORS_SORTED, GITHUB, IS_INSTALLED_WITH_AUR, IS_INSTALLED_WITH_SNAP, POWER_SUPPLY_DIR, SNAP_DAEMON_CHECK
 )
+from auto_cpufreq.powercap import apply_configured_rapl_power_limits
 from auto_cpufreq.power_helper import *
 
 filterwarnings("ignore")
@@ -663,6 +664,7 @@ def set_powersave():
 
     set_energy_perf_bias(conf, "battery")
     set_platform_profile(conf, "battery")
+    apply_configured_rapl_power_limits(conf, "battery")
     global last_applied_config_section
     last_applied_config_section = "battery"
 
@@ -781,6 +783,7 @@ def set_performance():
     
     set_energy_perf_bias(conf, "charger")
     set_platform_profile(conf, "charger")
+    apply_configured_rapl_power_limits(conf, "charger")
     global last_applied_config_section
     last_applied_config_section = "charger"
 

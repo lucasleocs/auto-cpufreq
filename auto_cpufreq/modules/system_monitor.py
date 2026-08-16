@@ -16,6 +16,26 @@ class ViewType(str, Enum):
         return self.value
 
 
+def _format_rapl_limits(
+    limits: dict[str, int],
+    show_order: bool = False,
+) -> str:
+    long_term = limits.get("long_term")
+    short_term = limits.get("short_term")
+
+    if long_term is not None and short_term is not None:
+        formatted = (
+            f"{long_term / 1_000_000:g} / "
+            f"{short_term / 1_000_000:g} W"
+        )
+        return f"{formatted} (long / short)" if show_order else formatted
+
+    return ", ".join(
+        f"{name.replace('_', '-')}: {value / 1_000_000:g} W"
+        for name, value in limits.items()
+    )
+
+
 class SystemMonitor:
     def __init__(self, type: ViewType, suggestion: bool = False):
         self.type: ViewType = type
@@ -229,6 +249,61 @@ class SystemMonitor:
                     f"Intel HWP Dynamic Boost: {'on' if report.current_hwp_dynamic_boost else 'off'}"
                 )
             )
+
+        if report.current_rapl_power_limits:
+            configured = set(report.configured_rapl_power_limits)
+
+            if not configured:
+                source = "default"
+            elif configured == {"long_term", "short_term"}:
+                source = "custom"
+            else:
+                source = "partial"
+
+            zone_limits = list(report.current_rapl_power_limits.values())
+            limits_match = all(
+                limits == zone_limits[0]
+                for limits in zone_limits[1:]
+            )
+
+            if limits_match:
+                limits = zone_limits[0]
+                long_term = limits.get("long_term")
+                short_term = limits.get("short_term")
+
+                if long_term is not None and short_term is not None:
+                    zone_names = ", ".join(
+                        name.removeprefix("intel-")
+                        for name in report.current_rapl_power_limits
+                    )
+                    self.right_content.extend(
+                        [
+                            aligned_text(
+                                f"Intel RAPL ({zone_names}) [{source}]:"
+                            ),
+                            aligned_text(
+                                f"  {_format_rapl_limits(limits, show_order=True)}"
+                            ),
+                        ]
+                    )
+                else:
+                    self.right_content.append(
+                        aligned_text(
+                            f"Intel RAPL [{source}]: "
+                            f"{_format_rapl_limits(limits)}"
+                        )
+                    )
+            else:
+                self.right_content.append(
+                    aligned_text(f"Intel RAPL [{source}]:")
+                )
+
+                for zone_name, limits in report.current_rapl_power_limits.items():
+                    self.right_content.append(
+                        aligned_text(
+                            f"  {zone_name}: {_format_rapl_limits(limits)}"
+                        )
+                    )
 
         if report.current_epb:
             self.right_content.append(

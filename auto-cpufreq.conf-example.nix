@@ -36,6 +36,14 @@ services.auto-cpufreq.settings = {
     # - false: Sets profile only on AC/Battery changes, allowing manual overrides (e.g., Fn+Q on Legion laptops).
     # enforce_platform_profile = true;
 
+    # Intel RAPL package power limits, specified in watts (W).
+    # Each configured limit is applied to all enabled Intel RAPL package
+    # zones exposing the corresponding constraint.
+    # If an option is omitted, auto-cpufreq does not change that limit.
+    # Decimal values are supported using "." as the decimal separator, for example: 17.5 W
+    # rapl_long_term_power_limit_w = 18;
+    # rapl_short_term_power_limit_w = 30;
+
     # minimum cpu frequency (in kHz)
     # example: for 800 MHz = 800000 kHz --> scaling_min_freq = 800000
     # see conversion info: https://www.rapidtables.com/convert/frequency/mhz-to-hz.html
@@ -99,6 +107,14 @@ services.auto-cpufreq.settings = {
     # - true: Constantly enforces the platform profile defined above.
     # - false: Sets profile only on AC/Battery changes, allowing manual overrides (e.g., Fn+Q on Legion laptops).
     # enforce_platform_profile = true;
+
+    # Intel RAPL package power limits, specified in watts (W).
+    # Each configured limit is applied to all enabled Intel RAPL package
+    # zones exposing the corresponding constraint.
+    # If an option is omitted, auto-cpufreq does not change that limit.
+    # Decimal values are supported using "." as the decimal separator, for example: 17.5 W
+    # rapl_long_term_power_limit_w = 15;
+    # rapl_short_term_power_limit_w = 22;
 
     # minimum cpu frequency (in kHz)
     # example: for 800 MHz = 800000 kHz --> scaling_min_freq = 800000
