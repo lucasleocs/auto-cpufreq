@@ -3,14 +3,19 @@ import os
 from pathlib import Path
 import platform
 from subprocess import getoutput
-from typing import Tuple, List
+from typing import Dict, List, Tuple
 import psutil
 import distro
 from pathlib import Path
 from auto_cpufreq.config.config import config
 from auto_cpufreq.core import (
     get_hwp_dynamic_boost,
+    get_override,
     get_power_supply_ignore_list,
+)
+from auto_cpufreq.powercap import (
+    get_configured_rapl_power_limits,
+    get_rapl_package_power_limits,
 )
 from auto_cpufreq.globals import (
     AVAILABLE_GOVERNORS_SORTED,
@@ -58,6 +63,8 @@ class SystemReport:
     current_epp: str | None
     current_epb: str | None
     current_hwp_dynamic_boost: bool | None
+    current_rapl_power_limits: Dict[str, Dict[str, int]]
+    configured_rapl_power_limits: Dict[str, int]
     cpu_driver: str
     cpu_fan_speed: int | None
     cpu_usage: float
@@ -68,6 +75,20 @@ class SystemReport:
     cores_info: list[CoreInfo]
     battery_info: BatteryInfo
     is_turbo_on: Tuple[bool | None, bool | None]
+
+
+def _effective_config_profile(
+    is_ac_plugged: bool | None,
+) -> str:
+    override = get_override()
+
+    if override == "powersave":
+        return "battery"
+
+    if override == "performance":
+        return "charger"
+
+    return "charger" if is_ac_plugged else "battery"
 
 
 class SystemInfo:
@@ -355,6 +376,9 @@ class SystemInfo:
 
     def generate_system_report(self) -> SystemReport:
         battery_info = self.battery_info()
+        effective_profile = _effective_config_profile(
+            battery_info.is_ac_plugged
+        )
 
         return SystemReport(
             distro_name=self.distro_name,
@@ -368,6 +392,12 @@ class SystemInfo:
             current_epp=self.current_epp(battery_info.is_ac_plugged),
             current_epb=self.current_epb(battery_info.is_ac_plugged),
             current_hwp_dynamic_boost=get_hwp_dynamic_boost(),
+            current_rapl_power_limits=get_rapl_package_power_limits(),
+            configured_rapl_power_limits=get_configured_rapl_power_limits(
+                config.get_config(),
+                effective_profile,
+                warn=False,
+            ),
             cpu_fan_speed=self.cpu_fan_speed(),
             cpu_usage=self.cpu_usage(),
             cpu_max_freq=self.cpu_max_freq(),

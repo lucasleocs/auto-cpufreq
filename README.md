@@ -354,6 +354,77 @@ By default, auto-cpufreq does not use a config file. If you wish to configure au
 2. User-specific configuration: `$XDG_CONFIG_HOME/auto-cpufreq/auto-cpufreq.conf`
 3. System-wide configuration: `/etc/auto-cpufreq.conf`
 
+#### Intel RAPL package power limits
+
+On Intel systems exposing RAPL package power constraints through the Linux
+powercap interface, auto-cpufreq can optionally manage long-term and short-term
+package power limits independently for charger and battery profiles.
+
+The values are specified as positive numbers in watts (`W`). Decimal values are supported using "." as the decimal separator:
+
+```ini
+[charger]
+rapl_long_term_power_limit_w = 18
+rapl_short_term_power_limit_w = 30
+
+[battery]
+rapl_long_term_power_limit_w = 15
+rapl_short_term_power_limit_w = 22
+```
+
+For example, `17.5` represents a 17.5 W power limit.
+
+The long-term and short-term limits are independent. If either option is
+omitted, auto-cpufreq leaves that limit unchanged. Values are converted to
+microwatts internally for the Linux powercap interface.
+
+Values are validated for format and write/readback success, but auto-cpufreq
+does not impose hardware-specific power bounds. Intel RAPL power limits use
+hardware-defined power units, so a configured value that cannot be represented
+exactly may be quantized slightly downward by the kernel/hardware. The effective
+value is reported in `--stats`, `--live`, and `--monitor`.
+
+RAPL power limits provide a different control from disabling Turbo Boost.
+On supported hardware, they can keep Turbo available for short, bursty
+workloads while constraining package power through the configured long-
+and short-term limits.
+
+auto-cpufreq discovers Intel RAPL control types, package zones, and constraints
+dynamically through the Linux powercap interface. Package identifiers and
+constraint indices are not hardcoded, and both direct and control-type-nested
+sysfs layouts are supported.
+
+Some systems expose the same package through multiple control types, such as
+the MSR-backed `intel-rapl` interface and the platform/MMIO-backed
+`intel-rapl-mmio` interface. These controls can expose different limits and
+may be changed independently by firmware or other software. A configured limit
+is therefore applied to every enabled compatible package zone exposing the
+corresponding constraint.
+
+Only the configured long-term and short-term package limits are managed.
+Other constraints, such as `peak_power`, and existing RAPL time windows are
+left unchanged.
+
+If `thermald.service` is active and applying the configured limits would
+require a write, auto-cpufreq leaves RAPL package limits under thermald's
+control instead of competing with it. Normal RAPL profile application resumes
+when thermald is no longer active.
+
+The current RAPL state is visible in `--stats`, `--live`, and `--monitor`.
+`[default]` means that the current profile does not configure RAPL limits in
+auto-cpufreq; the displayed values are the limits currently exposed by the
+system. `[custom]` means that both long- and short-term limits are configured,
+while `[partial]` means that only one of them is configured.
+
+This initial implementation targets Intel RAPL package power constraints.
+Write access to the Linux powercap sysfs interface is required. Firmware may
+expose some constraints as read-only or lock them in the BIOS; in that case,
+auto-cpufreq cannot override those limits.
+
+Strictly confined packages may also restrict powercap sysfs writes. In
+particular, RAPL power-limit control may not be available when auto-cpufreq is
+installed through Snap.
+
 #### Example config file contents
 
 Configured to run in full performance mode when connected to a power source (charger) and never drop below 2 GHz. When running on battery, all settings will be configured automatically by auto-cpufreq based on all above mentioned criteria.
@@ -394,6 +465,16 @@ platform_profile = performance
 # - true: Constantly enforces the platform profile defined above.
 # - false: Sets profile only on AC/Battery changes, allowing manual overrides (e.g., Fn+Q on Legion laptops).
 enforce_platform_profile = true
+
+# Intel RAPL package power limits, specified in watts (W).
+# Each configured limit is applied to all enabled compatible Intel RAPL package
+# zones exposing the corresponding constraint, including multiple package
+# control types such as MSR and MMIO when present.
+# If thermald is active, auto-cpufreq leaves RAPL writes to thermald.
+# If an option is omitted, auto-cpufreq does not change that limit.
+# Decimal values are supported using "." as the decimal separator, for example: 17.5 W
+# rapl_long_term_power_limit_w = 18
+# rapl_short_term_power_limit_w = 30
 
 # minimum cpu frequency (in kHz)
 # example: for 800 MHz = 800000 kHz --> scaling_min_freq = 800000
@@ -445,6 +526,16 @@ turbo = always
 # - true: Constantly enforces the platform profile defined above.
 # - false: Sets profile only on AC/Battery changes, allowing manual overrides (e.g., Fn+Q on Legion laptops).
 # enforce_platform_profile = true
+
+# Intel RAPL package power limits, specified in watts (W).
+# Each configured limit is applied to all enabled compatible Intel RAPL package
+# zones exposing the corresponding constraint, including multiple package
+# control types such as MSR and MMIO when present.
+# If thermald is active, auto-cpufreq leaves RAPL writes to thermald.
+# If an option is omitted, auto-cpufreq does not change that limit.
+# Decimal values are supported using "." as the decimal separator, for example: 17.5 W
+# rapl_long_term_power_limit_w = 15
+# rapl_short_term_power_limit_w = 22
 
 # minimum cpu frequency (in kHz)
 # example: for 800 MHz = 800000 kHz --> scaling_min_freq = 800000
