@@ -578,6 +578,18 @@ def set_energy_perf_bias(conf, profile):
     print(f'Setting to use: "{epb}" EPB')
 
 
+INTEL_PSTATE_STATUS_PATH = Path(
+    "/sys/devices/system/cpu/intel_pstate/status"
+)
+
+
+def intel_pstate_active():
+    try:
+        return INTEL_PSTATE_STATUS_PATH.read_text().strip() == "active"
+    except OSError:
+        return False
+
+
 def set_powersave():
     conf = config.get_config()
     gov = conf["battery"]["governor"] if conf.has_option("battery", "governor") else AVAILABLE_GOVERNORS_SORTED[-1]
@@ -595,7 +607,11 @@ def set_powersave():
                 os.popen("cat /sys/devices/system/cpu/intel_pstate/hwp_dynamic_boost").read()
             ))
 
+        pstate_active = intel_pstate_active()
+
         if dynboost_enabled: print('Not setting EPP (dynamic boosting is enabled)')
+        elif pstate_active and gov == "performance":
+            print('Not setting EPP (intel_pstate performance governor controls EPP as "performance")')
         else:
             if conf.has_option("battery", "energy_performance_preference"):
                 epp = conf["battery"]["energy_performance_preference"]
@@ -679,22 +695,19 @@ def set_performance():
                     os.popen("cat /sys/devices/system/cpu/intel_pstate/hwp_dynamic_boost").read()
                 ))
 
-            if dynboost_enabled: print('Not setting EPP (dynamic boosting is enabled)')
-            else:
-                intel_pstate_status_path = "/sys/devices/system/cpu/intel_pstate/status"
+            pstate_active = intel_pstate_active()
 
+            if dynboost_enabled: print('Not setting EPP (dynamic boosting is enabled)')
+            elif pstate_active and gov == "performance":
+                print('Not setting EPP (intel_pstate performance governor controls EPP as "performance")')
+            else:
                 if conf.has_option("charger", "energy_performance_preference"):
                     epp = conf["charger"]["energy_performance_preference"]
-
-                    if Path(intel_pstate_status_path).exists() and open(intel_pstate_status_path, 'r').read().strip() == "active" and epp != "performance" and gov == "performance":
-                        print(f'Warning "{epp}" EPP cannot be used in performance governor')
-                        print('Overriding EPP to "performance"')
-                        epp = "performance"
 
                     run(f"cpufreqctl.auto-cpufreq --epp --set={epp}", shell=True)
                     print(f'Setting to use: "{epp}" EPP')
                 else:
-                    if Path(intel_pstate_status_path).exists() and open(intel_pstate_status_path, 'r').read().strip() == "active":
+                    if pstate_active:
                         run("cpufreqctl.auto-cpufreq --epp --set=performance", shell=True)
                         print('Setting to use: "performance" EPP')
                     else:
