@@ -160,23 +160,41 @@ elif [ -f /etc/os-release ];then
 
   venv_dir=$VENV_PATH/venv
   mkdir -p "$venv_dir"
-  python3 -m venv --system-site-packages "$venv_dir"
+  if ! python3 -m venv --system-site-packages "$venv_dir"; then
+    echo "ERROR: Failed to create the auto-cpufreq Python environment." >&2
+    return 1
+  fi
 
-  source "$venv_dir/bin/activate"
-  python3 -m pip install --upgrade pip wheel
+  if ! source "$venv_dir/bin/activate"; then
+    echo "ERROR: Failed to activate the auto-cpufreq Python environment." >&2
+    return 1
+  fi
 
+  if ! python3 -m pip install --upgrade pip wheel; then
+    echo "ERROR: Failed to prepare Python packaging tools." >&2
+    return 1
+  fi
 
   # debian specific PyGObject Installation
   if [ -f /etc/debian_version ] && [ "$PYGOBJECT_VER" = "3.50.0" ]; then
-    python3 -m pip install PyGObject==3.50.0
+    if ! python3 -m pip install PyGObject==3.50.0; then
+      echo "ERROR: Failed to install the required PyGObject package." >&2
+      return 1
+    fi
   else
-    python3 -m pip install PyGObject
+    if ! python3 -m pip install PyGObject; then
+      echo "ERROR: Failed to install the required PyGObject package." >&2
+      return 1
+    fi
   fi
 
   header "Installing auto-cpufreq tool"
-  
+
   git config --global --add safe.directory $(pwd)
-  python -m pip install .
+  if ! python -m pip install .; then
+    echo "ERROR: Failed to install the auto-cpufreq Python package." >&2
+    return 1
+  fi
 
   mkdir -p $SHARE_DIR
   cp -r scripts/ $SHARE_DIR
