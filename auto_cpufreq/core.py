@@ -862,9 +862,14 @@ def set_hwp_dynamic_boost(enabled):
 
 def set_powersave():
     conf = config.get_config()
-    gov = conf["battery"]["governor"] if conf.has_option("battery", "governor") else AVAILABLE_GOVERNORS_SORTED[-1]
+    override = get_override()
+    gov = override if override in ("powersave", "performance") else (
+        conf["battery"]["governor"]
+        if conf.has_option("battery", "governor")
+        else AVAILABLE_GOVERNORS_SORTED[-1]
+    )
     print(f'Setting to use: "{gov}" governor')
-    if get_override() != "default": print("Warning: governor overwritten using `--force` flag.")
+    if override != "default": print("Warning: governor overwritten using `--force` flag.")
     try:
         result = run(
             ["cpufreqctl.auto-cpufreq", "--governor", f"--set={gov}"]
@@ -958,10 +963,15 @@ def mon_powersave():
 
 def set_performance():
     conf = config.get_config()
-    gov = conf["charger"]["governor"] if conf.has_option("charger", "governor") else AVAILABLE_GOVERNORS_SORTED[0]
+    override = get_override()
+    gov = override if override in ("powersave", "performance") else (
+        conf["charger"]["governor"]
+        if conf.has_option("charger", "governor")
+        else AVAILABLE_GOVERNORS_SORTED[0]
+    )
 
     print(f'Setting to use: "{gov}" governor')
-    if get_override() != "default": print("Warning: governor overwritten using `--force` flag.")
+    if override != "default": print("Warning: governor overwritten using `--force` flag.")
     try:
         result = run(
             ["cpufreqctl.auto-cpufreq", "--governor", f"--set={gov}"]
@@ -1119,11 +1129,8 @@ def set_autofreq():
     """
     print("\n" + "-" * 28 + " CPU frequency scaling " + "-" * 28 + "\n")
 
-    # determine which governor should be used
-    override = get_override()
-    if override == "powersave": set_powersave()
-    elif override == "performance": set_performance()
-    elif charging():
+    # determine which power profile should be used
+    if charging():
         print("Battery is: charging\n")
         set_performance()
     else:
