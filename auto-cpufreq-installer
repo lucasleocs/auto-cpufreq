@@ -190,8 +190,10 @@ elif [ -f /etc/os-release ];then
 
   header "Installing auto-cpufreq tool"
 
-  git config --global --add safe.directory $(pwd)
-  if ! python -m pip install .; then
+  git_config_global="$(mktemp)" || return 1
+  trap 'rm -f "$git_config_global"' EXIT
+  git config --file "$git_config_global" --add safe.directory "$(pwd)" || return 1
+  if ! GIT_CONFIG_GLOBAL="$git_config_global" python -m pip install .; then
     echo "ERROR: Failed to install the auto-cpufreq Python package." >&2
     return 1
   fi
