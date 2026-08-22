@@ -55,8 +55,7 @@ case "$(ps h -o comm 1)" in
     echo -e "\n* Reloading systemd manager configuration"
     systemctl daemon-reload
 
-    echo "reset failed"
-    systemctl reset-failed
+    systemctl reset-failed auto-cpufreq.service > /dev/null 2>&1 || true
   ;;
   s6-svscan)
     auto_cpufreq_remove "s6" "" "s6-service delete default auto-cpufreq" "-rf /etc/s6/sv/auto-cpufreq"
