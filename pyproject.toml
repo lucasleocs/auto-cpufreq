@@ -21,7 +21,7 @@ packages = [
 ]
 
 [tool.poetry.dependencies]
-python = ">=3.9, <4.0"
+python = ">=3.10, <4.0"
 psutil = ">=6.0.0,<8.0.0"
 click = "^8.1.0"
 distro = "^1.8.0"

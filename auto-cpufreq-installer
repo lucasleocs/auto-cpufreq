@@ -43,7 +43,7 @@ function manual_install {
 
 	echo "Didn't detect Debian or RedHat or Arch based distro."; echo
   echo "To complete installation, you need to:"
-  echo "Install: python3, pip3, python3-setuptools, gobject-introspection, cairo (or cairo-devel), gcc, and gtk3"; echo
+  echo "Install: python3 (3.10 or newer), pip3, python3-setuptools, gobject-introspection, cairo (or cairo-devel), gcc, and gtk3"; echo
   echo "Install necessary Python packages:"
   echo "pip3 install psutil click distro power requests PyGObject"
   echo "Run following sequence of lines:"; echo
@@ -154,6 +154,12 @@ elif [ -f /etc/os-release ];then
     esac
   else # In case /etc/os-release doesn't exist
     manual_install
+  fi
+
+  if ! python3 -c 'import sys; raise SystemExit(sys.version_info < (3, 10))'; then
+    echo "ERROR: auto-cpufreq requires Python 3.10 or newer."
+    echo "Detected: $(python3 --version 2>&1)"
+    exit 1
   fi
 
   header "Installing necessary Python packages"
