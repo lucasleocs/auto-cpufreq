@@ -76,6 +76,12 @@ function tool_install {
     header "Setting up Python environment"
   }
 
+  if ! python3 -c 'import sys; raise SystemExit(sys.version_info < (3, 10))'; then
+    echo "ERROR: auto-cpufreq requires Python 3.10 or newer."
+    echo "Detected: $(python3 --version 2>&1)"
+    exit 1
+  fi
+
   if [ -f /etc/debian_version ]; then  
     detected_distro "Debian based"
     VERSION=$(cat /etc/debian_version) 
@@ -154,12 +160,6 @@ elif [ -f /etc/os-release ];then
     esac
   else # In case /etc/os-release doesn't exist
     manual_install
-  fi
-
-  if ! python3 -c 'import sys; raise SystemExit(sys.version_info < (3, 10))'; then
-    echo "ERROR: auto-cpufreq requires Python 3.10 or newer."
-    echo "Detected: $(python3 --version 2>&1)"
-    exit 1
   fi
 
   header "Installing necessary Python packages"
