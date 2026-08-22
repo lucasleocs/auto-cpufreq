@@ -6,7 +6,7 @@
 
 # core import
 import sys, time, os
-from subprocess import run
+from subprocess import call, run
 from shutil import rmtree
 
 from auto_cpufreq.battery_scripts.battery import *
@@ -16,7 +16,35 @@ from auto_cpufreq.globals import GITHUB, IS_INSTALLED_WITH_AUR, IS_INSTALLED_WIT
 from auto_cpufreq.modules.system_monitor import ViewType, SystemMonitor
 # import everything from power_helper, including bluetooth_disable and bluetooth_enable
 from auto_cpufreq.power_helper import *
-from threading import Thread
+from threading import Event, Thread
+
+
+def _live_service_restore_state():
+    """Capture services that Live mode should restore on exit."""
+    gnome_was_active = gnome_power_is_active()
+    tuned_was_active = False
+    if systemctl_exists and tuned_stat_exists:
+        try:
+            tuned_was_active = (
+                call(["systemctl", "is-active", "--quiet", "tuned"]) == 0
+            )
+        except (OSError, FileNotFoundError):
+            pass
+    return gnome_was_active, tuned_was_active
+
+
+def _run_live_optimizer(stop_event):
+    while not stop_event.wait(1):
+        original_stdout = sys.stdout
+        try:
+            with open(os.devnull, "w") as null_writer:
+                sys.stdout = null_writer
+                set_autofreq()
+        except Exception:
+            return
+        finally:
+            sys.stdout = original_stdout
+
 
 @click.command()
 @click.option("--monitor", is_flag=True, help="Monitor and see suggestions for CPU optimizations")
@@ -86,52 +114,58 @@ def main(monitor, live, daemon, install, update, remove, force, turbo, config, s
             monitor.run(on_quit=conf.notifier.stop)
         elif live:
             root_check()
-            start_battery_daemon()
             conf.notifier.start()
-            if IS_INSTALLED_WITH_SNAP:
-                gnome_power_detect_snap()
-                tlp_service_detect_snap()
-            else:
-                gnome_power_detect_install()
-                gnome_power_stop_live()
-                tuned_stop_live()
-                tlp_service_detect()
-            
-            if IS_INSTALLED_WITH_SNAP or tlp_stat_exists or (systemctl_exists and not bool(gnome_power_status)):
-                try:
+
+            stop_event = Event()
+            thread = None
+            restart_gnome = False
+            restart_tuned = False
+            remove_cpufreqctl = False
+
+            try:
+                if IS_INSTALLED_WITH_SNAP:
+                    gnome_power_detect_snap()
+                    tlp_service_detect_snap()
+                else:
+                    restart_gnome, restart_tuned = _live_service_restore_state()
+                    gnome_power_detect_install()
+                    gnome_power_stop_live()
+                    tuned_stop_live()
+                    tlp_service_detect()
+
+                if IS_INSTALLED_WITH_SNAP or tlp_stat_exists or restart_gnome:
                     input("press Enter to continue or Ctrl + c to exit...")
-                except KeyboardInterrupt:
-                    conf.notifier.stop()
-                    sys.exit(0)
-            
-            cpufreqctl()
-            def live_daemon():
-                # Redirect stdout to suppress prints
-                class NullWriter:
-                    def write(self, _): pass
-                    def flush(self): pass
-                try:
-                    sys.stdout = NullWriter()
-                    
-                    while True:
-                        time.sleep(1)
-                        set_autofreq()
-                except KeyboardInterrupt:
-                    raise
-                except Exception:
-                    pass
-            
-            def live_daemon_off():
-                gnome_power_start_live()
-                tuned_start_live()
-                cpufreqctl_restore()
+
+                # Do not change battery thresholds until Live mode is accepted.
+                start_battery_daemon()
+
+                if not IS_INSTALLED_WITH_SNAP:
+                    remove_cpufreqctl = not os.path.isfile(
+                        "/usr/local/bin/cpufreqctl.auto-cpufreq"
+                    )
+                cpufreqctl()
+
+                thread = Thread(
+                    target=_run_live_optimizer,
+                    args=(stop_event,),
+                    daemon=True,
+                )
+                thread.start()
+
+                monitor = SystemMonitor(type=ViewType.LIVE)
+                monitor.run()
+            finally:
+                stop_event.set()
+                if thread is not None and thread.is_alive():
+                    thread.join(timeout=3)
+
+                if restart_gnome:
+                    gnome_power_start_live()
+                if restart_tuned:
+                    tuned_start_live()
+                if remove_cpufreqctl:
+                    cpufreqctl_restore()
                 conf.notifier.stop()
-            
-            thread = Thread(target=live_daemon, daemon=True)
-            thread.start()
-            
-            monitor = SystemMonitor(type=ViewType.LIVE)
-            monitor.run(on_quit=live_daemon_off)
         elif daemon:
             config_info_dialog()
             root_check()
