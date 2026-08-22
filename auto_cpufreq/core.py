@@ -415,8 +415,9 @@ def remove_daemon():
     # remove auto-cpufreq-remove
     os.remove("/usr/local/bin/auto-cpufreq-remove")
 
-    # delete override pickle if it exists
-    if os.path.exists(governor_override_state):  os.remove(governor_override_state)
+    # delete persistent overrides if they exist
+    if os.path.exists(governor_override_state): os.remove(governor_override_state)
+    if os.path.exists(turbo_override_state): os.remove(turbo_override_state)
 
     # delete stats file
     if auto_cpufreq_stats_path.exists():
