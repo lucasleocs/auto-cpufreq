@@ -361,7 +361,8 @@ def deploy_daemon():
 
     tlp_service_detect() # output warning if TLP service is detected
 
-    call("/usr/local/bin/auto-cpufreq-install", shell=True)
+    if call(["/usr/local/bin/auto-cpufreq-install"]) != 0:
+        raise click.ClickException("auto-cpufreq daemon installation failed")
 
 def deploy_daemon_performance():
     print("\n" + "-" * 21 + " Deploying auto-cpufreq as a daemon (performance) " + "-" * 22 + "\n")

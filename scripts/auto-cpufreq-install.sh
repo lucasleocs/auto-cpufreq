@@ -18,46 +18,52 @@ if ((EUID != 0)); then
   exit 1
 fi
 
-# First argument is the init name, second argument is the start command, third argument is the enable command
-function auto_cpufreq_install {
-    echo -e "\n* Starting auto-cpufreq daemon ($1) service"
-    $2
-    echo -e "\n* Enabling auto-cpufreq daemon ($1) at boot"
-    $3
+run_required() {
+  "$@"
+  status=$?
+  if ((status != 0)); then
+    echo -e "\n* Command failed with status ${status}: $*" >&2
+    exit "$status"
+  fi
 }
 
 case "$(ps h -o comm 1)" in
-  dinit) 
+  dinit)
     echo -e "\n* Deploying auto-cpufreq (dinit) unit file"
-    cp /usr/local/share/auto-cpufreq/scripts/auto-cpufreq-dinit /etc/dinit.d/auto-cpufreq
+    run_required cp /usr/local/share/auto-cpufreq/scripts/auto-cpufreq-dinit /etc/dinit.d/auto-cpufreq
 
-    auto_cpufreq_install "dinit" "dinitctl start auto-cpufreq" "dinitctl enable auto-cpufreq"
+    echo -e "\n* Starting auto-cpufreq daemon (dinit) service"
+    run_required dinitctl start auto-cpufreq
+    echo -e "\n* Enabling auto-cpufreq daemon (dinit) at boot"
+    run_required dinitctl enable auto-cpufreq
   ;;
-  init) 
+  init)
     echo -e "\n* Deploying auto-cpufreq openrc unit file"
-    cp /usr/local/share/auto-cpufreq/scripts/auto-cpufreq-openrc /etc/init.d/auto-cpufreq
-    chmod +x /etc/init.d/auto-cpufreq
+    run_required cp /usr/local/share/auto-cpufreq/scripts/auto-cpufreq-openrc /etc/init.d/auto-cpufreq
+    run_required chmod +x /etc/init.d/auto-cpufreq
 
-    auto_cpufreq_install "openrc" "rc-service auto-cpufreq start" "rc-update add auto-cpufreq"
+    echo -e "\n* Starting auto-cpufreq daemon (openrc) service"
+    run_required rc-service auto-cpufreq start
+    echo -e "\n* Enabling auto-cpufreq daemon (openrc) at boot"
+    run_required rc-update add auto-cpufreq
   ;;
   runit)
     # First argument is the "sv" path, second argument is the "service" path
     runit_ln() {
       echo -e "\n* Deploying auto-cpufreq (runit) unit file"
-      mkdir "$1"/sv/auto-cpufreq
-      cp /usr/local/share/auto-cpufreq/scripts/auto-cpufreq-runit "$1"/sv/auto-cpufreq/run
-      chmod +x "$1"/sv/auto-cpufreq/run
+      run_required mkdir -p "$1"/sv/auto-cpufreq
+      run_required cp /usr/local/share/auto-cpufreq/scripts/auto-cpufreq-runit "$1"/sv/auto-cpufreq/run
+      run_required chmod +x "$1"/sv/auto-cpufreq/run
 
       echo -e "\n* Creating symbolic link ($2/service/auto-cpufreq -> $1/sv/auto-cpufreq)"
-      ln -s "$1"/sv/auto-cpufreq "$2"/service
+      ln -s "$1"/sv/auto-cpufreq "$2"/service 2>/dev/null || true
 
-      auto_cpufreq_install "runit"
-
-      sv start auto-cpufreq
-      sv up auto-cpufreq
+      echo -e "\n* Starting auto-cpufreq daemon (runit) service"
+      run_required sv start auto-cpufreq
+      run_required sv up auto-cpufreq
     }
 
-    if [ -f /etc/os-release ];then
+    if [ -f /etc/os-release ]; then
       eval "$(cat /etc/os-release)"
       case $ID in
         void) runit_ln /etc /var;;
@@ -65,32 +71,41 @@ case "$(ps h -o comm 1)" in
         *)
           echo -e "\n* Runit init detected but your distro is not supported\n"
           echo -e "\n* Please open an issue on https://github.com/AdnanHodzic/auto-cpufreq\n"
+          exit 1
       esac
+    else
+      echo -e "\n* Runit init detected but /etc/os-release is unavailable\n"
+      exit 1
     fi
   ;;
   systemd)
     echo -e "Deploying auto-cpufreq systemd unit file"
-    cp /usr/local/share/auto-cpufreq/scripts/auto-cpufreq.service /etc/systemd/system/auto-cpufreq.service
+    run_required cp /usr/local/share/auto-cpufreq/scripts/auto-cpufreq.service /etc/systemd/system/auto-cpufreq.service
 
     echo -e "\n* Reloading systemd manager configuration"
-    systemctl daemon-reload
+    run_required systemctl daemon-reload
 
-    auto_cpufreq_install "systemd" "systemctl start auto-cpufreq" "systemctl enable auto-cpufreq"
+    echo -e "\n* Starting auto-cpufreq daemon (systemd) service"
+    run_required systemctl start auto-cpufreq
+    echo -e "\n* Enabling auto-cpufreq daemon (systemd) at boot"
+    run_required systemctl enable auto-cpufreq
   ;;
   s6-svscan)
-	  echo -e "\n* Deploying auto-cpufreq (s6) unit file"
-    cp -r /usr/local/share/auto-cpufreq/scripts/auto-cpufreq-s6 /etc/s6/sv/auto-cpufreq
+    echo -e "\n* Deploying auto-cpufreq (s6) unit file"
+    run_required cp -r /usr/local/share/auto-cpufreq/scripts/auto-cpufreq-s6 /etc/s6/sv/auto-cpufreq
 
     echo -e "\n* Add auto-cpufreq service (s6) to default bundle"
     s6-service add default auto-cpufreq
 
-    auto_cpufreq_install "s6" "s6-rc -u change auto-cpufreq default"
+    echo -e "\n* Starting auto-cpufreq daemon (s6) service"
+    run_required s6-rc -u change auto-cpufreq default
 
     echo -e "\n* Update daemon service bundle (s6)"
-    s6-db-reload
+    run_required s6-db-reload
   ;;
   *)
     echo -e "\n* Unsupported init system detected, could not install the daemon\n"
     echo -e "\n* Please open an issue on https://github.com/AdnanHodzic/auto-cpufreq\n"
+    exit 1
   ;;
 esac

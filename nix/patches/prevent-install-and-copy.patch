@@ -26,7 +26,7 @@ index f03e7de..2dff5fb 100755
  
  def footer(l=79): print("\n" + "-" * l + "\n")
  
-@@ -307,31 +300,8 @@ def remove_complete_msg():
+@@ -307,32 +300,8 @@ def remove_complete_msg():
      footer()
  
  def deploy_daemon():
@@ -54,13 +54,14 @@ index f03e7de..2dff5fb 100755
 -
 -    tlp_service_detect() # output warning if TLP service is detected
 -
--    call("/usr/local/bin/auto-cpufreq-install", shell=True)
+-    if call(["/usr/local/bin/auto-cpufreq-install"]) != 0:
+-        raise click.ClickException("auto-cpufreq daemon installation failed")
 +    # prevent needless copying and system changes
 +    pass
  
  def deploy_daemon_performance():
      print("\n" + "-" * 21 + " Deploying auto-cpufreq as a daemon (performance) " + "-" * 22 + "\n")
-@@ -363,37 +333,7 @@ def deploy_daemon_performance():
+@@ -364,37 +333,7 @@ def deploy_daemon_performance():
  
      call("/usr/local/bin/auto-cpufreq-install", shell=True)
  
