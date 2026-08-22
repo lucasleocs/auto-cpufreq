@@ -223,15 +223,15 @@ def turbo(value: bool = None):
         print("Warning: CPU turbo is not available")
         return False
     
-    turbo_override = get_turbo_override()
-    if turbo_override != "auto":
-        # Set the value in respect to if turbo override is enabled or not.
-        if turbo_override == "always":
-            value = True
-        elif turbo_override == "never":
-            value = False
-
     if value is not None:
+        turbo_override = get_turbo_override()
+        if turbo_override != "auto":
+            # Set the value in respect to if turbo override is enabled or not.
+            if turbo_override == "always":
+                value = True
+            elif turbo_override == "never":
+                value = False
+
         try: f.write_text(f"{int(value ^ inverse)}\n")
         except PermissionError:
             print("Warning: Changing CPU turbo is not supported. Skipping.")
