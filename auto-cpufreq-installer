@@ -232,11 +232,18 @@ function tool_remove {
 
   srv_remove="$AUTO_CPUFREQ_FILE-remove"
 
-  # run uninstall in case of installed daemon
-  if [ -f $srv_remove -o -f $AUTO_CPUFREQ_FILE ]; then
-    eval "$AUTO_CPUFREQ_FILE --remove"
-  else
-    echo; echo "Couldn't remove the auto-cpufreq daemon, $srv_remove do not exist."
+  # Remove an installed daemon before deleting the runtime it depends on.
+  # Package-only installations have no daemon remove helper and can be
+  # uninstalled directly.
+  if [ -f "$srv_remove" ]; then
+    if [ ! -x "$AUTO_CPUFREQ_FILE" ]; then
+      echo "Cannot remove the auto-cpufreq daemon because $AUTO_CPUFREQ_FILE is unavailable." >&2
+      return 1
+    fi
+    if ! "$AUTO_CPUFREQ_FILE" --remove; then
+      echo "Failed to remove the auto-cpufreq daemon; aborting package removal." >&2
+      return 1
+    fi
   fi
 
   # remove auto-cpufreq and all its supporting files
