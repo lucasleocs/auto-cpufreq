@@ -50,13 +50,26 @@ case "$(ps h -o comm 1)" in
   runit)
     # First argument is the "sv" path, second argument is the "service" path
     runit_ln() {
-      echo -e "\n* Deploying auto-cpufreq (runit) unit file"
-      run_required mkdir -p "$1"/sv/auto-cpufreq
-      run_required cp /usr/local/share/auto-cpufreq/scripts/auto-cpufreq-runit "$1"/sv/auto-cpufreq/run
-      run_required chmod +x "$1"/sv/auto-cpufreq/run
+      service_dir="$1/sv/auto-cpufreq"
+      service_link="$2/service/auto-cpufreq"
 
-      echo -e "\n* Creating symbolic link ($2/service/auto-cpufreq -> $1/sv/auto-cpufreq)"
-      ln -s "$1"/sv/auto-cpufreq "$2"/service 2>/dev/null || true
+      echo -e "\n* Deploying auto-cpufreq (runit) unit file"
+      run_required mkdir -p "$service_dir"
+      run_required cp /usr/local/share/auto-cpufreq/scripts/auto-cpufreq-runit "$service_dir/run"
+      run_required chmod +x "$service_dir/run"
+
+      echo -e "\n* Creating symbolic link ($service_link -> $service_dir)"
+      if [ -L "$service_link" ]; then
+        if [ "$(readlink "$service_link")" != "$service_dir" ]; then
+          echo -e "\n* Existing runit service link points elsewhere: $service_link" >&2
+          exit 1
+        fi
+      elif [ -e "$service_link" ]; then
+        echo -e "\n* Existing runit service path is not the expected symlink: $service_link" >&2
+        exit 1
+      else
+        run_required ln -s "$service_dir" "$2/service"
+      fi
 
       echo -e "\n* Starting auto-cpufreq daemon (runit) service"
       run_required sv start auto-cpufreq
@@ -95,7 +108,7 @@ case "$(ps h -o comm 1)" in
     run_required cp -r /usr/local/share/auto-cpufreq/scripts/auto-cpufreq-s6 /etc/s6/sv/auto-cpufreq
 
     echo -e "\n* Add auto-cpufreq service (s6) to default bundle"
-    s6-service add default auto-cpufreq
+    run_required s6-service add default auto-cpufreq
 
     echo -e "\n* Starting auto-cpufreq daemon (s6) service"
     run_required s6-rc -u change auto-cpufreq default
