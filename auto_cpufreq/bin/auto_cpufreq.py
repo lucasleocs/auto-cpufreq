@@ -250,6 +250,10 @@ def main(monitor, live, daemon, install, update, remove, force, turbo, config, s
                         auto_cpufreq_stats_file.close()
 
                     auto_cpufreq_stats_path.unlink()
+                if governor_override_state.exists():
+                    governor_override_state.unlink()
+                if turbo_override_state.exists():
+                    turbo_override_state.unlink()
                 # ToDo: 
                 # {the following snippet also used in --update, update it there too(if required)}
                 # * undo bluetooth boot disable
