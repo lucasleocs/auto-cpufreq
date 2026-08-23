@@ -593,11 +593,13 @@ If installed via Snap package, daemon status can be viewed as follows:
 
 ### Update - auto-cpufreq update
 
-Update functionality works by cloning the auto-cpufreq repo, installing it via [auto-cpufreq-installer](#auto-cpufreq-installer), and performing a fresh [auto-cpufreq daemon install](#install---auto-cpufreq-daemon) to provide the [latest version's](https://github.com/AdnanHodzic/auto-cpufreq/releases) changes.
+Update functionality checks the latest published auto-cpufreq release and, after confirmation, downloads that exact release tag before changing the current installation. The downloaded source is validated for `auto-cpufreq-installer` before the existing daemon is removed.
 
-Update auto-cpufreq by running: `sudo auto-cpufreq --update`. By default, the latest revision is cloned to `/opt/auto-cpufreq/source`, thus maintaining existing directory structure.
+If the daemon was already installed, it is reinstalled after the update. If it was not installed, the update does not enable it. After installation, auto-cpufreq verifies that the installed version matches the selected release.
 
-Update and clone to a custom directory by running: `sudo auto-cpufreq --update=/path/to/directory`
+Update auto-cpufreq by running: `sudo auto-cpufreq --update`. By default, `/opt/auto-cpufreq/source` is used as the update workspace.
+
+Use a custom update workspace by running: `sudo auto-cpufreq --update=/path/to/directory`
 
 ### Remove - auto-cpufreq daemon
 
