@@ -40,7 +40,11 @@ function online_cpu_ids () {
 
 mapfile -t CPU_IDS < <(online_cpu_ids)
 cpucount=${#CPU_IDS[@]}
-DEFAULT_CPU="${CPU_IDS[0]:-0}"
+if [ "$cpucount" -eq 0 ]; then
+  echo "Unable to determine online CPU IDs" >&2
+  exit 1
+fi
+DEFAULT_CPU="${CPU_IDS[0]}"
 
 ## parse special options
 for i in "$@"; do
