@@ -2,7 +2,11 @@
 """Run the bounded PR965 harness without requiring project dependencies first."""
 
 import sys
+from pathlib import Path
 from types import ModuleType
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
 
 requests_stub = ModuleType("requests")
 requests_stub.RequestException = Exception
