@@ -96,6 +96,20 @@ class SystemMonitor:
 
         Thread(target=self._collect_report, daemon=True).start()
 
+    def report_error(self, error: Exception) -> None:
+        """Surface a background worker failure through the monitor event loop."""
+        self._refresh_results.put((None, None, None, error))
+
+        wakeup_fd = self._refresh_pipe_fd
+        if wakeup_fd is None:
+            return
+
+        try:
+            os.write(wakeup_fd, b"1")
+        except OSError:
+            # The monitor may have been closed while the worker was failing.
+            pass
+
     def _collect_report(self):
         try:
             report = system_info.generate_system_report()

@@ -105,6 +105,28 @@ def _apply_release_update(status, custom_dir):
         print(version_output)
 
 
+class _NullWriter:
+    def write(self, _):
+        pass
+
+    def flush(self):
+        pass
+
+
+def _run_live_daemon(monitor):
+    """Run live policy updates and surface worker failures to the monitor."""
+    original_stdout = sys.stdout
+    try:
+        sys.stdout = _NullWriter()
+        while True:
+            time.sleep(1)
+            set_autofreq()
+    except Exception as error:
+        monitor.report_error(error)
+    finally:
+        sys.stdout = original_stdout
+
+
 @click.command()
 @click.option("--monitor", is_flag=True, help="Monitor and see suggestions for CPU optimizations")
 @click.option("--live", is_flag=True, help="Monitor and make (temp.) suggested CPU optimizations")
@@ -192,32 +214,15 @@ def main(monitor, live, daemon, install, update, remove, force, turbo, config, s
                     sys.exit(0)
             
             cpufreqctl()
-            def live_daemon():
-                # Redirect stdout to suppress prints
-                class NullWriter:
-                    def write(self, _): pass
-                    def flush(self): pass
-                try:
-                    sys.stdout = NullWriter()
-                    
-                    while True:
-                        time.sleep(1)
-                        set_autofreq()
-                except KeyboardInterrupt:
-                    raise
-                except Exception:
-                    pass
-            
             def live_daemon_off():
                 gnome_power_start_live()
                 tuned_start_live()
                 cpufreqctl_restore()
                 conf.notifier.stop()
-            
-            thread = Thread(target=live_daemon, daemon=True)
-            thread.start()
-            
+
             monitor = SystemMonitor(type=ViewType.LIVE)
+            thread = Thread(target=_run_live_daemon, args=(monitor,), daemon=True)
+            thread.start()
             monitor.run(on_quit=live_daemon_off)
         elif daemon:
             config_info_dialog()
