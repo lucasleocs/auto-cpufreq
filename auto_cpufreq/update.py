@@ -104,21 +104,31 @@ def release_version_matches(output: str, expected_version: str) -> bool:
 def get_update_status(timeout: float = RELEASE_TIMEOUT_SECONDS) -> UpdateStatus:
     current_version = get_literal_version()
     if current_version is None:
-        raise RuntimeError("Unable to determine the installed auto-cpufreq version")
+        raise UpdateError("Unable to determine the installed auto-cpufreq version")
 
     latest_release_url = (
         GITHUB.replace("github.com", "api.github.com/repos") + "/releases/latest"
     )
-    response = requests.get(latest_release_url, timeout=timeout)
-    response.raise_for_status()
-    latest_version = response.json().get("tag_name")
-    if not latest_version:
-        raise RuntimeError("GitHub release response does not contain a tag_name")
+    try:
+        response = requests.get(latest_release_url, timeout=timeout)
+        response.raise_for_status()
+        payload = response.json()
+    except requests.RequestException as error:
+        raise UpdateError(f"Unable to check the latest GitHub release: {error}") from error
+    except ValueError as error:
+        raise UpdateError("GitHub release response was not valid JSON") from error
+
+    if not isinstance(payload, dict):
+        raise UpdateError("GitHub release response was not an object")
+
+    latest_version = payload.get("tag_name")
+    if not isinstance(latest_version, str) or not latest_version.strip():
+        raise UpdateError("GitHub release response does not contain a valid tag_name")
 
     current_release = _release_tuple(current_version)
     latest_release = _release_tuple(latest_version)
     if current_release is None or latest_release is None:
-        raise RuntimeError(
+        raise UpdateError(
             "Unable to compare auto-cpufreq versions: "
             f"current={current_version!r}, latest={latest_version!r}"
         )
@@ -142,7 +152,6 @@ def prepare_release_source(custom_dir: Union[str, Path], tag: str) -> Path:
     try:
         root.mkdir(parents=True, exist_ok=True)
         source_dir = Path(mkdtemp(prefix="auto-cpufreq-update-", dir=root))
-        source_dir.rmdir()
     except OSError as error:
         raise UpdateError(f"Unable to prepare update workspace {root}: {error}") from error
 
@@ -163,11 +172,11 @@ def prepare_release_source(custom_dir: Union[str, Path], tag: str) -> Path:
             text=True,
         )
     except OSError as error:
+        rmtree(source_dir, ignore_errors=True)
         raise UpdateError(f"Unable to start git clone: {error}") from error
 
     if result.returncode != 0:
-        if source_dir.exists():
-            rmtree(source_dir, ignore_errors=True)
+        rmtree(source_dir, ignore_errors=True)
         raise _command_failure(f"Unable to download release {tag}", result)
 
     installer = source_dir / "auto-cpufreq-installer"
