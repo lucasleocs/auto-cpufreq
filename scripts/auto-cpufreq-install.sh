@@ -49,12 +49,12 @@ case "$(ps h -o comm 1)" in
     # First argument is the "sv" path, second argument is the "service" path
     runit_ln() {
       echo -e "\n* Deploying auto-cpufreq (runit) unit file"
-      mkdir "$1"/sv/auto-cpufreq || return $?
+      mkdir -p "$1"/sv/auto-cpufreq || return $?
       cp /usr/local/share/auto-cpufreq/scripts/auto-cpufreq-runit "$1"/sv/auto-cpufreq/run || return $?
       chmod +x "$1"/sv/auto-cpufreq/run || return $?
 
       echo -e "\n* Creating symbolic link ($2/service/auto-cpufreq -> $1/sv/auto-cpufreq)"
-      ln -s "$1"/sv/auto-cpufreq "$2"/service || return $?
+      ln -sfn "$1"/sv/auto-cpufreq "$2"/service/auto-cpufreq || return $?
 
       sv start auto-cpufreq || return $?
       sv up auto-cpufreq || return $?
