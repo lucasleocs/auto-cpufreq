@@ -25,4 +25,6 @@ jobs:
 
       - name: "Install auto-cpufreq"
         run: sudo ./auto-cpufreq-installer --install
-      
+
+      - name: "Run WIP audit regression harnesses"
+        run: python -m unittest discover -s wip_tests -v
