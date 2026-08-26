@@ -23,6 +23,9 @@ jobs:
           python-version: 3.12
           cache: "poetry"
 
+      - name: "Run focused PR965 regression harness"
+        run: python3 audit/pr965_regression_harness.py
+
       - name: "Install auto-cpufreq"
         run: sudo ./auto-cpufreq-installer --install
       
