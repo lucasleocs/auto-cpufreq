@@ -26,6 +26,14 @@ jobs:
       - name: "Run focused PR965 regression harness"
         run: python3 audit/pr965_regression_harness_v5.py
 
+      - name: "Validate changed code"
+        run: |
+          python3 -m py_compile auto_cpufreq/update.py auto_cpufreq/core.py auto_cpufreq/power_helper.py auto_cpufreq/bin/auto_cpufreq.py
+          bash -n scripts/auto-cpufreq-install.sh
+          bash -n scripts/auto-cpufreq-remove.sh
+          git fetch --no-tags --depth=1 origin master
+          git diff --check FETCH_HEAD..HEAD
+
       - name: "Install auto-cpufreq"
         run: sudo ./auto-cpufreq-installer --install
       
