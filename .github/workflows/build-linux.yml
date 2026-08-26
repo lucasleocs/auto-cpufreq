@@ -26,6 +26,9 @@ jobs:
       - name: Test daemon lifecycle scripts
         run: sudo bash tests/test-daemon-lifecycle.sh
 
+      - name: Test source installer failure propagation
+        run: sudo bash tests/test-source-installer.sh
+
       - name: "Install auto-cpufreq"
         run: sudo ./auto-cpufreq-installer --install
 
