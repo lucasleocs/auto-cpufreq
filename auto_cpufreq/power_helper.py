@@ -231,7 +231,7 @@ def bluetooth_notif_snap():
 def bluetooth_on_notif_snap():
     print("\n* Unable to turn on bluetooth on boot due to Snap package restrictions!")
     print("\nSteps to perform this action using auto-cpufreq: power_helper script:")
-    print("python3 -m auto_cpufreq.power_helper --gnome_power_disable")
+    print("python3 -m auto_cpufreq.power_helper --bluetooth_boot_on")
     print("\nFor help see: https://github.com/AdnanHodzic/auto-cpufreq/#1-power_helperpy-script-snap-package-install-only")
 
 # gnome power removal reminder
@@ -253,7 +253,7 @@ def gnome_power_rm_reminder_snap():
 
 def valid_options():
     print("--gnome_power_enable\t\tEnable GNOME Power Profiles daemon")
-    print("--gnome_power_disable\t\tDisable GNOME Power profiles service\n")
+    print("--gnome_power_disable\t\tDisable GNOME Power Profiles daemon\n")
 
 def disable_power_profiles_daemon():
     # always disable power-profiles-daemon
@@ -298,7 +298,7 @@ def tuned_svc_disable():
 @click.option("--gnome_power_disable", is_flag=True, help="Disable GNOME Power profiles service")
 # ToDo:
 # * update readme/docs
-@click.option("--gnome_power_enable", is_flag=True, help="Enable GNOME Power profiles service")
+@click.option("--gnome_power_enable", is_flag=True, help="Enable GNOME Power Profiles daemon")
 
 @click.option("--gnome_power_status", is_flag=True, help="Get status of GNOME Power profiles service")
 @click.option("--bluetooth_boot_on", is_flag=True, help="Turn on Bluetooth on boot")
