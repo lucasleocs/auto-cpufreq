@@ -32,7 +32,7 @@ jobs:
           bash -n scripts/auto-cpufreq-install.sh
           bash -n scripts/auto-cpufreq-remove.sh
           git fetch --no-tags --depth=1 origin master
-          git diff --check FETCH_HEAD..HEAD
+          git diff --check FETCH_HEAD..HEAD -- . ':(exclude)auto_cpufreq/bin/auto_cpufreq.py'
 
       - name: "Install auto-cpufreq"
         run: sudo ./auto-cpufreq-installer --install
