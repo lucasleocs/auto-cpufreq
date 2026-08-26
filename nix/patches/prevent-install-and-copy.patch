@@ -85,4 +85,3 @@ index 9ce3a7b..2dff5fb 100755
 -
 -    cpufreqctl_restore() # restore original cpufrectl script
 +def remove_daemon(): pass
- 
