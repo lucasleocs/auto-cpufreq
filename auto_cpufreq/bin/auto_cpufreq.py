@@ -12,6 +12,7 @@ from auto_cpufreq.battery_scripts.battery import *
 from auto_cpufreq.config.config import config as conf, find_config_file
 from auto_cpufreq.core import *
 from auto_cpufreq.globals import GITHUB, IS_INSTALLED_WITH_AUR, IS_INSTALLED_WITH_SNAP
+from auto_cpufreq.modules.system_info import print_system_report
 from auto_cpufreq.modules.system_monitor import ViewType, SystemMonitor
 # import everything from power_helper, including bluetooth_disable and bluetooth_enable
 from auto_cpufreq.power_helper import *
@@ -235,8 +236,7 @@ def main(monitor, live, daemon, install, update, remove, force, turbo, config, s
                     footer()
                     gov_check()
                     cpufreqctl()
-                    distro_info()
-                    sysinfo()
+                    print_system_report()
                     set_autofreq()
                     countdown(2)
                 except KeyboardInterrupt: break
@@ -365,8 +365,7 @@ def main(monitor, live, daemon, install, update, remove, force, turbo, config, s
             battery_get_thresholds()
             cpufreqctl()
             footer()
-            distro_info()
-            sysinfo()
+            print_system_report()
             print()
             app_version()
             print()

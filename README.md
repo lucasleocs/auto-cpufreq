@@ -61,6 +61,7 @@ Example of `auto-cpufreq --stats` CLI output
 - [auto-cpufreq modes and options](#auto-cpufreq-modes-and-options)
   - [monitor](#monitor)
   - [live](#live)
+  - [GUI](#gui)
   - [overriding governor](#overriding-governor)
   - [overriding turbo mode](#overriding-turbo-mode)
   - [Install - auto-cpufreq daemon](#install---auto-cpufreq-daemon)
@@ -69,6 +70,7 @@ Example of `auto-cpufreq --stats` CLI output
   - [stats](#stats)
   - [bluetooth_boot_off](#bluetooth_boot_off)
   - [bluetooth_boot_on](#bluetooth_boot_on)
+- [Intel HWP Dynamic Boost](#intel-hwp-dynamic-boost)
 - [Battery charging thresholds](#battery-charging-thresholds)
   - [Supported Devices](#supported-devices)
   - [Battery config](#battery-config)
@@ -469,7 +471,7 @@ turbo = always
 ```
 
 ## How to run auto-cpufreq
-auto-cpufreq should be run with with one of the following options:
+auto-cpufreq can be used through the following CLI modes and the GTK interface:
 
 - [monitor](#monitor)
   - Monitor and see suggestions for CPU optimizations
@@ -480,8 +482,8 @@ auto-cpufreq should be run with with one of the following options:
 - [install](#install---auto-cpufreq-daemon) / [remove](#remove---auto-cpufreq-daemon)
   - Install/remove daemon for (permanent) automatic CPU optimizations
  
-- [install (GUI)](#install---auto-cpufreq-daemon)
-  - Install daemon via GUI for (permanent) automatic CPU optimizations
+- [GUI](#gui)
+  - View live system and power state, manage supported controls, or preview recommendations
 
 - [update](#update---auto-cpufreq-update)
   - Update auto-cpufreq to the latest release
@@ -517,9 +519,9 @@ auto-cpufreq should be run with with one of the following options:
   - To support the project
 
 - help
-  - Shows all of the above options
+  - Shows the available CLI options
 
-Running `auto-cpufreq --help` will print the same list of options as above. Read [auto-cpufreq modes and options](#auto-cpufreq-modes-and-options) for more details.
+Running `auto-cpufreq --help` will list the available CLI options. Read [auto-cpufreq modes and options](#auto-cpufreq-modes-and-options) for more details.
 
 ## auto-cpufreq modes and options
 
@@ -529,17 +531,32 @@ Running `auto-cpufreq --help` will print the same list of options as above. Read
 
 No changes are made to the system. This is solely to demonstrate what auto-cpufreq could do for your system.
 
+This is the terminal Monitor mode. A read-only Monitor Mode is also available from the GUI when the daemon is not running.
+
 ### Live
 
 `sudo auto-cpufreq --live`
 
 Necessary changes are temporarily made to the system over time, but this process and its changes are lost at system reboot. This mode is provided to evaluate how the system would behave with auto-cpufreq permanently running on the system.
 
+### GUI
+
+The GTK interface can be opened from the auto-cpufreq desktop entry.
+
+When the daemon is running, the GUI provides a live overview of system, CPU, battery and power state, together with controls for supported auto-cpufreq overrides and settings.
+
+The dashboard refresh interval can be changed from the menu between 1, 2 and 5 seconds.
+
+If the daemon is not running, the GUI allows you to either install it for persistent automatic optimization or open Monitor Mode to preview system state and auto-cpufreq recommendations without applying changes.
+
 ### Overriding governor
 
 `sudo auto-cpufreq --force=governor`
 
 Force use of either the "powersave" or "performance" governor, or set to "reset" to go back to normal mode.
+
+This overrides only the CPU governor. Other charger/battery profile settings continue to follow the detected power source.
+
 Please note that any set override will persist even after reboot.
 
 ### Overriding Turbo mode
@@ -561,23 +578,7 @@ Installing the auto-cpufreq daemon using CLI is as simple as running the followi
 
 After the daemon is installed, `auto-cpufreq` is available as a binary and runs in the background. Its stats can be viewed by running: `auto-cpufreq --stats`
 
-*Please note:* if the daemon is installed within a desktop environment, then its stats and options can be accessed via CLI or GUI. See "Install the daemon using GUI" below for more details.
-
-**Install the daemon using GUI**
-
-Starting with >= v2.0 [after installing auto-cpufreq](#installing-auto-cpufreq), an auto-cpufreq desktop entry (icon) is available, i.e.:
-
-<img src="https://github.com/user-attachments/assets/f426d62b-00b0-4fa5-a72e-b352016ed448" width="640" alt="Example of auto-cpufreq desktop entry (icon)"/>
-
-After selecting it to open the GUI, the auto-cpufreq daemon can be installed by clicking the "Install" button:
-
-<img src="https://github.com/user-attachments/assets/5af47e5e-8b9e-4ff6-9ffc-e78acb623ce4" width="480" alt="The auto-cpufreq GUI's 'Install' button"/>
-
-After that, the full auto-cpufreq GUI is available:
-
-<img src="https://github.com/user-attachments/assets/9c7715c4-16b7-4a5c-86be-4c390276d9e8" width="640" alt="The full auto-cpufreq GUI"/>
-
-*Please note:* after the daemon is installed (by any method), its stats and options are accessible via both CLI and GUI.
+The daemon can also be installed from the GTK interface. See [GUI](#gui).
 
 **auto-cpufreq daemon service**
 
@@ -593,13 +594,11 @@ If installed via Snap package, daemon status can be viewed as follows:
 
 ### Update - auto-cpufreq update
 
-Update functionality checks the latest published auto-cpufreq release and, after confirmation, downloads that exact release tag before changing the current installation. The downloaded source is validated for `auto-cpufreq-installer` before the existing daemon is removed.
+Update functionality works by cloning the auto-cpufreq repo, installing it via [auto-cpufreq-installer](#auto-cpufreq-installer), and performing a fresh [auto-cpufreq daemon install](#install---auto-cpufreq-daemon) to provide the [latest version's](https://github.com/AdnanHodzic/auto-cpufreq/releases) changes.
 
-If the daemon was already installed, it is reinstalled after the update. If it was not installed, the update does not enable it. After installation, auto-cpufreq verifies that the installed version matches the selected release.
+Update auto-cpufreq by running: `sudo auto-cpufreq --update`. By default, the latest revision is cloned to `/opt/auto-cpufreq/source`, thus maintaining existing directory structure.
 
-Update auto-cpufreq by running: `sudo auto-cpufreq --update`. By default, `/opt/auto-cpufreq/source` is used as the update workspace.
-
-Use a custom update workspace by running: `sudo auto-cpufreq --update=/path/to/directory`
+Update and clone to a custom directory by running: `sudo auto-cpufreq --update=/path/to/directory`
 
 ### Remove - auto-cpufreq daemon
 
@@ -626,6 +625,14 @@ It prevents GNOME from automatically enabling Bluetooth on every reboot or after
 ### bluetooth_boot_on
 
 Useful if you prefer Bluetooth to be enabled at boot time, especially after installing the auto-cpufreq daemon, which will disable it by default.
+
+## Intel HWP Dynamic Boost
+
+On typical non-server Intel systems, the Linux `intel_pstate` driver starts HWP Dynamic Boost disabled. When `hwp_dynamic_boost` is not explicitly configured, auto-cpufreq keeps it disabled on battery power and enables it on AC/charger power on supported systems. Current upstream kernels may enable Dynamic Boost automatically on systems using the ACPI Enterprise Server or Performance Server profiles.
+
+Dynamic Boost is detected through `/sys/devices/system/cpu/intel_pstate/hwp_dynamic_boost`; systems that do not expose this interface are left unchanged.
+
+When disabling Dynamic Boost, auto-cpufreq applies that state before changing EPP. When enabling Dynamic Boost, EPP is applied first. To override the default policy, configure `hwp_dynamic_boost` in the charger and/or battery profiles; see [4: auto-cpufreq config file](#4-auto-cpufreq-config-file).
 
 ## Battery charging thresholds
 

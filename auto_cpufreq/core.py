@@ -223,15 +223,15 @@ def turbo(value: bool = None):
         print("Warning: CPU turbo is not available")
         return False
     
-    turbo_override = get_turbo_override()
-    if turbo_override != "auto":
-        # Set the value in respect to if turbo override is enabled or not.
-        if turbo_override == "always":
-            value = True
-        elif turbo_override == "never":
-            value = False
-
     if value is not None:
+        turbo_override = get_turbo_override()
+        if turbo_override != "auto":
+            # Set the value in respect to if turbo override is enabled or not.
+            if turbo_override == "always":
+                value = True
+            elif turbo_override == "never":
+                value = False
+
         try: f.write_text(f"{int(value ^ inverse)}\n")
         except PermissionError:
             print("Warning: Changing CPU turbo is not supported. Skipping.")
@@ -795,6 +795,25 @@ def get_configured_hwp_dynamic_boost(conf, profile):
         return None
 
 
+def get_hwp_dynamic_boost_target(conf, profile):
+    if conf.has_option(profile, "hwp_dynamic_boost"):
+        configured = get_configured_hwp_dynamic_boost(conf, profile)
+        if configured is None:
+            return None
+        if not HWP_DYNAMIC_BOOST_PATH.exists():
+            print(
+                f'Not setting HWP dynamic boost for [{profile}] '
+                '(not supported by system)'
+            )
+            return None
+        return configured
+
+    if not HWP_DYNAMIC_BOOST_PATH.exists():
+        return None
+
+    return profile == "charger"
+
+
 def get_hwp_dynamic_boost():
     """Return the current HWP Dynamic Boost state, or None if unavailable."""
     try:
@@ -812,11 +831,11 @@ def get_hwp_dynamic_boost():
 def set_hwp_dynamic_boost(enabled):
     if not HWP_DYNAMIC_BOOST_PATH.exists():
         print("Not setting HWP dynamic boost (not supported by system)")
-        return
+        return False
 
     current_value = get_hwp_dynamic_boost()
     if current_value == enabled:
-        return
+        return True
 
     value = "1" if enabled else "0"
 
@@ -824,16 +843,26 @@ def set_hwp_dynamic_boost(enabled):
         HWP_DYNAMIC_BOOST_PATH.write_text(f"{value}\n")
     except OSError as error:
         print(f"Failed to set HWP dynamic boost to {value}: {error}")
-        return
+        return False
+
+    if get_hwp_dynamic_boost() != enabled:
+        print(f"Failed to verify HWP dynamic boost state after setting to {value}")
+        return False
 
     print(f"Setting HWP dynamic boost to: {value}")
+    return True
 
 
 def set_powersave():
     conf = config.get_config()
-    gov = conf["battery"]["governor"] if conf.has_option("battery", "governor") else AVAILABLE_GOVERNORS_SORTED[-1]
+    override = get_override()
+    gov = override if override in ("powersave", "performance") else (
+        conf["battery"]["governor"]
+        if conf.has_option("battery", "governor")
+        else AVAILABLE_GOVERNORS_SORTED[-1]
+    )
     print(f'Setting to use: "{gov}" governor')
-    if get_override() != "default": print("Warning: governor overwritten using `--force` flag.")
+    if override != "default": print("Warning: governor overwritten using `--force` flag.")
     try:
         result = run(
             ["cpufreqctl.auto-cpufreq", "--governor", f"--set={gov}"]
@@ -847,9 +876,10 @@ def set_powersave():
         footer()
         return
 
-    configured_dynboost = get_configured_hwp_dynamic_boost(conf, "battery")
-    if configured_dynboost is False:
-        set_hwp_dynamic_boost(False)
+    target_dynboost = get_hwp_dynamic_boost_target(conf, "battery")
+    hwp_disable_failed = False
+    if target_dynboost is False and HWP_DYNAMIC_BOOST_PATH.exists():
+        hwp_disable_failed = not set_hwp_dynamic_boost(False)
 
     if Path("/sys/devices/system/cpu/cpu0/cpufreq/energy_performance_preference").exists() is False:
         print('Not setting EPP (not supported by system)')
@@ -857,7 +887,9 @@ def set_powersave():
         dynboost_enabled = get_hwp_dynamic_boost()
         pstate_active = intel_pstate_active()
 
-        if dynboost_enabled and configured_dynboost is None: print('Not setting EPP (dynamic boosting is enabled)')
+        if hwp_disable_failed:
+            print('Not setting EPP (HWP dynamic boost could not be disabled)')
+        elif dynboost_enabled and target_dynboost is None: print('Not setting EPP (dynamic boosting is enabled)')
         elif pstate_active and gov == "performance":
             print('Not setting EPP (intel_pstate performance governor controls EPP as "performance")')
         else:
@@ -867,7 +899,7 @@ def set_powersave():
             else:
                 set_energy_perf_preference("balance_power")
 
-    if configured_dynboost is True:
+    if target_dynboost is True:
         set_hwp_dynamic_boost(True)
 
     set_energy_perf_bias(conf, "battery")
@@ -927,10 +959,15 @@ def mon_powersave():
 
 def set_performance():
     conf = config.get_config()
-    gov = conf["charger"]["governor"] if conf.has_option("charger", "governor") else AVAILABLE_GOVERNORS_SORTED[0]
+    override = get_override()
+    gov = override if override in ("powersave", "performance") else (
+        conf["charger"]["governor"]
+        if conf.has_option("charger", "governor")
+        else AVAILABLE_GOVERNORS_SORTED[0]
+    )
 
     print(f'Setting to use: "{gov}" governor')
-    if get_override() != "default": print("Warning: governor overwritten using `--force` flag.")
+    if override != "default": print("Warning: governor overwritten using `--force` flag.")
     try:
         result = run(
             ["cpufreqctl.auto-cpufreq", "--governor", f"--set={gov}"]
@@ -944,9 +981,10 @@ def set_performance():
         footer()
         return
 
-    configured_dynboost = get_configured_hwp_dynamic_boost(conf, "charger")
-    if configured_dynboost is False:
-        set_hwp_dynamic_boost(False)
+    target_dynboost = get_hwp_dynamic_boost_target(conf, "charger")
+    hwp_disable_failed = False
+    if target_dynboost is False and HWP_DYNAMIC_BOOST_PATH.exists():
+        hwp_disable_failed = not set_hwp_dynamic_boost(False)
 
     if not Path("/sys/devices/system/cpu/cpu0/cpufreq/energy_performance_preference").exists():
         print('Not setting EPP (not supported by system)')
@@ -955,7 +993,9 @@ def set_performance():
             dynboost_enabled = get_hwp_dynamic_boost()
             pstate_active = intel_pstate_active()
 
-            if dynboost_enabled and configured_dynboost is None: print('Not setting EPP (dynamic boosting is enabled)')
+            if hwp_disable_failed:
+                print('Not setting EPP (HWP dynamic boost could not be disabled)')
+            elif dynboost_enabled and target_dynboost is None: print('Not setting EPP (dynamic boosting is enabled)')
             elif pstate_active and gov == "performance":
                 print('Not setting EPP (intel_pstate performance governor controls EPP as "performance")')
             else:
@@ -985,7 +1025,7 @@ def set_performance():
                 else:
                     set_energy_perf_preference("balance_performance")
 
-    if configured_dynboost is True:
+    if target_dynboost is True:
         set_hwp_dynamic_boost(True)
     
     set_energy_perf_bias(conf, "charger")
@@ -1088,11 +1128,8 @@ def set_autofreq():
     """
     print("\n" + "-" * 28 + " CPU frequency scaling " + "-" * 28 + "\n")
 
-    # determine which governor should be used
-    override = get_override()
-    if override == "powersave": set_powersave()
-    elif override == "performance": set_performance()
-    elif charging():
+    # determine which power profile should be used
+    if charging():
         print("Battery is: charging\n")
         set_performance()
     else:
@@ -1262,6 +1299,32 @@ def is_running(program, argument):
         except (psutil.AccessDenied, psutil.NoSuchProcess, psutil.ZombieProcess, OSError): continue
         for s in filter(lambda x: program in x, cmd):
             if argument in cmd: return True
+
+
+def daemon_is_running():
+    """Return whether the auto-cpufreq daemon is currently active."""
+    if is_running("auto-cpufreq", "--daemon"):
+        return True
+
+    if IS_INSTALLED_WITH_SNAP:
+        return SNAP_DAEMON_CHECK == "enabled"
+
+    if not Path("/run/systemd/system").is_dir():
+        return False
+
+    try:
+        return call(
+            [
+                "systemctl",
+                "is-active",
+                "--quiet",
+                "auto-cpufreq.service",
+            ],
+            stdout=DEVNULL,
+            stderr=DEVNULL,
+        ) == 0
+    except OSError:
+        return False
 
 def daemon_running_msg():
     print("\n" + "-" * 24 + " auto-cpufreq running " + "-" * 30 + "\n")
