@@ -87,7 +87,7 @@ def get_turbo_override():
 
 def set_turbo_override(override):
     if override in ["never", "always"]:
-        with open(governor_override_state, "wb") as store:
+        with open(turbo_override_state, "wb") as store:
             dump(override, store)
         print(f"Set turbo boost override to {override}")
     elif override == "auto":
@@ -247,6 +247,7 @@ def set_turbo(value:bool):
 
 # ignore these devices under /sys/class/power_supply/
 def get_power_supply_ignore_list():
+
     conf = config.get_config()
 
     list = []
@@ -952,8 +953,8 @@ def mon_powersave():
     cpuload, load1m = get_load()
 
     if psutil.cpu_percent(percpu=False, interval=0.01) >= 30.0 or isclose(
-        max(psutil.cpu_percent(percpu=True, interval=0.01)), 100
-    ): print("High CPU load", end="")
+            max(psutil.cpu_percent(percpu=True, interval=0.01)), 100
+        ): print("High CPU load", end="")
     elif load1m > powersave_load_threshold: print("High system load", end="")
     else: print("Load optimal", end="")
     display_system_load_avg()
