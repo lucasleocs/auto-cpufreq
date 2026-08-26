@@ -28,3 +28,6 @@ jobs:
 
       - name: "Install auto-cpufreq"
         run: sudo ./auto-cpufreq-installer --install
+
+      - name: Run Python regression tests
+        run: sudo /opt/auto-cpufreq/venv/bin/python -m unittest discover -s tests -p "test_*.py" -v
