@@ -6,8 +6,7 @@
 
 # core import
 import sys, time, os
-from subprocess import run
-from shutil import rmtree
+from subprocess import PIPE, run
 
 from auto_cpufreq.battery_scripts.battery import *
 from auto_cpufreq.config.config import config as conf, find_config_file
@@ -17,7 +16,94 @@ from auto_cpufreq.modules.system_info import print_system_report
 from auto_cpufreq.modules.system_monitor import ViewType, SystemMonitor
 # import everything from power_helper, including bluetooth_disable and bluetooth_enable
 from auto_cpufreq.power_helper import *
+from auto_cpufreq.update import (
+    UpdateError,
+    get_update_status,
+    install_release_source,
+    prepare_release_source,
+    release_version_matches,
+)
 from threading import Thread
+
+
+def _apply_release_update(status, custom_dir):
+    """Prepare a release before replacing the installed package."""
+    daemon_remove_script = "/usr/local/bin/auto-cpufreq-remove"
+    daemon_was_installed = os.path.exists(daemon_remove_script)
+
+    try:
+        source_dir = prepare_release_source(custom_dir, status.latest_version)
+    except UpdateError as error:
+        raise click.ClickException(str(error)) from error
+
+    if daemon_was_installed:
+        try:
+            remove_result = run([daemon_remove_script])
+        except OSError as error:
+            raise click.ClickException(
+                f"Unable to stop the existing auto-cpufreq daemon for update: {error}"
+            ) from error
+        if remove_result.returncode != 0:
+            raise click.ClickException(
+                "Unable to stop the existing auto-cpufreq daemon for update "
+                f"(status {remove_result.returncode})"
+            )
+
+    try:
+        install_release_source(source_dir)
+    except UpdateError as error:
+        detail = (
+            "The new release could not be installed"
+            + (" after the previous daemon was removed" if daemon_was_installed else "")
+        )
+        raise click.ClickException(f"{detail}: {error}") from error
+
+    if daemon_was_installed:
+        print("enabling daemon")
+        try:
+            install_result = run(["auto-cpufreq", "--install"])
+        except OSError as error:
+            raise click.ClickException(
+                f"The package was updated, but the daemon could not be reinstalled: {error}"
+            ) from error
+        if install_result.returncode != 0:
+            raise click.ClickException(
+                "The package was updated, but the daemon could not be reinstalled "
+                f"(status {install_result.returncode})"
+            )
+
+    try:
+        version_result = run(
+            ["auto-cpufreq", "--version"],
+            stdout=PIPE,
+            stderr=PIPE,
+            text=True,
+        )
+    except OSError as error:
+        raise click.ClickException(
+            f"The update finished, but the installed version could not be checked: {error}"
+        ) from error
+
+    if version_result.returncode != 0:
+        detail = (version_result.stderr or "").strip()
+        suffix = f": {detail}" if detail else ""
+        raise click.ClickException(
+            "The update finished, but the installed version could not be verified "
+            f"(status {version_result.returncode}){suffix}"
+        )
+
+    version_output = (version_result.stdout or "").strip()
+    if not release_version_matches(version_output, status.latest_version):
+        reported = version_output or "no version output"
+        raise click.ClickException(
+            "The update installer completed, but the installed version does not "
+            f"match {status.latest_version}: {reported}"
+        )
+
+    print("auto-cpufreq is installed with the latest version")
+    if version_output:
+        print(version_output)
+
 
 @click.command()
 @click.option("--monitor", is_flag=True, help="Monitor and see suggestions for CPU optimizations")
@@ -175,36 +261,43 @@ def main(monitor, live, daemon, install, update, remove, force, turbo, config, s
             custom_dir = "/opt/auto-cpufreq/source"
             for arg in sys.argv:
                 if arg.startswith("--update="):
-                    custom_dir = arg.split("=")[1]
+                    custom_dir = arg.split("=", 1)[1]
                     sys.argv.remove(arg)
-
+                    
             if "--update" in sys.argv:
-                update = True
                 sys.argv.remove("--update")
-                if len(sys.argv) == 2: custom_dir = sys.argv[1] 
-
+                if len(sys.argv) == 2: custom_dir = sys.argv[1]
+                    
             if IS_INSTALLED_WITH_SNAP:
                 print("Detected auto-cpufreq was installed using snap")
-                # refresh snap directly using this command
-                # path wont work in this case
-
                 print("Please update using snap package manager, i.e: `sudo snap refresh auto-cpufreq`.")
-                #check for AUR 
-            elif IS_INSTALLED_WITH_AUR: print("Arch-based distribution with AUR support detected. Please refresh auto-cpufreq using your AUR helper.")
+            elif IS_INSTALLED_WITH_AUR:
+                print("Arch-based distribution with AUR support detected. Please refresh auto-cpufreq using your AUR helper.")
             else:
-                is_new_update = check_for_update()
-                if not is_new_update: return
+                try:
+                    status = get_update_status()
+                except Exception as error:
+                    raise click.ClickException(
+                        f"Unable to check for auto-cpufreq updates: {error}"
+                    ) from error
+
+                if not status.update_available:
+                    print(
+                        "No newer auto-cpufreq release is available.\n"
+                        f"Current version: {status.current_version}\n"
+                        f"Latest release: {status.latest_version}"
+                    )
+                    return
+
+                print(
+                    "Updates are available,\n"
+                    f"Current version: {status.current_version}\n"
+                    f"Latest version: {status.latest_version}"
+                )
+                print("Note that your previous custom settings might be erased with the following update")
                 ans = input("Do you want to update auto-cpufreq to the latest release? [Y/n]: ").strip().lower()
-                if not os.path.exists(custom_dir): os.makedirs(custom_dir)
-                if os.path.exists(os.path.join(custom_dir, "auto-cpufreq")): rmtree(os.path.join(custom_dir, "auto-cpufreq"))
                 if ans in ['', 'y', 'yes']:
-                    remove_daemon()
-                    remove_complete_msg()
-                    new_update(custom_dir)
-                    print("enabling daemon")
-                    run(["auto-cpufreq", "--install"])
-                    print("auto-cpufreq is installed with the latest version")
-                    run(["auto-cpufreq", "--version"])
+                    _apply_release_update(status, custom_dir)
                 else: print("Aborted")
         elif remove:
             root_check()
