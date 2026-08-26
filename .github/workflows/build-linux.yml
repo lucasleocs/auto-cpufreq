@@ -29,6 +29,9 @@ jobs:
       - name: Test source installer failure propagation
         run: sudo bash tests/test-source-installer.sh
 
+      - name: Test cpufreqctl CPU topology handling
+        run: sudo bash tests/test-cpufreqctl-topology.sh
+
       - name: "Install auto-cpufreq"
         run: sudo ./auto-cpufreq-installer --install
 

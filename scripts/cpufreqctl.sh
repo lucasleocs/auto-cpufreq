@@ -1,13 +1,46 @@
 #!/usr/bin/env bash
 
 VERSION='20'
-cpucount=`cat /proc/cpuinfo | grep processor | wc -l`
 FLROOT=/sys/devices/system/cpu
 FWROOT=/sys/firmware
 DRIVER=auto
 VERBOSE=0
 WRITE_ERROR=0
 WRITE_ERROR_REPORTED=0
+
+function online_cpu_ids () {
+  local spec segment start end cpu path
+
+  if [ -r "$FLROOT/online" ]; then
+    IFS= read -r spec < "$FLROOT/online"
+    IFS=',' read -ra segments <<< "$spec"
+    for segment in "${segments[@]}"; do
+      if [[ "$segment" =~ ^([0-9]+)-([0-9]+)$ ]]; then
+        start="${BASH_REMATCH[1]}"
+        end="${BASH_REMATCH[2]}"
+        for ((cpu=start; cpu<=end; cpu++)); do
+          echo "$cpu"
+        done
+      elif [[ "$segment" =~ ^[0-9]+$ ]]; then
+        echo "$segment"
+      fi
+    done
+    return
+  fi
+
+  # Fallback for unusual systems without the standard online mask.
+  for path in "$FLROOT"/cpu[0-9]*; do
+    [ -d "$path" ] || continue
+    cpu="${path##*cpu}"
+    if [ ! -f "$path/online" ] || [ "$(cat "$path/online")" = "1" ]; then
+      echo "$cpu"
+    fi
+  done
+}
+
+mapfile -t CPU_IDS < <(online_cpu_ids)
+cpucount=${#CPU_IDS[@]}
+DEFAULT_CPU="${CPU_IDS[0]:-0}"
 
 ## parse special options
 for i in "$@"; do
@@ -45,7 +78,7 @@ function help () {
   echo "  -v, --verbose               Verbose output"
   echo
   echo "  -s, --set       =VALUE      Set VALUE for selected option"
-  echo "  -c, --core      =NUMBER     Apply selected option just for the core NUMBER (0 ~ N - 1)"
+  echo "  -c, --core      =NUMBER     Apply selected option to logical CPU ID NUMBER"
   echo "  -a, --available             Get available values instand of default: current"
   echo
   echo "  -d, --driver                Current processor driver"
@@ -73,8 +106,8 @@ function help () {
 
 function info () {
   echo "CPU driver: "`driver`
-  echo "Governors: "`cat $FLROOT/cpu0/cpufreq/scaling_available_governors`
-  echo "Frequencies: "`cat $FLROOT/cpu0/cpufreq/scaling_available_frequencies`
+  echo "Governors: "`cat $FLROOT/cpu$DEFAULT_CPU/cpufreq/scaling_available_governors`
+  echo "Frequencies: "`cat $FLROOT/cpu$DEFAULT_CPU/cpufreq/scaling_available_frequencies`
   echo
   echo "Usage:"
   echo "## list scaling governors:"
@@ -94,7 +127,7 @@ verbose () {
 }
 
 function driver () {
-  cat $FLROOT/cpu0/cpufreq/scaling_driver
+  cat $FLROOT/cpu$DEFAULT_CPU/cpufreq/scaling_driver
 }
 
 function write_value () {
@@ -121,28 +154,21 @@ function set_driver () {
 }
 
 function get_governor () {
-  if [ -z $CORE ]
-  then
-    i=0
-    ag=''
-    while [ $i -ne $cpucount ]; do
-      if [ $i = 0 ]; then ag=`cat $FLROOT/cpu0/cpufreq/scaling_governor`
-      else ag=$ag' '`cat $FLROOT/cpu$i/cpufreq/scaling_governor`
-      fi
-      i=`expr $i + 1`
+  if [ -z $CORE ]; then
+    local values=()
+    for i in "${CPU_IDS[@]}"; do
+      values+=("$(cat "$FLROOT/cpu$i/cpufreq/scaling_governor")")
     done
-    echo $ag
+    echo "${values[*]}"
   else cat $FLROOT/cpu$CORE/cpufreq/scaling_governor
   fi
 }
 
 function set_governor () {
   if [ -z $CORE ]; then
-    i=0
-    while [ $i -ne $cpucount ]; do
-      FLNM="$FLROOT/cpu"$i"/cpufreq/scaling_governor"
+    for i in "${CPU_IDS[@]}"; do
+      FLNM="$FLROOT/cpu$i/cpufreq/scaling_governor"
       write_value
-      i=`expr $i + 1`
     done
   else echo $VALUE > $FLROOT/cpu$CORE/cpufreq/scaling_governor
   fi
@@ -150,13 +176,13 @@ function set_governor () {
 
 function get_frequency () {
   if [ -z $CORE ]; then
-    i=0
-    V=0
-    M=$(cat "$FLROOT/cpu0/cpufreq/scaling_cur_freq")
-    while [ $i -ne $cpucount ]; do
-      V=$(cat "$FLROOT/cpu"$i"/cpufreq/scaling_cur_freq")
-      if [[ $V > $M ]]; then M=$V; fi
-      i=`expr $i + 1`
+    local first_cpu="${CPU_IDS[0]:-$DEFAULT_CPU}"
+    local V=0
+    local M
+    M=$(cat "$FLROOT/cpu$first_cpu/cpufreq/scaling_cur_freq")
+    for i in "${CPU_IDS[@]}"; do
+      V=$(cat "$FLROOT/cpu$i/cpufreq/scaling_cur_freq")
+      if (( V > M )); then M=$V; fi
     done
     echo "$M"
   else cat $FLROOT/cpu$CORE/cpufreq/scaling_cur_freq
@@ -170,103 +196,82 @@ function set_frequency () {
     return 1
   fi
   if [ -z $CORE ]; then
-    i=0
-    while [ $i -ne $cpucount ]; do
-      FLNM="$FLROOT/cpu"$i"/cpufreq/scaling_setspeed"
+    for i in "${CPU_IDS[@]}"; do
+      FLNM="$FLROOT/cpu$i/cpufreq/scaling_setspeed"
       write_value
-      i=`expr $i + 1`
     done
   else echo $VALUE > $FLROOT/cpu$CORE/cpufreq/scaling_setspeed
   fi
 }
 
 function get_frequency_min () {
-  if [ -z $CORE ]; then CORE=0; fi
-  cat $FLROOT/cpu$CORE/cpufreq/scaling_min_freq
+  local cpu="${CORE:-$DEFAULT_CPU}"
+  cat $FLROOT/cpu$cpu/cpufreq/scaling_min_freq
 }
 
 function set_frequency_min () {
   if [ -z $CORE ]; then
-    i=0
-    while [ $i -ne $cpucount ]; do
-      FLNM="$FLROOT/cpu"$i"/cpufreq/scaling_min_freq"
+    for i in "${CPU_IDS[@]}"; do
+      FLNM="$FLROOT/cpu$i/cpufreq/scaling_min_freq"
       write_value
-      i=`expr $i + 1`
     done
   else echo $VALUE > $FLROOT/cpu$CORE/cpufreq/scaling_min_freq
   fi
 }
 
 function get_frequency_max () {
-  if [ -z $CORE ]; then CORE=0; fi
-  cat $FLROOT/cpu$CORE/cpufreq/scaling_max_freq
+  local cpu="${CORE:-$DEFAULT_CPU}"
+  cat $FLROOT/cpu$cpu/cpufreq/scaling_max_freq
 }
 
 function set_frequency_max () {
   if [ -z $CORE ]; then
-    i=0
-    while [ $i -ne $cpucount ]; do
-      FLNM="$FLROOT/cpu"$i"/cpufreq/scaling_max_freq"
+    for i in "${CPU_IDS[@]}"; do
+      FLNM="$FLROOT/cpu$i/cpufreq/scaling_max_freq"
       write_value
-      i=`expr $i + 1`
     done
   else echo $VALUE > $FLROOT/cpu$CORE/cpufreq/scaling_max_freq
   fi
 }
 
 function get_frequency_min_limit () {
-  if [ -z $CORE ]; then CORE=0; fi
-  echo $(awk '{a[NR]=$1} END{if(a[1]<a[2]) print a[1]; else print a[2]}' $FLROOT/cpu$CORE/cpufreq/cpuinfo_min_freq $FLROOT/cpu$CORE/cpufreq/scaling_min_freq)
+  local cpu="${CORE:-$DEFAULT_CPU}"
+  echo $(awk '{a[NR]=$1} END{if(a[1]<a[2]) print a[1]; else print a[2]}' $FLROOT/cpu$cpu/cpufreq/cpuinfo_min_freq $FLROOT/cpu$cpu/cpufreq/scaling_min_freq)
 }
 
 function get_frequency_max_limit () {
-  if [ -z $CORE ]; then CORE=0; fi
-  echo $(awk '{a[NR]=$1} END{if(a[1]>a[2]) print a[1]; else print a[2]}' $FLROOT/cpu$CORE/cpufreq/cpuinfo_max_freq $FLROOT/cpu$CORE/cpufreq/scaling_max_freq)
+  local cpu="${CORE:-$DEFAULT_CPU}"
+  echo $(awk '{a[NR]=$1} END{if(a[1]>a[2]) print a[1]; else print a[2]}' $FLROOT/cpu$cpu/cpufreq/cpuinfo_max_freq $FLROOT/cpu$cpu/cpufreq/scaling_max_freq)
 }
 
 function get_energy_performance_preference () {
   if [ -z $CORE ]; then
-    i=0
-    ag=''
-    while [ $i -ne $cpucount ]; do
-      if [ $i = 0 ]; then
-        ag=`cat $FLROOT/cpu0/cpufreq/energy_performance_preference`
-      else
-        ag=$ag' '`cat $FLROOT/cpu$i/cpufreq/energy_performance_preference`
-      fi
-      i=`expr $i + 1`
+    local values=()
+    for i in "${CPU_IDS[@]}"; do
+      values+=("$(cat "$FLROOT/cpu$i/cpufreq/energy_performance_preference")")
     done
-    echo $ag
+    echo "${values[*]}"
   else cat $FLROOT/cpu$CORE/cpufreq/energy_performance_preference
   fi
 }
 
 function set_energy_performance_preference () {
   if [ -z $CORE ]; then
-    i=0
-    while [ $i -ne $cpucount ]; do
-      FLNM="$FLROOT/cpu"$i"/cpufreq/energy_performance_preference"
+    for i in "${CPU_IDS[@]}"; do
+      FLNM="$FLROOT/cpu$i/cpufreq/energy_performance_preference"
       write_value
-      i=`expr $i + 1`
     done
   else echo $VALUE > $FLROOT/cpu$CORE/cpufreq/energy_performance_preference
   fi
 }
 
-
 function get_energy_performance_bias () {
   if [ -z $CORE ]; then
-    i=0
-    ag=''
-    while [ $i -ne $cpucount ]; do
-      if [ $i = 0 ]; then
-        ag=`cat $FLROOT/cpu0/power/energy_perf_bias`
-      else
-        ag=$ag' '`cat $FLROOT/cpu$i/power/energy_perf_bias`
-      fi
-      i=`expr $i + 1`
+    local values=()
+    for i in "${CPU_IDS[@]}"; do
+      values+=("$(cat "$FLROOT/cpu$i/power/energy_perf_bias")")
     done
-    echo $ag
+    echo "${values[*]}"
   else cat $FLROOT/cpu$CORE/power/energy_perf_bias
   fi
 }
@@ -295,11 +300,9 @@ function set_energy_performance_bias () {
   fi
 
   if [ -z $CORE ]; then
-    i=0
-    while [ $i -ne $cpucount ]; do
-      FLNM="$FLROOT/cpu"$i"/power/energy_perf_bias"
+    for i in "${CPU_IDS[@]}"; do
+      FLNM="$FLROOT/cpu$i/power/energy_perf_bias"
       write_value "$EPB_VALUE"
-      i=`expr $i + 1`
     done
   else echo $EPB_VALUE > $FLROOT/cpu$CORE/power/energy_perf_bias
   fi
@@ -310,7 +313,7 @@ case $OPTION in
   --version) echo $VERSION;;
   -d|--driver) driver;;
   -g|--governor)
-    if [ ! -z $AVAILABLE ]; then cat $FLROOT/cpu0/cpufreq/scaling_available_governors
+    if [ ! -z $AVAILABLE ]; then cat $FLROOT/cpu$DEFAULT_CPU/cpufreq/scaling_available_governors
     elif [ -z $VALUE ]; then
       verbose "Getting CPU"$CORE" governors"
       get_governor
@@ -320,7 +323,7 @@ case $OPTION in
     fi
   ;;
   -e|--epp)
-    if [ ! -z $AVAILABLE ]; then cat $FLROOT/cpu0/cpufreq/energy_performance_available_preferences
+    if [ ! -z $AVAILABLE ]; then cat $FLROOT/cpu$DEFAULT_CPU/cpufreq/energy_performance_available_preferences
     elif [ -z $VALUE ]; then
       verbose "Getting CPU"$CORE" EPPs"
       get_energy_performance_preference
@@ -330,7 +333,7 @@ case $OPTION in
     fi
   ;;
   --epb)
-    if [ ! -z $AVAILABLE ]; then cat $FLROOT/cpu0/power/energy_perf_bias
+    if [ ! -z $AVAILABLE ]; then cat $FLROOT/cpu$DEFAULT_CPU/power/energy_perf_bias
     elif [ -z $VALUE ]; then 
       verbose "Getting CPU"$CORE" EPBs"
       get_energy_performance_bias
@@ -353,7 +356,7 @@ case $OPTION in
     fi
   ;;
   -f|--frequency)
-    if [ ! -z $AVAILABLE ]; then cat $FLROOT/cpu0/cpufreq/scaling_available_frequencies
+    if [ ! -z $AVAILABLE ]; then cat $FLROOT/cpu$DEFAULT_CPU/cpufreq/scaling_available_frequencies
     elif [ -z $VALUE ]; then
       verbose "Getting CPU"$CORE" frequency"
       get_frequency
@@ -443,13 +446,10 @@ case $OPTION in
     fi
   ;;
   --throttle)
-    i=1
-    V=0
-    M=$(cat "$FLROOT/cpu0/thermal_throttle/core_throttle_count")
-    while [ $i -ne $cpucount ]; do
+    M=0
+    for i in "${CPU_IDS[@]}"; do
       V=$(cat "$FLROOT/cpu$i/thermal_throttle/core_throttle_count")
-      M=`expr $M + $V`
-      i=`expr $i + 1`
+      M=$((M + V))
     done
     echo "$M"
   ;;
