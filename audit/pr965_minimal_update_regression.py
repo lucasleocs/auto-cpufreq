@@ -38,7 +38,18 @@ finally:
 check("checker carries exact release tag", target == "v9.9.9", repr(target))
 check("update preparation stays in core", hasattr(core, "prepare_update_source"))
 check("daemon installation detection stays in core", hasattr(core, "daemon_is_installed"))
+check("source-installation detection stays in core", hasattr(core, "source_installation_is_managed"))
 check("installed-version verification stays in core", hasattr(core, "update_version_matches"))
+
+if hasattr(core, "source_installation_is_managed"):
+    old_isfile = core.os.path.isfile
+    try:
+        core.os.path.isfile = lambda path: path == "/opt/auto-cpufreq/venv/bin/auto-cpufreq"
+        check("official source venv is recognized", core.source_installation_is_managed())
+        core.os.path.isfile = lambda path: False
+        check("package-managed install is not treated as source", not core.source_installation_is_managed())
+    finally:
+        core.os.path.isfile = old_isfile
 
 if hasattr(core, "prepare_update_source"):
     calls = []
@@ -93,6 +104,7 @@ check("desktop-file-utils is declared", "desktop-file-utils" in installer)
 bin_source = (ROOT / "auto_cpufreq/bin/auto_cpufreq.py").read_text()
 check("CLI has no package-specific daemon wrapper path", "/usr/local/bin/auto-cpufreq-remove" not in bin_source)
 check("source preparation precedes daemon removal", bin_source.find("prepare_update_source") != -1 and bin_source.find("prepare_update_source") < bin_source.find("remove_daemon()"))
+check("external package guard precedes release check", bin_source.find("source_installation_is_managed") != -1 and bin_source.find("source_installation_is_managed") < bin_source.find("latest_version = check_for_update()"))
 check("Snap path remains separate from source updater", bin_source.find("if IS_INSTALLED_WITH_SNAP") < bin_source.find("prepare_update_source"))
 check("AUR path remains separate from source updater", bin_source.find("IS_INSTALLED_WITH_AUR") < bin_source.find("prepare_update_source"))
 check("no separate update module", not (ROOT / "auto_cpufreq/update.py").exists())
