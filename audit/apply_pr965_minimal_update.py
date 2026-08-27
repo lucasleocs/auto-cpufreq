@@ -4,29 +4,29 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def replace_once(path, old, new):
+def replace_expected(path, old, new, expected=1):
     file_path = ROOT / path
     text = file_path.read_text()
     count = text.count(old)
-    if count != 1:
-        raise SystemExit(f"{path}: expected exactly one match, found {count}")
-    file_path.write_text(text.replace(old, new, 1))
-    print(f"updated {path}")
+    if count != expected:
+        raise SystemExit(f"{path}: expected {expected} match(es), found {count}")
+    file_path.write_text(text.replace(old, new))
+    print(f"updated {path} ({count} match{'es' if count != 1 else ''})")
 
 
-replace_once(
+replace_expected(
     "auto_cpufreq/core.py",
     "from shutil import copy\nfrom subprocess import call, check_output, DEVNULL, getoutput, run\n",
     "from shutil import copy, rmtree\nfrom subprocess import call, CalledProcessError, check_output, DEVNULL, getoutput, run\n",
 )
 
-replace_once(
+replace_expected(
     "auto_cpufreq/core.py",
     '            return True\n    # Handle the case where "tag_name" key doesn\'t exist\n',
     '            return latest_version\n    # Handle the case where "tag_name" key doesn\'t exist\n',
 )
 
-replace_once(
+replace_expected(
     "auto_cpufreq/core.py",
     '''def new_update(custom_dir):
     os.chdir(custom_dir)
@@ -102,13 +102,13 @@ def update_version_matches(expected_version):
 ''',
 )
 
-replace_once(
+replace_expected(
     "auto_cpufreq/bin/auto_cpufreq.py",
     "from subprocess import run\nfrom shutil import rmtree\n",
     "from subprocess import run\n",
 )
 
-replace_once(
+replace_expected(
     "auto_cpufreq/bin/auto_cpufreq.py",
     '''                is_new_update = check_for_update()
                 if not is_new_update: return
@@ -166,46 +166,56 @@ installer_changes = [
     (
         '  echo "Install: python3, pip3, python3-setuptools, gobject-introspection, cairo (or cairo-devel), gcc, and gtk3"; echo\n',
         '  echo "Install: python3, pip3, python3-setuptools, gobject-introspection, cairo (or cairo-devel), gcc, gtk3, and desktop-file-utils"; echo\n',
+        1,
     ),
     (
         'function tool_install {\n  echo\n',
         'function tool_install {\n  set -e\n\n  echo\n',
+        1,
     ),
     (
         '        echo "Error: pyproject.toml not found and PyGObject version not updated!"\n    fi\n',
         '        echo "Error: pyproject.toml not found and PyGObject version not updated!"\n        return 1\n    fi\n',
+        1,
     ),
     (
         '    "$LIB_GI_REPO" libcairo2-dev libgtk-3-dev gcc python3-gi\n',
         '    "$LIB_GI_REPO" libcairo2-dev libgtk-3-dev gcc python3-gi desktop-file-utils\n',
+        1,
     ),
     (
         '    if [ -f /etc/centos-release ]; then yum install platform-python-devel\n    else yum install python-devel\n    fi\n    yum install dmidecode gcc cairo-devel gobject-introspection-devel cairo-gobject-devel gtk3-devel\n',
         '    if [ -f /etc/centos-release ]; then yum install -y platform-python-devel\n    else yum install -y python3-devel\n    fi\n    yum install -y dmidecode gcc cairo-devel gobject-introspection-devel cairo-gobject-devel gtk3-devel desktop-file-utils\n',
+        1,
     ),
     (
         '    eopkg install pip python3 python3-devel dmidecode gobject-introspection-devel libcairo-devel gcc libgtk-3\n    eopkg install -c system.devel\n',
         '    eopkg install -y pip python3 python3-devel dmidecode gobject-introspection-devel libcairo-devel gcc libgtk-3 desktop-file-utils\n    eopkg install -y -c system.devel\n',
+        1,
     ),
     (
         '    pacman -S --noconfirm --needed python python-pip python-setuptools base-devel dmidecode gobject-introspection gtk3 gcc\n',
         '    pacman -S --noconfirm --needed python python-pip python-setuptools base-devel dmidecode gobject-introspection gtk3 gcc desktop-file-utils\n',
+        1,
     ),
     (
         '        zypper install -y python3 python3-pip python311-setuptools python3-devel gcc dmidecode gobject-introspection-devel python3-cairo-devel gtk3 gtk3-devel\n',
         '        zypper install -y python3 python3-pip python311-setuptools python3-devel gcc dmidecode gobject-introspection-devel python3-cairo-devel gtk3 gtk3-devel desktop-file-utils\n',
+        2,
     ),
     (
         '        xbps-install -Sy python3 python3-pip python3-devel python3-setuptools base-devel dmidecode cairo-devel gobject-introspection gcc gtk+3\n',
         '        xbps-install -Sy python3 python3-pip python3-devel python3-setuptools base-devel dmidecode cairo-devel gobject-introspection gcc gtk+3 desktop-file-utils\n',
+        1,
     ),
     (
         '  git config --global --add safe.directory $(pwd)\n',
         '  git config --global --add safe.directory "$(pwd)"\n',
+        1,
     ),
 ]
 
-for old, new in installer_changes:
-    replace_once("auto-cpufreq-installer", old, new)
+for old, new, expected in installer_changes:
+    replace_expected("auto-cpufreq-installer", old, new, expected)
 
 print("candidate updater transformation complete")
