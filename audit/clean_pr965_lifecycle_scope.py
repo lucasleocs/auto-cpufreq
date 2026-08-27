@@ -7,11 +7,11 @@ text = path.read_text()
 
 patterns = (
     (
-        r'(?m)^\s+max\(psutil\.cpu_percent\(percpu=True, interval=0\.01\)\), 100\)$',
+        r'(?m)^[ \t]+max[(]psutil[.]cpu_percent[(]percpu=True, interval=0[.]01[)][)], 100[)]$',
         '        max(psutil.cpu_percent(percpu=True, interval=0.01)), 100',
     ),
     (
-        r'(?m)^\s+\): print\("High CPU load", end=""\)$',
+        r'(?m)^[ \t]+[)]: print[(]"High CPU load", end=""[)]$',
         '    ): print("High CPU load", end="")',
     ),
 )
