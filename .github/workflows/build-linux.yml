@@ -23,6 +23,9 @@ jobs:
           python-version: 3.12
           cache: "poetry"
 
+      - name: Test source installer failure propagation
+        run: sudo bash audit/pr965_installer_failfast.sh
+
       - name: "Install auto-cpufreq"
         run: sudo ./auto-cpufreq-installer --install
       
