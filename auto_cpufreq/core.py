@@ -305,6 +305,18 @@ def remove_complete_msg():
     print("auto-cpufreq successfully removed.")
     footer()
 
+def _run_daemon_lifecycle_script(path, action):
+    try:
+        result = run([path])
+    except OSError as error:
+        raise click.ClickException(f"Unable to {action} auto-cpufreq daemon: {error}") from error
+
+    if result.returncode != 0:
+        raise click.ClickException(
+            f"Unable to {action} auto-cpufreq daemon (status {result.returncode})"
+        )
+
+
 def deploy_daemon():
     print("\n" + "-" * 21 + " Deploying auto-cpufreq as a daemon " + "-" * 22 + "\n")
 
@@ -330,7 +342,7 @@ def deploy_daemon():
 
     tlp_service_detect() # output warning if TLP service is detected
 
-    call("/usr/local/bin/auto-cpufreq-install", shell=True)
+    _run_daemon_lifecycle_script("/usr/local/bin/auto-cpufreq-install", "install")
 
 def deploy_daemon_performance():
     print("\n" + "-" * 21 + " Deploying auto-cpufreq as a daemon (performance) " + "-" * 22 + "\n")
@@ -360,7 +372,7 @@ def deploy_daemon_performance():
    
     tlp_service_detect() # output warning if TLP service is detected
 
-    call("/usr/local/bin/auto-cpufreq-install", shell=True)
+    _run_daemon_lifecycle_script("/usr/local/bin/auto-cpufreq-install", "install")
 
 def remove_daemon():
     # check if auto-cpufreq is installed
@@ -370,6 +382,9 @@ def remove_daemon():
 
     print("\n" + "-" * 21 + " Removing auto-cpufreq daemon " + "-" * 22 + "\n")
 
+    # Stop and remove auto-cpufreq before restoring competing power managers.
+    _run_daemon_lifecycle_script("/usr/local/bin/auto-cpufreq-remove", "remove")
+
     bluetooth_enable() # turn on bluetooth on boot
 
     # output warning if gnome power profile is stopped
@@ -377,9 +392,6 @@ def remove_daemon():
     gnome_power_svc_enable()
 
     tuned_svc_enable()
-
-    # run auto-cpufreq daemon remove script
-    call("/usr/local/bin/auto-cpufreq-remove", shell=True)
 
     # remove auto-cpufreq-remove
     os.remove("/usr/local/bin/auto-cpufreq-remove")

@@ -1,10 +1,8 @@
 diff --git a/auto_cpufreq/core.py b/auto_cpufreq/core.py
-index f03e7de..2dff5fb 100755
+index 9ce3a7b..2dff5fb 100755
 --- a/auto_cpufreq/core.py
 +++ b/auto_cpufreq/core.py
-@@ -277,19 +277,12 @@ def get_current_gov():
-     )
- 
+@@ -278,15 +278,8 @@
  def cpufreqctl():
 -    """
 -    deploy cpufreqctl.auto-cpufreq script
@@ -24,11 +22,7 @@ index f03e7de..2dff5fb 100755
 +    #no need to restore
 +    pass
  
- def footer(l=79): print("\n" + "-" * l + "\n")
- 
-@@ -307,31 +300,8 @@ def remove_complete_msg():
-     footer()
- 
+@@ -320,27 +313,4 @@
  def deploy_daemon():
 -    print("\n" + "-" * 21 + " Deploying auto-cpufreq as a daemon " + "-" * 22 + "\n")
 -
@@ -54,16 +48,11 @@ index f03e7de..2dff5fb 100755
 -
 -    tlp_service_detect() # output warning if TLP service is detected
 -
--    call("/usr/local/bin/auto-cpufreq-install", shell=True)
+-    _run_daemon_lifecycle_script("/usr/local/bin/auto-cpufreq-install", "install")
 +    # prevent needless copying and system changes
 +    pass
  
- def deploy_daemon_performance():
-     print("\n" + "-" * 21 + " Deploying auto-cpufreq as a daemon (performance) " + "-" * 22 + "\n")
-@@ -363,37 +333,7 @@ def deploy_daemon_performance():
- 
-     call("/usr/local/bin/auto-cpufreq-install", shell=True)
- 
+@@ -377,32 +347,2 @@
 -def remove_daemon():
 -    # check if auto-cpufreq is installed
 -    if not os.path.exists("/usr/local/bin/auto-cpufreq-remove"):
@@ -72,6 +61,9 @@ index f03e7de..2dff5fb 100755
 -
 -    print("\n" + "-" * 21 + " Removing auto-cpufreq daemon " + "-" * 22 + "\n")
 -
+-    # Stop and remove auto-cpufreq before restoring competing power managers.
+-    _run_daemon_lifecycle_script("/usr/local/bin/auto-cpufreq-remove", "remove")
+-
 -    bluetooth_enable() # turn on bluetooth on boot
 -
 -    # output warning if gnome power profile is stopped
@@ -79,9 +71,6 @@ index f03e7de..2dff5fb 100755
 -    gnome_power_svc_enable()
 -
 -    tuned_svc_enable()
--
--    # run auto-cpufreq daemon remove script
--    call("/usr/local/bin/auto-cpufreq-remove", shell=True)
 -
 -    # remove auto-cpufreq-remove
 -    os.remove("/usr/local/bin/auto-cpufreq-remove")
@@ -96,6 +85,3 @@ index f03e7de..2dff5fb 100755
 -
 -    cpufreqctl_restore() # restore original cpufrectl script
 +def remove_daemon(): pass
- 
- def gov_check():
-     for gov in AVAILABLE_GOVERNORS:
