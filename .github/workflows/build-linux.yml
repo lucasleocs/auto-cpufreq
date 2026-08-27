@@ -8,6 +8,9 @@ on:
       - "LICENSE"
   pull_request:
 
+permissions:
+  contents: write
+
 jobs:
   build_linux:
     runs-on: ubuntu-latest
@@ -33,3 +36,21 @@ jobs:
 
       - name: "PR 965 minimal updater regression"
         run: /opt/auto-cpufreq/venv/bin/python audit/pr965_minimal_update_regression.py
+
+      - name: "Verify candidate syntax and diff"
+        run: |
+          /opt/auto-cpufreq/venv/bin/python -m compileall -q auto_cpufreq
+          bash -n auto-cpufreq-installer
+          bash -n scripts/auto-cpufreq-install.sh
+          bash -n scripts/auto-cpufreq-remove.sh
+          git diff --check HEAD -- auto-cpufreq-installer auto_cpufreq/core.py auto_cpufreq/bin/auto_cpufreq.py
+
+      - name: "Materialize validated updater candidate"
+        if: success()
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -B stage/pr965-materialized-candidate
+          git add auto-cpufreq-installer auto_cpufreq/core.py auto_cpufreq/bin/auto_cpufreq.py
+          git commit -m "wip: materialize validated updater candidate [skip ci]"
+          git push --force origin HEAD:stage/pr965-materialized-candidate
