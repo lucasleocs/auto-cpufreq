@@ -23,6 +23,11 @@ jobs:
           python-version: 3.12
           cache: "poetry"
 
+      - name: "Apply PR 965 candidate patch"
+        run: |
+          git apply --check audit/pr965_minimal_update.patch
+          git apply audit/pr965_minimal_update.patch
+
       - name: "Install auto-cpufreq"
         run: sudo ./auto-cpufreq-installer --install
 
