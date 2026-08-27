@@ -25,4 +25,6 @@ jobs:
 
       - name: "Install auto-cpufreq"
         run: sudo ./auto-cpufreq-installer --install
-      
+
+      - name: "PR 965 minimal updater regression"
+        run: python3 audit/pr965_minimal_update_regression.py
