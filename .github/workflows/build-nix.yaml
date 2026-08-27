@@ -14,6 +14,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: "Apply PR 965 candidate"
+        run: |
+          python3 audit/apply_pr965_minimal_update.py
+          python3 audit/apply_pr965_source_guard.py
+
       - name: "Install Nix ❄️"
         uses: nixbuild/nix-quick-install-action@v30
 
