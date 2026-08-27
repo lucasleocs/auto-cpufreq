@@ -8,8 +8,8 @@ from pathlib import Path
 from pickle import dump, load
 from re import search
 from requests import get, exceptions
-from shutil import copy
-from subprocess import call, check_output, DEVNULL, getoutput, run
+from shutil import copy, rmtree
+from subprocess import call, CalledProcessError, check_output, DEVNULL, getoutput, run
 from time import sleep
 from warnings import filterwarnings
 
@@ -165,17 +165,78 @@ def check_for_update():
         else:
             print(f"Updates are available,\nCurrent version: {installed_version}\nLatest version: {latest_version}")
             print("Note that your previous custom settings might be erased with the following update")
-            return True
+            return latest_version
     # Handle the case where "tag_name" key doesn't exist
     else: print("Malformed Released data!\nReinstall manually or Open an issue on GitHub for help!")
 
-def new_update(custom_dir):
-    os.chdir(custom_dir)
-    print(f"Cloning the latest release to {custom_dir}")
-    run(["git", "clone", GITHUB+".git"])
-    os.chdir("auto-cpufreq")
-    print(f"package cloned to directory {custom_dir}")
-    run(['./auto-cpufreq-installer'], input='i\n', encoding='utf-8')
+def daemon_is_installed():
+    return os.path.exists("/usr/local/bin/auto-cpufreq-remove")
+
+
+def source_installation_is_managed():
+    """Return whether auto-cpufreq-installer owns the active installation."""
+    return os.path.isfile("/opt/auto-cpufreq/venv/bin/auto-cpufreq")
+
+
+def prepare_update_source(custom_dir, latest_version):
+    """Prepare the exact selected release before changing the installation."""
+    source_dir = os.path.join(custom_dir, "auto-cpufreq")
+
+    try:
+        os.makedirs(custom_dir, exist_ok=True)
+        if os.path.exists(source_dir):
+            rmtree(source_dir)
+    except OSError as error:
+        raise click.ClickException(f"Unable to prepare update directory: {error}") from error
+
+    print(f"Cloning release {latest_version} to {source_dir}")
+    try:
+        result = run([
+            "git", "clone", "--depth", "1", "--branch", latest_version,
+            GITHUB + ".git", source_dir,
+        ])
+    except OSError as error:
+        raise click.ClickException(f"Unable to start git clone: {error}") from error
+
+    if result.returncode != 0:
+        if os.path.exists(source_dir):
+            rmtree(source_dir, ignore_errors=True)
+        raise click.ClickException(
+            f"Unable to download auto-cpufreq release {latest_version} "
+            f"(status {result.returncode})"
+        )
+
+    if not os.path.isfile(os.path.join(source_dir, "auto-cpufreq-installer")):
+        raise click.ClickException(
+            f"Downloaded release {latest_version} does not contain auto-cpufreq-installer"
+        )
+    return source_dir
+
+
+def new_update(source_dir):
+    """Install source that has already been downloaded and validated."""
+    installer = os.path.join(source_dir, "auto-cpufreq-installer")
+    try:
+        result = run([installer], cwd=source_dir, input="i\n", encoding="utf-8")
+    except OSError as error:
+        raise click.ClickException(f"Unable to start release installer: {error}") from error
+
+    if result.returncode != 0:
+        raise click.ClickException(f"Release installer failed (status {result.returncode})")
+
+
+def update_version_matches(expected_version):
+    try:
+        output = check_output(["auto-cpufreq", "--version"]).decode("utf-8")
+    except (OSError, CalledProcessError):
+        return False
+
+    match = next(
+        (search(r"\d+\.\d+\.\d+", line) for line in output.splitlines()
+         if line.startswith("auto-cpufreq version")),
+        None,
+    )
+    return match is not None and "v" + match.group() == expected_version
 
 def get_literal_version(package_name):
     try:
