@@ -26,7 +26,21 @@ jobs:
           python-version: 3.12
           cache: "poetry"
 
-      - name: "Apply PR 965 candidate"
+      - name: "Remove unrelated lifecycle formatting"
+        run: |
+          python3 audit/clean_pr965_lifecycle_scope.py
+          git diff --check HEAD -- auto_cpufreq/core.py
+
+      - name: "Materialize clean lifecycle core"
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -B stage/pr965-materialized-lifecycle
+          git add auto_cpufreq/core.py
+          git commit -m "wip: materialize clean lifecycle core [skip ci]"
+          git push --force origin HEAD:stage/pr965-materialized-lifecycle
+
+      - name: "Apply PR 965 updater candidate"
         run: |
           python3 audit/apply_pr965_minimal_update.py
           python3 audit/apply_pr965_source_guard.py
@@ -48,8 +62,6 @@ jobs:
       - name: "Materialize validated updater candidate"
         if: success()
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git checkout -B stage/pr965-materialized-candidate
           git add auto-cpufreq-installer auto_cpufreq/core.py auto_cpufreq/bin/auto_cpufreq.py
           git commit -m "wip: materialize validated updater candidate [skip ci]"
