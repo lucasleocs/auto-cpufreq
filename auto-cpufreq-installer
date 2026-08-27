@@ -69,6 +69,11 @@ function manual_install {
 }
 
 function tool_install {
+  # Installation is transactional from the caller's perspective: any failed
+  # prerequisite, package install, copy, or integration step must make the
+  # installer return non-zero instead of falling through to the success banner.
+  set -e
+
   echo
   # First argument is the distro
   function detected_distro {
@@ -105,6 +110,7 @@ function tool_install {
         fi
     else
         echo "Error: pyproject.toml not found and PyGObject version not updated!"
+        return 1
     fi
 
 
