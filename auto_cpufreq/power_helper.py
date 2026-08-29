@@ -3,7 +3,7 @@
 # * if daemon is disabled and auto-cpufreq is removed (snap) remind user to enable it back
 import click
 from shutil import which
-from subprocess import call, getoutput
+from subprocess import call, getoutput, run
 from sys import argv
 
 # ToDo: update README part how to run this script
@@ -58,7 +58,7 @@ def tlp_service_detect_snap():
 
 # alert in case gnome power profile service is running
 def gnome_power_detect():
-    if systemctl_exists and not bool(gnome_power_status):
+    if systemctl_exists and gnome_power_status == 0:
         warning()
         print("Detected running GNOME Power Profiles daemon service!")
         print("\nThis daemon might interfere with auto-cpufreq and will be automatically")
@@ -73,7 +73,7 @@ def gnome_power_detect():
 
 # automatically disable gnome power profile service in case it's running during install
 def gnome_power_detect_install():
-    if systemctl_exists and not bool(gnome_power_status):
+    if systemctl_exists and gnome_power_status == 0:
         warning()
         print("Detected running GNOME Power Profiles daemon service!")
         print("\nThis daemon might interfere with auto-cpufreq and will be disabled.\n")
@@ -308,9 +308,25 @@ def gnome_power_svc_disable():
     if not systemctl_exists:
         return
 
+    if gnome_power_status != 0:
+        try:
+            state = run(
+                ["systemctl", "show", "--property=LoadState", "--value", "power-profiles-daemon"],
+                capture_output=True,
+                text=True,
+            )
+        except (OSError, FileNotFoundError, PermissionError):
+            return
+
+        if state.returncode != 0 or state.stdout.strip() not in ("loaded", "masked"):
+            return
+
     if gnome_power_status == 0 and powerprofilesctl_exists:
         print("\nUsing profile: balanced")
-        call(["powerprofilesctl", "set", "balanced"])
+        try:
+            call(["powerprofilesctl", "set", "balanced"])
+        except (OSError, FileNotFoundError, PermissionError):
+            pass
 
     disable_power_profiles_daemon()
 
