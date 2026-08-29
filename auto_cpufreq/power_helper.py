@@ -104,9 +104,14 @@ def gnome_power_detect_snap():
 
 # stops gnome >= 40 power profiles (live)
 def gnome_power_stop_live():
-    if not IS_INSTALLED_WITH_SNAP and systemctl_exists and not bool(gnome_power_status) and powerprofilesctl_exists:
+    if not IS_INSTALLED_WITH_SNAP and systemctl_exists and gnome_power_status == 0:
+        if powerprofilesctl_exists:
+            try:
+                call(["powerprofilesctl", "set", "balanced"])
+            except (OSError, FileNotFoundError, PermissionError):
+                pass
+
         try:
-            call(["powerprofilesctl", "set", "balanced"])
             call(["systemctl", "stop", "power-profiles-daemon"])
         except (OSError, FileNotFoundError, PermissionError):
             pass
@@ -121,7 +126,7 @@ def tuned_stop_live():
 
 # starts gnome >= 40 power profiles (live)
 def gnome_power_start_live():
-    if not IS_INSTALLED_WITH_SNAP and systemctl_exists:
+    if not IS_INSTALLED_WITH_SNAP and systemctl_exists and gnome_power_status == 0:
         try:
             call(["systemctl", "start", "power-profiles-daemon"])
         except (OSError, FileNotFoundError, PermissionError):
