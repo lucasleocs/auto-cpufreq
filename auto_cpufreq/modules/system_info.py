@@ -20,7 +20,10 @@ from auto_cpufreq.globals import (
     IS_INSTALLED_WITH_SNAP,
     POWER_SUPPLY_DIR,
 )
-
+from auto_cpufreq.modules.platform_profile import (
+    PlatformProfileSnapshot,
+    platform_profile,
+)
 
 CPU_SYSFS_ROOT = Path("/sys/devices/system/cpu")
 SNAP_HOST_ROOT = "/var/lib/snapd/hostfs"
@@ -79,6 +82,7 @@ class SystemReport:
     is_turbo_on: Tuple[bool | None, bool | None]
     cpu_avg_temp: float | None = None
     offline_cpus: tuple[int, ...] = ()
+    platform_profile: PlatformProfileSnapshot = PlatformProfileSnapshot()
 
 
 class SystemInfo:
@@ -831,10 +835,49 @@ class SystemInfo:
             battery_info=battery_info,
             cpu_avg_temp=avg_temp,
             offline_cpus=tuple(self.offline_cpu_ids()),
+            platform_profile=platform_profile.snapshot(),
         )
 
 
 system_info = SystemInfo()
+
+
+def format_platform_profile_summary(
+    snapshot: PlatformProfileSnapshot,
+) -> list[str]:
+    """Format compact, user-facing Platform Profile diagnostics."""
+    if snapshot.interface == "none":
+        return ["Interface: Not detected"]
+
+    interface = {
+        "modern": "Modern",
+        "legacy": "Legacy",
+    }.get(snapshot.interface, "Unknown")
+    control = "Available" if snapshot.control_available else "Unavailable"
+    lines = [f"Interface: {interface} · Control: {control}"]
+    lines.append(f"Current profile: {snapshot.current or 'Unknown'}")
+
+    if snapshot.available_profiles:
+        available = ", ".join(snapshot.available_profiles)
+    elif not snapshot.choices_known:
+        available = "Could not be determined"
+    else:
+        available = "None available"
+    lines.append(
+        f"Available profiles ({len(snapshot.available_profiles)}): {available}"
+    )
+
+    provider_states = snapshot.provider_states
+    if len(provider_states) > 1:
+        providers = "; ".join(
+            f"{provider}: {profile or 'Unknown'}"
+            for provider, profile in provider_states
+        )
+        lines.append(f"Providers: {providers}")
+    elif provider_states:
+        lines.append(f"Provider: {provider_states[0][0]}")
+
+    return lines
 
 
 def format_system_report(
@@ -867,6 +910,48 @@ def format_system_report(
             f"Driver: {report.cpu_driver}",
         ]
     )
+
+    platform_state = report.platform_profile
+    status_text = {
+        "available": "Available",
+        "partial": "Partially available",
+        "read-only": "Read-only",
+        "unavailable": "No interface detected",
+    }.get(platform_state.status, "Unknown")
+    lines.append(f"Platform profile status: {status_text}")
+    lines.append(
+        "Platform profile: "
+        + (
+            platform_state.current
+            if platform_state.current is not None
+            else "Not available"
+            if platform_state.status == "unavailable"
+            else "Unknown"
+        )
+    )
+    profiles_text = (
+        ", ".join(platform_state.available_profiles)
+        if platform_state.available_profiles
+        else "None reported"
+    )
+    lines.append(
+        f"Available platform profiles ({len(platform_state.available_profiles)}): "
+        f"{profiles_text}"
+    )
+    provider_states = platform_state.provider_states
+    if len(provider_states) > 1:
+        provider_text = "; ".join(
+            f"{provider}: {profile or 'Unknown'}"
+            for provider, profile in provider_states
+        )
+        provider_label = "Platform profile providers"
+    elif provider_states:
+        provider_text = provider_states[0][0]
+        provider_label = "Platform profile provider"
+    else:
+        provider_text = "None reported"
+        provider_label = "Platform profile provider"
+    lines.append(f"{provider_label}: {provider_text}")
 
     if include_config:
         config_path = config.path

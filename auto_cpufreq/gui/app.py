@@ -2,7 +2,7 @@ import gi
 gi.require_version("Gdk", "3.0")
 gi.require_version("GdkPixbuf", "2.0")
 gi.require_version("Gtk", "3.0")
-from gi.repository import Gdk, GdkPixbuf, Gio, GLib, Gtk
+from gi.repository import Gdk, GdkPixbuf, Gio, GLib, Gtk, Pango
 
 from contextlib import redirect_stdout
 from io import StringIO
@@ -134,7 +134,7 @@ class SystemReportView(Gtk.Box):
         self.left_column.set_valign(Gtk.Align.START)
         self.columns.pack_start(self.left_column, True, True, 0)
 
-        system_frame, system_grid = _new_section("System Information")
+        system_frame, self.system_grid = _new_section("System Information")
         self.system_values = {}
         for row, (key, name) in enumerate(
             (
@@ -146,7 +146,9 @@ class SystemReportView(Gtk.Box):
                 ("driver", "CPU driver"),
             )
         ):
-            _, self.system_values[key] = _add_row(system_grid, row, name)
+            _, self.system_values[key] = _add_row(
+                self.system_grid, row, name
+            )
         self.left_column.pack_start(system_frame, False, False, 0)
 
         cpu_frame = Gtk.Frame()
@@ -194,6 +196,33 @@ class SystemReportView(Gtk.Box):
         )
         self.right_column.set_valign(Gtk.Align.START)
         self.columns.pack_start(self.right_column, True, True, 0)
+
+        platform_frame, self.platform_grid = _new_section("Platform Profile")
+        self.platform_names = {}
+        self.platform_values = {}
+        for row, (key, name) in enumerate(
+            (
+                ("interface", "Interface"),
+                ("current", "Current profile"),
+                ("available", "Available profiles (0)"),
+                ("provider", "Provider"),
+            )
+        ):
+            name_label, value_label = _add_row(
+                self.platform_grid, row, name
+            )
+            self.platform_names[key] = name_label
+            self.platform_values[key] = value_label
+
+        # Keep long kernel-provided lists readable without increasing the
+        # window's minimum width. The complete values stay visible by wrapping.
+        for key in ("available", "provider"):
+            value_label = self.platform_values[key]
+            value_label.set_max_width_chars(44)
+            value_label.set_line_wrap(True)
+            value_label.set_line_wrap_mode(Pango.WrapMode.WORD_CHAR)
+
+        self.right_column.pack_start(platform_frame, False, False, 0)
 
         power_frame, self.power_grid = _new_section("CPU Power State")
         self.power_values = {}
@@ -309,6 +338,59 @@ class SystemReportView(Gtk.Box):
         self.system_values["driver"].set_text(
             report.cpu_driver or "Unknown"
         )
+
+        platform_state = report.platform_profile
+        if platform_state.interface == "none":
+            self.platform_values["interface"].set_text("Not detected")
+            for row in (1, 2, 3):
+                _set_row_visible(self.platform_grid, row, False)
+        else:
+            interface_text = {
+                "modern": "Modern",
+                "legacy": "Legacy",
+            }.get(platform_state.interface, "Unknown")
+            control_text = (
+                "Available"
+                if platform_state.control_available
+                else "Unavailable"
+            )
+            self.platform_values["interface"].set_text(
+                f"{interface_text} · Control: {control_text}"
+            )
+
+            _set_row_visible(self.platform_grid, 1, True)
+            _set_row_visible(self.platform_grid, 2, True)
+            self.platform_values["current"].set_text(
+                platform_state.current or "Unknown"
+            )
+
+            profile_count = len(platform_state.available_profiles)
+            self.platform_names["available"].set_text(
+                f"Available profiles ({profile_count})"
+            )
+            if platform_state.available_profiles:
+                available_text = ", ".join(platform_state.available_profiles)
+            elif not platform_state.choices_known:
+                available_text = "Could not be determined"
+            else:
+                available_text = "None available"
+            self.platform_values["available"].set_text(available_text)
+
+            provider_states = platform_state.provider_states
+            provider_visible = bool(provider_states)
+            _set_row_visible(self.platform_grid, 3, provider_visible)
+            if provider_visible:
+                self.platform_names["provider"].set_text(
+                    "Providers" if len(provider_states) > 1 else "Provider"
+                )
+                if len(provider_states) > 1:
+                    provider_text = "; ".join(
+                        f"{provider}: {profile or 'Unknown'}"
+                        for provider, profile in provider_states
+                    )
+                else:
+                    provider_text = provider_states[0][0]
+                self.platform_values["provider"].set_text(provider_text)
 
         self.max_freq_value.set_text(
             f"{report.cpu_max_freq:.0f} MHz"
