@@ -506,6 +506,26 @@ def get_cpu_setting_state(relative_path):
     return values.pop()
 
 
+def set_governor_if_needed(gov):
+    current = get_cpu_setting_state("cpufreq/scaling_governor")
+    if current == gov:
+        print(f'Governor already set to "{gov}" (no change)')
+        return True
+
+    try:
+        result = run(
+            ["cpufreqctl.auto-cpufreq", "--governor", f"--set={gov}"]
+        )
+    except OSError as error:
+        print(f'Failed to set "{gov}" governor: {error}')
+        return False
+
+    if result.returncode != 0:
+        print(f'Failed to set "{gov}" governor')
+        return False
+    return True
+
+
 def normalize_epb_target(value):
     value = str(value).strip()
     if value.isdigit() and 0 <= int(value) <= 15:
@@ -935,16 +955,7 @@ def set_powersave(report=None):
     )
     print(f'Setting to use: "{gov}" governor')
     if override != "default": print("Warning: governor overwritten using `--force` flag.")
-    try:
-        result = run(
-            ["cpufreqctl.auto-cpufreq", "--governor", f"--set={gov}"]
-        )
-    except OSError as error:
-        print(f'Failed to set "{gov}" governor: {error}')
-        footer()
-        return
-    if result.returncode != 0:
-        print(f'Failed to set "{gov}" governor')
+    if not set_governor_if_needed(gov):
         footer()
         return
 
@@ -1061,16 +1072,7 @@ def set_performance(report=None):
 
     print(f'Setting to use: "{gov}" governor')
     if override != "default": print("Warning: governor overwritten using `--force` flag.")
-    try:
-        result = run(
-            ["cpufreqctl.auto-cpufreq", "--governor", f"--set={gov}"]
-        )
-    except OSError as error:
-        print(f'Failed to set "{gov}" governor: {error}')
-        footer()
-        return
-    if result.returncode != 0:
-        print(f'Failed to set "{gov}" governor')
+    if not set_governor_if_needed(gov):
         footer()
         return
 
