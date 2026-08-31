@@ -441,7 +441,42 @@ def get_load():
 
     return cpuload, load1m
 
-def display_system_load_avg(): print(" (load average: {:.2f}, {:.2f}, {:.2f})".format(*os.getloadavg()))
+
+def _report_avg_temp(report):
+    if report.cpu_avg_temp is not None:
+        return report.cpu_avg_temp
+
+    temperatures = [
+        core.temperature
+        for core in report.cores_info
+        if core.temperature > 0
+    ]
+    return (
+        sum(temperatures) / len(temperatures)
+        if temperatures
+        else 0.0
+    )
+
+
+def _report_load(report):
+    avg_temp = _report_avg_temp(report)
+    print("\nTotal CPU usage:", report.cpu_usage, "%")
+    print("Total system load: {:.2f}".format(report.load))
+    print("Average temp. of all cores: {:.2f} °C \n".format(avg_temp))
+    return report.cpu_usage, report.load, avg_temp
+
+
+def _report_peak_cpu_usage(report):
+    return max(
+        (core.usage for core in report.cores_info),
+        default=report.cpu_usage,
+    )
+
+
+def display_system_load_avg(load_average=None):
+    if load_average is None:
+        load_average = os.getloadavg()
+    print(" (load average: {:.2f}, {:.2f}, {:.2f})".format(*load_average))
 
 CPU_SYSFS_ROOT = Path("/sys/devices/system/cpu")
 EPB_TARGET_VALUES = {
@@ -890,7 +925,7 @@ def set_hwp_dynamic_boost(enabled):
     return True
 
 
-def set_powersave():
+def set_powersave(report=None):
     conf = config.get_config()
     override = get_override()
     gov = override if override in ("powersave", "performance") else (
@@ -944,8 +979,15 @@ def set_powersave():
     global last_applied_config_section
     last_applied_config_section = "battery"
 
-
-    cpuload, load1m= get_load()
+    if report is None:
+        cpuload, load1m = get_load()
+        avg_temp = None
+        peak_cpu_usage = None
+        load_average = None
+    else:
+        cpuload, load1m, avg_temp = _report_load(report)
+        peak_cpu_usage = _report_peak_cpu_usage(report)
+        load_average = report.avg_load
 
     auto = conf["battery"]["turbo"] if conf.has_option("battery", "turbo") else "auto"
     auto = get_turbo_override() if (get_turbo_override() != "auto") else auto # Override turbo if override file is present, otherwise stick to config.
@@ -957,18 +999,32 @@ def set_powersave():
         print("Configuration file disables turbo boost")
         set_turbo(False)
     else:
-        if psutil.cpu_percent(percpu=False, interval=0.01) >= 30.0 or isclose(
-            max(psutil.cpu_percent(percpu=True, interval=0.01)), 100
-        ): print("High CPU load", end="")
+        if report is None:
+            high_cpu_load = (
+                psutil.cpu_percent(percpu=False, interval=0.01) >= 30.0
+                or isclose(
+                    max(psutil.cpu_percent(percpu=True, interval=0.01)),
+                    100,
+                )
+            )
+        else:
+            high_cpu_load = (
+                cpuload >= 30.0
+                or isclose(peak_cpu_usage, 100)
+            )
+
+        if high_cpu_load: print("High CPU load", end="")
         elif load1m > powersave_load_threshold: print("High system load", end="")
         else: print("Load optimal", end="")
-        display_system_load_avg()
+        display_system_load_avg(load_average)
 
         if cpuload >= 20: set_turbo(True) # high cpu usage trigger
         else: # set turbo state based on average of all core temperatures
-            from auto_cpufreq.modules.system_info import SystemInfo
+            if avg_temp is None:
+                from auto_cpufreq.modules.system_info import SystemInfo
+                avg_temp = SystemInfo.avg_temp()
 
-            print(f"Optimal total CPU usage: {cpuload}%, high average core temp: {SystemInfo.avg_temp()}°C")
+            print(f"Optimal total CPU usage: {cpuload}%, high average core temp: {avg_temp}°C")
             set_turbo(False)
 
     set_frequencies("battery")
@@ -994,7 +1050,7 @@ def mon_powersave():
 
     footer()
 
-def set_performance():
+def set_performance(report=None):
     conf = config.get_config()
     override = get_override()
     gov = override if override in ("powersave", "performance") else (
@@ -1070,7 +1126,16 @@ def set_performance():
     global last_applied_config_section
     last_applied_config_section = "charger"
 
-    cpuload, load1m = get_load()
+    if report is None:
+        cpuload, load1m = get_load()
+        avg_temp = None
+        peak_cpu_usage = None
+        load_average = None
+    else:
+        cpuload, load1m, avg_temp = _report_load(report)
+        peak_cpu_usage = _report_peak_cpu_usage(report)
+        load_average = report.avg_load
+
     auto = conf["charger"]["turbo"] if conf.has_option("charger", "turbo") else "auto"
     auto = get_turbo_override() if (get_turbo_override() != "auto") else auto # Override turbo if override file is present, otherwise stick to config.
 
@@ -1083,30 +1148,41 @@ def set_performance():
     else:
         from auto_cpufreq.modules.system_info import SystemInfo
 
-        if (
-            psutil.cpu_percent(percpu=False, interval=0.01) >= 20.0
-            or max(psutil.cpu_percent(percpu=True, interval=0.01)) >= 75
-        ):
-            print("High CPU load", end=""), display_system_load_avg()
+        if report is None:
+            high_cpu_load = (
+                psutil.cpu_percent(percpu=False, interval=0.01) >= 20.0
+                or max(psutil.cpu_percent(percpu=True, interval=0.01)) >= 75
+            )
+        else:
+            high_cpu_load = (
+                cpuload >= 20.0
+                or peak_cpu_usage >= 75.0
+            )
+
+        def decision_temp():
+            return SystemInfo.avg_temp() if avg_temp is None else avg_temp
+
+        if high_cpu_load:
+            print("High CPU load", end=""), display_system_load_avg(load_average)
 
             if cpuload >= 20: set_turbo(True) # high cpu usage trigger
-            elif SystemInfo.avg_temp() >= 70: # set turbo state based on average of all core temperatures
-                print(f"Optimal total CPU usage: {cpuload}%, high average core temp: {SystemInfo.avg_temp()}°C")
+            elif decision_temp() >= 70: # set turbo state based on average of all core temperatures
+                print(f"Optimal total CPU usage: {cpuload}%, high average core temp: {decision_temp()}°C")
                 set_turbo(False)
             else: set_turbo(True)
         elif load1m >= performance_load_threshold:
 
-            print("High system load", end=""), display_system_load_avg()
+            print("High system load", end=""), display_system_load_avg(load_average)
             if cpuload >= 20: set_turbo(True) # high cpu usage trigger
-            elif SystemInfo.avg_temp() >= 65: # set turbo state based on average of all core temperatures
-                print(f"Optimal total CPU usage: {cpuload}%, high average core temp: {SystemInfo.avg_temp()}°C")
+            elif decision_temp() >= 65: # set turbo state based on average of all core temperatures
+                print(f"Optimal total CPU usage: {cpuload}%, high average core temp: {decision_temp()}°C")
                 set_turbo(False)
             else: set_turbo(True)
         else:
-            print("Load optimal", end=""), display_system_load_avg()
+            print("Load optimal", end=""), display_system_load_avg(load_average)
             if cpuload >= 20: set_turbo(True) # high cpu usage trigger
             else: # set turbo state based on average of all core temperatures
-                print(f"Optimal total CPU usage: {cpuload}%, high average core temp: {SystemInfo.avg_temp()}°C")
+                print(f"Optimal total CPU usage: {cpuload}%, high average core temp: {decision_temp()}°C")
                 set_turbo(False)
     set_frequencies("charger")
     footer()
@@ -1159,19 +1235,24 @@ def mon_performance():
             get_turbo()
     footer()
 
-def set_autofreq():
+def set_autofreq(report=None):
     """
     set cpufreq governor based if device is charging
     """
     print("\n" + "-" * 28 + " CPU frequency scaling " + "-" * 28 + "\n")
 
     # determine which power profile should be used
-    if charging():
+    is_charging = (
+        charging()
+        if report is None
+        else report.battery_info.is_ac_plugged is not False
+    )
+    if is_charging:
         print("Battery is: charging\n")
-        set_performance()
+        set_performance(report)
     else:
         print("Battery is: discharging\n")
-        set_powersave()
+        set_powersave(report)
 
 def mon_autofreq():
     """

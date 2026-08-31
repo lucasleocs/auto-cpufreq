@@ -17,6 +17,7 @@ from auto_cpufreq.modules.platform_profile import platform_profile
 from auto_cpufreq.modules.system_info import (
     format_platform_profile_summary,
     print_system_report,
+    system_info,
 )
 from auto_cpufreq.modules.system_monitor import ViewType, SystemMonitor
 # import everything from power_helper, including bluetooth_disable and bluetooth_enable
@@ -163,8 +164,9 @@ def main(monitor, live, daemon, install, update, remove, force, turbo, config, s
                     footer()
                     gov_check()
                     cpufreqctl()
-                    print_system_report()
-                    set_autofreq()
+                    report = system_info.generate_system_report()
+                    print_system_report(report)
+                    set_autofreq(report)
                     countdown(2)
                 except KeyboardInterrupt: break
             conf.notifier.stop()
