@@ -5,9 +5,6 @@ on:
     branches:
       - tmp/platform-profile-reporting-972
 
-permissions:
-  contents: write
-
 jobs:
   reporting:
     runs-on: ubuntu-latest
@@ -17,7 +14,6 @@ jobs:
         with:
           python-version: '3.12'
       - name: Apply candidate fix
-        if: github.event.head_commit.message != 'fix: preserve unknown platform profile choices'
         run: python tmp_apply_platform_profile_reporting_fix.py
       - name: Install project
         run: python -m pip install -e .
@@ -27,11 +23,3 @@ jobs:
         run: |
           grep -q 'format_platform_profile_choices' auto_cpufreq/gui/app.py
           ! grep -q 'profile_count = len(platform_state.available_profiles)' auto_cpufreq/gui/app.py
-      - name: Commit candidate fix after GREEN
-        if: github.event.head_commit.message != 'fix: preserve unknown platform profile choices'
-        run: |
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add auto_cpufreq/modules/system_info.py auto_cpufreq/gui/app.py
-          git commit -m 'fix: preserve unknown platform profile choices'
-          git push
