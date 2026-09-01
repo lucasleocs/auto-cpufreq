@@ -13,7 +13,10 @@ from auto_cpufreq.config.config import config
 from auto_cpufreq.core import check_for_update, daemon_is_running
 from auto_cpufreq.globals import GITHUB, IS_INSTALLED_WITH_SNAP
 from auto_cpufreq.gui.objects import BluetoothBootControl, DaemonNotRunningView, DropDownMenu, MonitorModeView, RadioButtonView, CPUTurboOverride, UpdateDialog
-from auto_cpufreq.modules.system_info import system_info
+from auto_cpufreq.modules.system_info import (
+    format_platform_profile_choices,
+    system_info,
+)
 from auto_cpufreq.power_helper import bluetoothctl_exists
 
 if IS_INSTALLED_WITH_SNAP:
@@ -364,16 +367,10 @@ class SystemReportView(Gtk.Box):
                 platform_state.current or "Unknown"
             )
 
-            profile_count = len(platform_state.available_profiles)
-            self.platform_names["available"].set_text(
-                f"Available profiles ({profile_count})"
+            available_label, available_text = format_platform_profile_choices(
+                platform_state
             )
-            if platform_state.available_profiles:
-                available_text = ", ".join(platform_state.available_profiles)
-            elif not platform_state.choices_known:
-                available_text = "Could not be determined"
-            else:
-                available_text = "None available"
+            self.platform_names["available"].set_text(available_label)
             self.platform_values["available"].set_text(available_text)
 
             provider_states = platform_state.provider_states

@@ -842,6 +842,23 @@ class SystemInfo:
 system_info = SystemInfo()
 
 
+def format_platform_profile_choices(
+    snapshot: PlatformProfileSnapshot,
+    label: str = "Available profiles",
+) -> tuple[str, str]:
+    """Format a Platform Profile choices label and value without conflating unknown with empty."""
+    if not snapshot.choices_known:
+        return label, "Could not be determined"
+
+    count = len(snapshot.available_profiles)
+    value = (
+        ", ".join(snapshot.available_profiles)
+        if snapshot.available_profiles
+        else "None available"
+    )
+    return f"{label} ({count})", value
+
+
 def format_platform_profile_summary(
     snapshot: PlatformProfileSnapshot,
 ) -> list[str]:
@@ -857,15 +874,8 @@ def format_platform_profile_summary(
     lines = [f"Interface: {interface} · Control: {control}"]
     lines.append(f"Current profile: {snapshot.current or 'Unknown'}")
 
-    if snapshot.available_profiles:
-        available = ", ".join(snapshot.available_profiles)
-    elif not snapshot.choices_known:
-        available = "Could not be determined"
-    else:
-        available = "None available"
-    lines.append(
-        f"Available profiles ({len(snapshot.available_profiles)}): {available}"
-    )
+    available_label, available = format_platform_profile_choices(snapshot)
+    lines.append(f"{available_label}: {available}")
 
     provider_states = snapshot.provider_states
     if len(provider_states) > 1:
@@ -929,15 +939,11 @@ def format_system_report(
             else "Unknown"
         )
     )
-    profiles_text = (
-        ", ".join(platform_state.available_profiles)
-        if platform_state.available_profiles
-        else "None reported"
+    profiles_label, profiles_text = format_platform_profile_choices(
+        platform_state,
+        label="Available platform profiles",
     )
-    lines.append(
-        f"Available platform profiles ({len(platform_state.available_profiles)}): "
-        f"{profiles_text}"
-    )
+    lines.append(f"{profiles_label}: {profiles_text}")
     provider_states = platform_state.provider_states
     if len(provider_states) > 1:
         provider_text = "; ".join(
