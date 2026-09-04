@@ -672,12 +672,6 @@ def set_platform_profile(conf, profile):
     if cache.get(profile) != pp:
         cache.pop(profile, None)
 
-    snapshot = platform_profile.snapshot()
-
-    if not snapshot.devices:
-        print("Not setting Platform Profile (not supported by system)")
-        return
-
     def is_platform_profile_enforced():
         try:
             return conf.getboolean(
@@ -699,6 +693,12 @@ def set_platform_profile(conf, profile):
         and last_applied_config_section == profile
         and cache.get(profile) == pp
     ):
+        return
+
+    snapshot = platform_profile.snapshot()
+
+    if not snapshot.devices:
+        print("Not setting Platform Profile (not supported by system)")
         return
 
     current = snapshot.current
@@ -1353,7 +1353,7 @@ def read_stats():
 # check if program (argument) is running
 def is_running(program, argument):
     # iterate over all processes found by psutil
-    # and find the one with name and args passed to the function
+    # and find the one with name and args passed to func
     for p in psutil.process_iter():
         try: cmd = p.cmdline()
         except (psutil.AccessDenied, psutil.NoSuchProcess, psutil.ZombieProcess, OSError): continue
