@@ -41,19 +41,22 @@ function manual_install {
     codename="$(lsb_release -cs)"
   fi
 
-	echo "Didn't detect Debian or RedHat or Arch based distro."; echo
-  echo "To complete installation, you need to:"
-  echo "Install: python3, pip3, python3-setuptools, gobject-introspection, cairo (or cairo-devel), gcc, and gtk3"; echo
-  echo "Install necessary Python packages:"
-  echo "pip3 install psutil click distro power requests PyGObject"
-  echo "Run following sequence of lines:"; echo
+  echo "This Linux distribution is not handled automatically by the source installer."; echo
+  echo "Install your distro's equivalents of these source-build requirements:"
+  echo "Python 3 with venv, pip and development headers; setuptools; dmidecode;"
+  echo "gcc; git; pkg-config; gobject-introspection; Cairo development files;"
+  echo "and GTK3 development files."; echo
+  echo "Then install auto-cpufreq in an isolated virtual environment:"
   echo "-----"; echo
-  echo "pip3 install ."
-  echo "mkdir -p $SHARE_DIR"
-  echo "cp -r scripts/ $SHARE_DIR"; echo
+  echo "python3 -m venv \"$VENV_PATH/venv\""
+  echo "\"$VENV_PATH/venv/bin/python\" -m pip install --upgrade pip wheel"
+  echo "\"$VENV_PATH/venv/bin/python\" -m pip install PyGObject"
+  echo "\"$VENV_PATH/venv/bin/python\" -m pip install ."
   echo "-----"; echo
-  echo "After which tool is installed, for full list of options run:";echo
-  echo "auto-cpufreq --help"
+  echo "You can run the installed command directly from the virtual environment:"
+  echo "\"$VENV_PATH/venv/bin/auto-cpufreq\" --help"; echo
+  echo "Automatic system deployment and daemon integration are not available"
+  echo "for this distribution yet."
 
   echo; printf "%0.s─" $(seq $COLOUMNS); echo
   
@@ -66,6 +69,18 @@ function manual_install {
   echo
 
   exit 1
+}
+
+function os_release_matches {
+  local target="$1"
+
+  [ "${ID:-}" = "$target" ] && return 0
+
+  case " ${ID_LIKE:-} " in
+    *" $target "*) return 0;;
+  esac
+
+  return 1
 }
 
 function verify_gtk3_runtime {
@@ -91,9 +106,29 @@ function tool_install {
     header "Setting up Python environment"
   }
 
-  if [ -f /etc/debian_version ]; then
+  # Prefer the standardized os-release identification data. /etc/os-release
+  # takes precedence over /usr/lib/os-release as documented by os-release(5).
+  if [ -r /etc/os-release ]; then
+    . /etc/os-release
+  elif [ -r /usr/lib/os-release ]; then
+    . /usr/lib/os-release
+  fi
+
+  # NixOS uses its native module/package integration instead of this installer.
+  if [ "${ID:-}" = "nixos" ]; then
+    echo "NixOS detected"
+    echo "This installer is not supported on NixOS."
+    echo "Please refer to the install instructions for NixOS at https://github.com/AdnanHodzic/auto-cpufreq#nixos"
+    exit 1
+
+  # Keep the historical marker-file checks as compatibility fallbacks, while
+  # ID_LIKE lets derivative distributions use their base distribution's
+  # packaging interface as recommended by os-release(5).
+  elif [ -f /etc/debian_version ] || os_release_matches debian; then
     detected_distro "Debian based"
-    VERSION="$(cat /etc/debian_version)"
+    DISTRO_FAMILY="debian"
+    VERSION="${VERSION_ID:-unknown}"
+    [ -r /etc/debian_version ] && VERSION="$(cat /etc/debian_version)"
 
     # apt(8) is intended for interactive use. Debian recommends apt-get for
     # scripts because its command-line behavior is kept backward compatible.
@@ -131,25 +166,37 @@ function tool_install {
       return 1
     fi
 
-  elif [ -f /etc/redhat-release ]; then
+  elif [ -f /etc/redhat-release ] || os_release_matches rhel || os_release_matches fedora; then
     detected_distro "RedHat based"
-    if [ -f /etc/centos-release ]; then
-      if ! yum install platform-python-devel; then
-        echo "Error: Failed to install required system dependencies."
-        return 1
-      fi
-    elif ! yum install python-devel; then
-      echo "Error: Failed to install required system dependencies."
+    DISTRO_FAMILY="redhat"
+
+    if command -v dnf > /dev/null 2>&1; then
+      RPM_PM="dnf"
+    elif command -v yum > /dev/null 2>&1; then
+      RPM_PM="yum"
+    else
+      echo "Error: Neither dnf nor yum is available to install RPM dependencies."
       return 1
     fi
-    if ! yum install dmidecode gcc cairo-devel gobject-introspection-devel cairo-gobject-devel gtk3-devel; then
+
+    # Preserve the existing CentOS platform-python compatibility path, while
+    # Fedora and current RHEL releases use the Python 3 development package.
+    if [ -f /etc/centos-release ]; then
+      RPM_PYTHON_DEVEL="platform-python-devel"
+    else
+      RPM_PYTHON_DEVEL="python3-devel"
+    fi
+
+    if ! "$RPM_PM" install -y "$RPM_PYTHON_DEVEL" \
+      dmidecode gcc git cairo-devel gobject-introspection-devel cairo-gobject-devel gtk3-devel; then
       echo "Error: Failed to install required system dependencies."
       return 1
     fi
 
-  elif [ -f /etc/solus-release ]; then
+  elif [ -f /etc/solus-release ] || [ "${ID:-}" = "solus" ]; then
     detected_distro "Solus"
-    if ! eopkg install pip python3 python3-devel dmidecode gobject-introspection-devel libcairo-devel gcc libgtk-3; then
+    DISTRO_FAMILY="solus"
+    if ! eopkg install pip python3 python3-devel dmidecode gobject-introspection-devel libcairo-devel gcc git libgtk-3; then
       echo "Error: Failed to install required system dependencies."
       return 1
     fi
@@ -158,46 +205,31 @@ function tool_install {
       return 1
     fi
 
-  elif [ -f /etc/arch-release ]; then
+  elif [ -f /etc/arch-release ] || [ "${ID:-}" = "artix" ] || os_release_matches arch; then
     detected_distro "Arch Linux based"
-    if ! pacman -S --noconfirm --needed python python-pip python-setuptools base-devel dmidecode gobject-introspection gtk3 gcc; then
+    DISTRO_FAMILY="arch"
+    if ! pacman -S --noconfirm --needed python python-pip python-setuptools base-devel dmidecode gobject-introspection gtk3 gcc git; then
       echo "Error: Failed to install required system dependencies."
       return 1
     fi
-    
-elif [ -f /etc/os-release ];then
-    . /etc/os-release
-    case $ID in
-      opensuse-leap)
-        detected_distro "OpenSUSE"
-        if ! zypper install -y python3 python3-pip python311-setuptools python3-devel gcc dmidecode gobject-introspection-devel python3-cairo-devel gtk3 gtk3-devel; then
-          echo "Error: Failed to install required system dependencies."
-          return 1
-        fi
-      ;;
-      opensuse-tumbleweed)
-        detected_distro "OpenSUSE"
-        if ! zypper install -y python3 python3-pip python311-setuptools python3-devel gcc dmidecode gobject-introspection-devel python3-cairo-devel gtk3 gtk3-devel; then
-          echo "Error: Failed to install required system dependencies."
-          return 1
-        fi
-      ;;
-      void)
-        detected_distro "Void Linux"
-        if ! xbps-install -Sy python3 python3-pip python3-devel python3-setuptools base-devel dmidecode cairo-devel gobject-introspection gcc gtk+3; then
-          echo "Error: Failed to install required system dependencies."
-          return 1
-        fi
-      ;;
-      nixos)
-        echo "NixOS detected"
-        echo "This installer is not supported on NixOS."
-        echo "Please refer to the install instructions for NixOS at https://github.com/AdnanHodzic/auto-cpufreq#nixos"
-        exit 1
-      ;;
-      *) manual_install;;
-    esac
-  else # In case /etc/os-release doesn't exist
+
+  elif [ "${ID:-}" = "opensuse-leap" ] || [ "${ID:-}" = "opensuse-tumbleweed" ] || os_release_matches suse || os_release_matches opensuse; then
+    detected_distro "OpenSUSE"
+    DISTRO_FAMILY="suse"
+    if ! zypper install -y python3 python3-pip python311-setuptools python3-devel gcc git dmidecode gobject-introspection-devel python3-cairo-devel gtk3 gtk3-devel; then
+      echo "Error: Failed to install required system dependencies."
+      return 1
+    fi
+
+  elif [ "${ID:-}" = "void" ]; then
+    detected_distro "Void Linux"
+    DISTRO_FAMILY="void"
+    if ! xbps-install -Sy python3 python3-pip python3-devel python3-setuptools base-devel dmidecode cairo-devel gobject-introspection gcc git gtk+3; then
+      echo "Error: Failed to install required system dependencies."
+      return 1
+    fi
+
+  else
     manual_install
   fi
 
@@ -219,7 +251,7 @@ elif [ -f /etc/os-release ];then
   # Debian/Ubuntu intentionally use the distro-provided PyGObject runtime.
   # Confirm that --system-site-packages made it visible inside the venv before
   # installing the rest of auto-cpufreq.
-  if [ -f /etc/debian_version ] && ! verify_gtk3_runtime "$venv_python"; then
+  if [ "$DISTRO_FAMILY" = "debian" ] && ! verify_gtk3_runtime "$venv_python"; then
     echo "Error: The virtual environment cannot access the system PyGObject GTK3 runtime."
     return 1
   fi
@@ -232,7 +264,7 @@ elif [ -f /etc/os-release ];then
   # Debian/Ubuntu use python3-gi from the distribution through
   # --system-site-packages. Other supported families retain their existing
   # PyPI PyGObject installation path.
-  if [ ! -f /etc/debian_version ]; then
+  if [ "$DISTRO_FAMILY" != "debian" ]; then
     if ! "$venv_python" -m pip install PyGObject; then
       echo "Error: Failed to install PyGObject."
       return 1
@@ -246,20 +278,57 @@ elif [ -f /etc/os-release ];then
     return 1
   fi
 
-  mkdir -p $SHARE_DIR
-  cp -r scripts/ $SHARE_DIR
-  cp -r images/ $SHARE_DIR
-  cp images/icon.png $IMG_FILE
-  cp scripts/$(basename $ORG_FILE) $(dirname $ORG_FILE)
+  if ! mkdir -p "$SHARE_DIR"; then
+    echo "Error: Failed to create auto-cpufreq shared data directory."
+    return 1
+  fi
+  if ! cp -r scripts/ "$SHARE_DIR" || ! cp -r images/ "$SHARE_DIR"; then
+    echo "Error: Failed to install auto-cpufreq shared resources."
+    return 1
+  fi
+  if ! mkdir -p "$(dirname "$IMG_FILE")"; then
+    echo "Error: Failed to create auto-cpufreq icon directory."
+    return 1
+  fi
+  if ! cp images/icon.png "$IMG_FILE"; then
+    echo "Error: Failed to install auto-cpufreq icon."
+    return 1
+  fi
+  if ! mkdir -p "$(dirname "$ORG_FILE")"; then
+    echo "Error: Failed to create auto-cpufreq PolicyKit policy directory."
+    return 1
+  fi
+  if ! cp "scripts/$(basename "$ORG_FILE")" "$(dirname "$ORG_FILE")"; then
+    echo "Error: Failed to install auto-cpufreq PolicyKit policy."
+    return 1
+  fi
 
-  # this is necessary since we need this script before we can run auto-cpufreq itself
-  cp scripts/auto-cpufreq-venv-wrapper $AUTO_CPUFREQ_FILE
-  chmod a+x $AUTO_CPUFREQ_FILE
-  cp scripts/start_app $AUTO_CPUFREQ_GTK_FILE
-  chmod a+x $AUTO_CPUFREQ_GTK_FILE
+  # Install the wrapper before exposing the command: it is the user-facing
+  # entry point that dispatches to auto-cpufreq inside the virtual environment.
+  if ! cp scripts/auto-cpufreq-venv-wrapper "$AUTO_CPUFREQ_FILE" || ! chmod a+x "$AUTO_CPUFREQ_FILE"; then
+    echo "Error: Failed to install auto-cpufreq command wrapper."
+    return 1
+  fi
+  if ! cp scripts/start_app "$AUTO_CPUFREQ_GTK_FILE" || ! chmod a+x "$AUTO_CPUFREQ_GTK_FILE"; then
+    echo "Error: Failed to install auto-cpufreq GTK launcher."
+    return 1
+  fi
 
-  desktop-file-install --dir=$APPLICATIONS_PATH scripts/$AUTO_CPUFREQ_GTK_DESKTOP_FILE
-  update-desktop-database $APPLICATIONS_PATH
+  if command -v desktop-file-install > /dev/null 2>&1; then
+    if ! desktop-file-install --dir="$APPLICATIONS_PATH" "scripts/$AUTO_CPUFREQ_GTK_DESKTOP_FILE"; then
+      echo "Error: Failed to install the auto-cpufreq desktop entry."
+      return 1
+    fi
+  else
+    echo "Warning: desktop-file-install is not available; skipping desktop menu integration."
+    echo "The GTK interface can still be launched with auto-cpufreq-gtk."
+  fi
+
+  if command -v update-desktop-database > /dev/null 2>&1; then
+    if ! update-desktop-database "$APPLICATIONS_PATH"; then
+      echo "Warning: Failed to refresh the desktop application database."
+    fi
+  fi
   
   header "auto-cpufreq tool successfully installed"
   echo "For list of options, run:"
