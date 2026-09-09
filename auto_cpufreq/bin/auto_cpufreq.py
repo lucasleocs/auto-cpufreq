@@ -19,6 +19,7 @@ from auto_cpufreq.modules.system_info import (
     print_system_report,
 )
 from auto_cpufreq.modules.system_monitor import ViewType, SystemMonitor
+from auto_cpufreq.release_update import staged_release_commit, version_matches_commit
 # import everything from power_helper, including bluetooth_disable and bluetooth_enable
 from auto_cpufreq.power_helper import *
 from threading import Thread
@@ -180,15 +181,16 @@ def main(monitor, live, daemon, install, update, remove, force, turbo, config, s
         elif update:
             root_check()
             custom_dir = "/opt/auto-cpufreq/source"
+
             for arg in sys.argv:
                 if arg.startswith("--update="):
-                    custom_dir = arg.split("=")[1]
+                    custom_dir = arg.split("=", 1)[1]
                     sys.argv.remove(arg)
 
             if "--update" in sys.argv:
-                update = True
                 sys.argv.remove("--update")
-                if len(sys.argv) == 2: custom_dir = sys.argv[1] 
+                if len(sys.argv) == 2:
+                    custom_dir = sys.argv[1]
 
             if IS_INSTALLED_WITH_SNAP:
                 print("Detected auto-cpufreq was installed using snap")
@@ -199,20 +201,120 @@ def main(monitor, live, daemon, install, update, remove, force, turbo, config, s
                 #check for AUR 
             elif IS_INSTALLED_WITH_AUR: print("Arch-based distribution with AUR support detected. Please refresh auto-cpufreq using your AUR helper.")
             else:
-                is_new_update = check_for_update()
-                if not is_new_update: return
-                ans = input("Do you want to update auto-cpufreq to the latest release? [Y/n]: ").strip().lower()
-                if not os.path.exists(custom_dir): os.makedirs(custom_dir)
-                if os.path.exists(os.path.join(custom_dir, "auto-cpufreq")): rmtree(os.path.join(custom_dir, "auto-cpufreq"))
-                if ans in ['', 'y', 'yes']:
+                release_tag = check_for_update()
+                if not release_tag:
+                    return
+
+                ans = input(
+                    "Do you want to update auto-cpufreq to the "
+                    "latest stable release? [Y/n]: "
+                ).strip().lower()
+
+                if ans not in ("", "y", "yes"):
+                    print("Aborted")
+                    return
+
+                try:
+                    os.makedirs(custom_dir, exist_ok=True)
+                except OSError as exc:
+                    print(
+                        "Error: Unable to create the update staging "
+                        f"directory: {exc}"
+                    )
+                    sys.exit(1)
+
+                # Download and validate the exact release before stopping
+                # anything currently running on the host.
+                staged_source = stage_update(
+                    custom_dir,
+                    release_tag,
+                )
+                if staged_source is None:
+                    sys.exit(1)
+
+                staged_commit = staged_release_commit(staged_source)
+                if staged_commit is None:
+                    print(
+                        "Error: Unable to determine the Git revision of "
+                        "the staged stable release."
+                    )
+                    print("The current auto-cpufreq installation was not changed.")
+                    sys.exit(1)
+
+                daemon_was_installed = (
+                    DAEMON_REMOVE_HELPER.exists()
+                )
+                power_state_pending = power_state_exists()
+
+                if daemon_was_installed or power_state_pending:
                     remove_daemon()
-                    remove_complete_msg()
-                    new_update(custom_dir)
-                    print("enabling daemon")
-                    run(["auto-cpufreq", "--install"])
-                    print("auto-cpufreq is installed with the latest version")
-                    run(["auto-cpufreq", "--version"])
-                else: print("Aborted")
+                    if daemon_was_installed:
+                        remove_complete_msg()
+
+                if not install_staged_update(staged_source):
+                    print(
+                        "The stable release could not be installed."
+                    )
+                    if daemon_was_installed:
+                        print(
+                            "The previous daemon was removed before "
+                            "installation and was not re-enabled."
+                        )
+                    sys.exit(1)
+
+                if not verify_installed_release(release_tag):
+                    print(
+                        "The update command cannot confirm that the "
+                        "requested stable release was installed."
+                    )
+                    print(
+                        "The daemon was not automatically started."
+                    )
+                    sys.exit(1)
+
+                installed_version = get_literal_version("auto-cpufreq")
+                if not version_matches_commit(installed_version, staged_commit):
+                    print(
+                        "The update command cannot confirm that the exact "
+                        "staged Git revision was installed."
+                    )
+                    print(f"Expected staged revision: {staged_commit}")
+                    print(f"Installed package version: {installed_version}")
+                    print("The daemon was not automatically started.")
+                    sys.exit(1)
+
+                # Preserve daemon state: updating the command must not
+                # silently enable a daemon that was not installed before.
+                if daemon_was_installed:
+                    print("Re-enabling auto-cpufreq daemon")
+
+                    try:
+                        reenable = run(
+                            ["auto-cpufreq", "--install"]
+                        )
+                    except OSError as exc:
+                        print(
+                            "auto-cpufreq was updated, but the daemon "
+                            f"could not be re-enabled: {exc}"
+                        )
+                        sys.exit(1)
+
+                    if reenable.returncode != 0:
+                        print(
+                            "auto-cpufreq was updated, but the daemon "
+                            "could not be re-enabled."
+                        )
+                        print(
+                            "Run `sudo auto-cpufreq --install` after "
+                            "reviewing the error above."
+                        )
+                        sys.exit(1)
+
+                print(
+                    "auto-cpufreq successfully updated to stable "
+                    f"release {release_tag}"
+                )
+
         elif remove:
             root_check()
             if IS_INSTALLED_WITH_SNAP:

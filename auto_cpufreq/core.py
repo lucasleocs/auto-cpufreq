@@ -18,6 +18,12 @@ from auto_cpufreq.globals import (
     ALL_GOVERNORS, AVAILABLE_GOVERNORS, AVAILABLE_GOVERNORS_SORTED, GITHUB, IS_INSTALLED_WITH_AUR, IS_INSTALLED_WITH_SNAP, POWER_SUPPLY_DIR, SNAP_DAEMON_CHECK
 )
 from auto_cpufreq.modules.platform_profile import platform_profile
+from auto_cpufreq.release_update import (
+    decide_release_update,
+    extract_git_commit,
+    stage_release,
+    version_matches_release,
+)
 from auto_cpufreq.power_state import (
     power_state_exists,
     restore_power_state,
@@ -134,57 +140,299 @@ def app_version():
         except Exception as e: print(repr(e))
 
 def check_for_update():
-    # returns True if a new release is available from the GitHub repo
+    """Return the exact stable release tag when a safe update is available."""
 
-    # Specify the repository and package name
-    # IT IS IMPORTANT TO  THAT IF THE REPOSITORY STRUCTURE IS CHANGED, THE FOLLOWING FUNCTION NEEDS TO BE UPDATED ACCORDINGLY
-    # Fetch the latest release information from GitHub API
-    latest_release_url = GITHUB.replace("github.com", "api.github.com/repos") + "/releases/latest"
+    api_repository = GITHUB.replace(
+        "github.com",
+        "api.github.com/repos",
+    )
+    latest_release_url = api_repository + "/releases/latest"
+
     try:
         response = get(latest_release_url)
-        if response.status_code == 200: latest_release = response.json()
-        else:
+    except (
+        exceptions.ConnectionError,
+        exceptions.Timeout,
+        exceptions.RequestException,
+        exceptions.HTTPError,
+    ):
+        print("Error connecting to GitHub while checking for updates.")
+        return False
+
+    if response.status_code != 200:
+        try:
             message = response.json().get("message")
-            print("Error fetching recent release!")
-            if message is not None and message.startswith("API rate limit exceeded"):
-                print("GitHub Rate limit exceeded. Please try again later within 1 hour or use different network/VPN.")
-            else: print("Unexpected status code:", response.status_code)
-            return False
-    except (exceptions.ConnectionError, exceptions.Timeout,
-            exceptions.RequestException, exceptions.HTTPError):
-        print("Error Connecting to server!")
+        except ValueError:
+            message = None
+
+        print("Error fetching the latest stable release.")
+
+        if (
+            message is not None
+            and message.startswith("API rate limit exceeded")
+        ):
+            print(
+                "GitHub API rate limit exceeded. "
+                "Please try again later."
+            )
+        else:
+            print("Unexpected status code:", response.status_code)
+
+        return False
+
+    try:
+        latest_release = response.json()
+    except ValueError:
+        print("Malformed release data returned by GitHub.")
         return False
 
     latest_version = latest_release.get("tag_name")
+    if not latest_version:
+        print(
+            "The latest GitHub release does not contain a release tag. "
+            "Automatic update was skipped."
+        )
+        return False
 
-    if latest_version is not None:
-        # Get the current version of auto-cpufreq
-        # Extract version number from the output string
-        output = check_output(['auto-cpufreq', '--version']).decode('utf-8')
-        try: version_line = next((search(r'\d+\.\d+\.\d+', line).group() for line in output.split('\n') if line.startswith('auto-cpufreq version')), None)
-        except AttributeError:
-            print("Error Retrieving Current Version!")
-            exit(1)
-        installed_version = "v" + version_line
-        #Check whether the same is installed or not
-        # Compare the latest version with the installed version and perform update if necessary
-        if latest_version == installed_version:
-            print("auto-cpufreq is up to date")
-            return False
+    installed_version = get_literal_version("auto-cpufreq")
+    installed_commit = extract_git_commit(installed_version)
+
+    if installed_commit is None:
+        print(
+            "Unable to determine the Git revision of this "
+            "auto-cpufreq installation."
+        )
+        print(
+            "Automatic stable update was skipped to avoid replacing "
+            "an installation whose history cannot be verified."
+        )
+        return False
+
+    compare_url = (
+        f"{api_repository}/compare/"
+        f"{installed_commit}...{latest_version}"
+    )
+
+    try:
+        comparison = get(compare_url)
+    except (
+        exceptions.ConnectionError,
+        exceptions.Timeout,
+        exceptions.RequestException,
+        exceptions.HTTPError,
+    ):
+        print(
+            "Unable to compare the installed Git revision with "
+            "the latest stable release."
+        )
+        print("Automatic update was skipped.")
+        return False
+
+    if comparison.status_code != 200:
+        try:
+            message = comparison.json().get("message")
+        except ValueError:
+            message = None
+
+        print(
+            "Unable to compare the installed Git build with "
+            "the latest stable release."
+        )
+
+        if (
+            message is not None
+            and message.startswith("API rate limit exceeded")
+        ):
+            print(
+                "GitHub API rate limit exceeded. "
+                "Please try again later."
+            )
         else:
-            print(f"Updates are available,\nCurrent version: {installed_version}\nLatest version: {latest_version}")
-            print("Note that your previous custom settings might be erased with the following update")
-            return True
-    # Handle the case where "tag_name" key doesn't exist
-    else: print("Malformed Released data!\nReinstall manually or Open an issue on GitHub for help!")
+            print("Unexpected status code:", comparison.status_code)
 
-def new_update(custom_dir):
-    os.chdir(custom_dir)
-    print(f"Cloning the latest release to {custom_dir}")
-    run(["git", "clone", GITHUB+".git"])
-    os.chdir("auto-cpufreq")
-    print(f"package cloned to directory {custom_dir}")
-    run(['./auto-cpufreq-installer'], input='i\n', encoding='utf-8')
+        print("Automatic update was skipped.")
+        return False
+
+    try:
+        compare_status = comparison.json().get("status")
+    except ValueError:
+        compare_status = None
+
+    decision = decide_release_update(
+        installed_version,
+        latest_version,
+        compare_status,
+    )
+
+    if decision.available:
+        # Keep these first three lines stable: the GTK update dialog
+        # consumes the Current/Latest lines from this output.
+        print("Updates are available,")
+        print(f"Current version: {installed_version}")
+        print(f"Latest version: {latest_version}")
+        print(
+            "The updater will install the exact stable release tag; "
+            "it will not follow newer master commits."
+        )
+        return decision.tag
+
+    if decision.reason == "up-to-date":
+        print("auto-cpufreq is up to date")
+    elif decision.reason == "installed-ahead":
+        print(
+            "Installed Git build is newer than the latest stable "
+            "release; no stable update is available."
+        )
+    elif decision.reason == "diverged":
+        print(
+            "The installed Git build is not on the direct history "
+            "of the latest stable release."
+        )
+        print(
+            "Automatic update was skipped to avoid replacing "
+            "custom or development code."
+        )
+    else:
+        print(
+            "Unable to prove that the latest stable release is "
+            "newer than the installed build."
+        )
+        print("Automatic update was skipped.")
+
+    return False
+
+
+def stage_update(custom_dir, release_tag):
+    """Download the exact release tag without touching the installation."""
+
+    source_dir = Path(custom_dir) / "auto-cpufreq"
+
+    print(
+        f"Staging stable release {release_tag} "
+        f"in {source_dir}"
+    )
+
+    staged_source = stage_release(
+        GITHUB + ".git",
+        release_tag,
+        source_dir,
+    )
+
+    if staged_source is None:
+        print(
+            f"Error: Failed to stage stable release {release_tag}."
+        )
+        print(
+            "The current auto-cpufreq installation was not changed."
+        )
+        return None
+
+    installer = staged_source / "auto-cpufreq-installer"
+    if not installer.is_file():
+        print(
+            "Error: The staged release does not contain "
+            "auto-cpufreq-installer."
+        )
+        print(
+            "The current auto-cpufreq installation was not changed."
+        )
+        return None
+
+    print(
+        f"Stable release {release_tag} staged successfully."
+    )
+    return staged_source
+
+
+def install_staged_update(source_dir):
+    """Install a previously staged stable release."""
+
+    source_dir = Path(source_dir).resolve()
+    installer = source_dir / "auto-cpufreq-installer"
+
+    try:
+        result = run(
+            [str(installer)],
+            cwd=str(source_dir),
+            input="i\n",
+            text=True,
+        )
+    except OSError as exc:
+        print(
+            "Error: Failed to start the staged "
+            f"auto-cpufreq installer: {exc}"
+        )
+        return False
+
+    if result.returncode != 0:
+        print(
+            "Error: The staged auto-cpufreq installer failed "
+            f"with status {result.returncode}."
+        )
+        return False
+
+    return True
+
+
+def verify_installed_release(release_tag):
+    """Verify the newly installed command reports the target release."""
+
+    try:
+        result = run(
+            ["auto-cpufreq", "--version"],
+            capture_output=True,
+            text=True,
+        )
+    except OSError as exc:
+        print(
+            "Error: Unable to verify the installed "
+            f"auto-cpufreq version: {exc}"
+        )
+        return False
+
+    if result.returncode != 0:
+        print(
+            "Error: auto-cpufreq --version failed after the update "
+            f"with status {result.returncode}."
+        )
+        return False
+
+    version_line = next(
+        (
+            line
+            for line in result.stdout.splitlines()
+            if line.startswith("auto-cpufreq version:")
+        ),
+        None,
+    )
+
+    if version_line is None:
+        print(
+            "Error: Could not identify the installed "
+            "auto-cpufreq version after the update."
+        )
+        return False
+
+    installed_version = (
+        version_line
+        .split(":", 1)[1]
+        .strip()
+        .split()[0]
+    )
+
+    if not version_matches_release(
+        installed_version,
+        release_tag,
+    ):
+        print(
+            "Error: The installed version does not match "
+            f"the staged release {release_tag}."
+        )
+        print(f"Reported installed version: {installed_version}")
+        return False
+
+    return True
+
 
 def get_literal_version(package_name):
     try:

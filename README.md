@@ -137,14 +137,27 @@ The installer automatically installs system dependencies and manages a dedicated
 
 NixOS uses the native Nix integration described below instead of the source installer.
 
-> As auto-cpufreq relies on git based versioning, users are advised to install `auto-cpufreq`  using `git clone` method only. Downloading source code as a zip/from release will emit build error like [these](https://github.com/AdnanHodzic/auto-cpufreq/issues/623).
+#### Stable release
 
-Get source code, run installer, and follow on-screen instructions:
+Download the latest release from the [Releases](https://github.com/AdnanHodzic/auto-cpufreq/releases) page using either `Source code (zip)` or `Source code (tar.gz)`, extract it, enter the extracted directory, then run:
 
+```bash
+sudo ./auto-cpufreq-installer
 ```
+
+> The v3.1.0 and older GitHub source archives were published before archive version metadata was added and can still fail to build without Git history. Source-archive installation is supported by releases that include this metadata.
+
+#### Development version
+
+To install the current development version from `master`, clone the repository instead:
+
+```bash
 git clone https://github.com/AdnanHodzic/auto-cpufreq.git
-cd auto-cpufreq && sudo ./auto-cpufreq-installer
+cd auto-cpufreq
+sudo ./auto-cpufreq-installer
 ```
+
+> auto-cpufreq --update tracks published stable releases, not the master branch. A development checkout will not advance to newer development commits and will only update once a newer stable release includes that revision.
 
 ### Snap Store
 
@@ -616,7 +629,9 @@ If installed via Snap package, daemon status can be viewed as follows:
 
 ### Update - auto-cpufreq update
 
-Update functionality works by cloning the auto-cpufreq repo, installing it via [auto-cpufreq-installer](#auto-cpufreq-installer), and performing a fresh [auto-cpufreq daemon install](#install---auto-cpufreq-daemon) to provide the [latest version's](https://github.com/AdnanHodzic/auto-cpufreq/releases) changes.
+`auto-cpufreq --update` follows published stable releases instead of the current `master` branch. It checks the latest release, verifies that the installed Git revision is on the direct history of that release, stages the exact release tag before changing the current installation, and verifies the installed version afterward. Diverged or custom histories are left untouched when that relationship cannot be proven.
+
+If the daemon was installed before the update, auto-cpufreq remembers that state and re-enables it only after the new release has been installed and verified. An installation that was being used only on demand is not converted into a persistent daemon.
 
 Update auto-cpufreq by running: `sudo auto-cpufreq --update`. By default, the latest revision is cloned to `/opt/auto-cpufreq/source`, thus maintaining existing directory structure.
 
