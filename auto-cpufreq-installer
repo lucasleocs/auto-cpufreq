@@ -223,7 +223,6 @@ elif [ -f /etc/os-release ];then
 
   header "Installing auto-cpufreq tool"
   
-  git config --global --add safe.directory $(pwd)
   if ! "$venv_python" -m pip install .; then
     echo "Error: Failed to install auto-cpufreq into the virtual environment."
     return 1
