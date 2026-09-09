@@ -139,7 +139,7 @@ NixOS uses the native Nix integration described below instead of the source inst
 
 #### Stable release
 
-Download the latest release from the [Releases](https://github.com/AdnanHodzic/auto-cpufreq/releases) page using either `Source code (zip)` or `Source code (tar.gz)`, extract it, enter the extracted directory, then run:
+Download a release from the [Releases](https://github.com/AdnanHodzic/auto-cpufreq/releases) page and extract the source code from its `.zip` or `.tar.gz` archive. Enter the extracted directory, then run:
 
 ```bash
 sudo ./auto-cpufreq-installer
@@ -629,13 +629,13 @@ If installed via Snap package, daemon status can be viewed as follows:
 
 ### Update - auto-cpufreq update
 
-`auto-cpufreq --update` follows published stable releases instead of the current `master` branch. It checks the latest release, verifies that the installed Git revision is on the direct history of that release, stages the exact release tag before changing the current installation, and verifies the installed version afterward. Diverged or custom histories are left untouched when that relationship cannot be proven.
+`auto-cpufreq --update` follows published stable releases instead of the current `master` branch. It checks the latest release, verifies that the installed Git revision is on the direct history of that release, stages the exact release tag before changing the current installation, and verifies the installed version afterward. Diverged or otherwise unverifiable Git histories are left untouched.
 
 If the daemon was installed before the update, auto-cpufreq remembers that state and re-enables it only after the new release has been installed and verified. An installation that was being used only on demand is not converted into a persistent daemon.
 
-Update auto-cpufreq by running: `sudo auto-cpufreq --update`. By default, the latest revision is cloned to `/opt/auto-cpufreq/source`, thus maintaining existing directory structure.
+Update auto-cpufreq by running: `sudo auto-cpufreq --update`. By default, `/opt/auto-cpufreq/source` is used as the parent directory for update staging. Each update uses a unique temporary subdirectory rather than keeping a persistent clone of the release.
 
-Update and clone to a custom directory by running: `sudo auto-cpufreq --update=/path/to/directory`
+Choose a different staging parent with `sudo auto-cpufreq --update=/path/to/directory`. The updater only cleans the temporary directory created for that update attempt and attempts cleanup on both successful and failed update paths.
 
 ### Remove - auto-cpufreq daemon
 

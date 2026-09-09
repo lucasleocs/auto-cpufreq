@@ -3,6 +3,7 @@ from re import fullmatch
 from shutil import rmtree
 from subprocess import DEVNULL, run
 from typing import NamedTuple, Optional
+from uuid import uuid4
 
 
 class ReleaseUpdateDecision(NamedTuple):
@@ -108,6 +109,15 @@ def decide_release_update(
     )
 
 
+def new_staging_destination(parent: Path) -> Path:
+    parent = Path(parent)
+
+    while True:
+        destination = parent / f"auto-cpufreq-update-{uuid4().hex}"
+        if not destination.exists() and not destination.is_symlink():
+            return destination
+
+
 def _remove_destination(destination: Path) -> None:
     if destination.is_symlink() or destination.is_file():
         destination.unlink()
@@ -130,7 +140,9 @@ def stage_release(
 ) -> Optional[Path]:
     destination = Path(destination)
 
-    if not _try_remove_destination(destination):
+    # Never remove or replace a path that existed before this staging attempt.
+    # Callers should allocate a fresh destination for each update.
+    if destination.exists() or destination.is_symlink():
         return None
 
     try:

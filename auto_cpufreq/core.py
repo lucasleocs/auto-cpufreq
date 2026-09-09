@@ -8,7 +8,7 @@ from pathlib import Path
 from pickle import dump, load
 from re import search
 from requests import get, exceptions
-from shutil import copy
+from shutil import copy, rmtree
 from subprocess import call, check_output, DEVNULL, getoutput, run
 from time import sleep
 from warnings import filterwarnings
@@ -21,6 +21,7 @@ from auto_cpufreq.modules.platform_profile import platform_profile
 from auto_cpufreq.release_update import (
     decide_release_update,
     extract_git_commit,
+    new_staging_destination,
     stage_release,
     version_matches_release,
 )
@@ -46,6 +47,7 @@ SCRIPTS_DIR = Path("/usr/local/share/auto-cpufreq/scripts/")
 DAEMON_INSTALL_HELPER = Path("/usr/local/bin/auto-cpufreq-install")
 DAEMON_REMOVE_HELPER = Path("/usr/local/bin/auto-cpufreq-remove")
 CPUFREQCTL_PATH = Path("/usr/local/bin/cpufreqctl.auto-cpufreq")
+GITHUB_REQUEST_TIMEOUT = (10, 30)
 CPUS = os.cpu_count()
 
 
@@ -149,7 +151,10 @@ def check_for_update():
     latest_release_url = api_repository + "/releases/latest"
 
     try:
-        response = get(latest_release_url)
+        response = get(
+            latest_release_url,
+            timeout=GITHUB_REQUEST_TIMEOUT,
+        )
     except (
         exceptions.ConnectionError,
         exceptions.Timeout,
@@ -214,7 +219,10 @@ def check_for_update():
     )
 
     try:
-        comparison = get(compare_url)
+        comparison = get(
+            compare_url,
+            timeout=GITHUB_REQUEST_TIMEOUT,
+        )
     except (
         exceptions.ConnectionError,
         exceptions.Timeout,
@@ -305,7 +313,7 @@ def check_for_update():
 def stage_update(custom_dir, release_tag):
     """Download the exact release tag without touching the installation."""
 
-    source_dir = Path(custom_dir) / "auto-cpufreq"
+    source_dir = new_staging_destination(custom_dir)
 
     print(
         f"Staging stable release {release_tag} "
@@ -336,6 +344,13 @@ def stage_update(custom_dir, release_tag):
         print(
             "The current auto-cpufreq installation was not changed."
         )
+        try:
+            rmtree(staged_source)
+        except OSError as exc:
+            print(
+                "Warning: The rejected update staging directory "
+                f"could not be removed: {exc}"
+            )
         return None
 
     print(

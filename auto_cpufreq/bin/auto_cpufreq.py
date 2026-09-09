@@ -24,6 +24,82 @@ from auto_cpufreq.release_update import staged_release_commit, version_matches_c
 from auto_cpufreq.power_helper import *
 from threading import Thread
 
+
+def _cleanup_staged_update(staged_source):
+    # stage_update() allocates a fresh, previously non-existing staging path,
+    # so this cleanup never targets a directory that existed before the update
+    # attempt.
+    try:
+        rmtree(staged_source)
+    except OSError as exc:
+        print(
+            "Warning: The update staging directory could not be "
+            f"removed: {exc}"
+        )
+
+
+def _complete_staged_update(
+    staged_source,
+    release_tag,
+    staged_commit,
+    daemon_was_installed,
+):
+    """Install and verify a staged release, then restore daemon state."""
+    if not install_staged_update(staged_source):
+        print("The stable release could not be installed.")
+        if daemon_was_installed:
+            print(
+                "The previous daemon was removed before installation "
+                "and was not re-enabled."
+            )
+        return False
+
+    if not verify_installed_release(release_tag):
+        print(
+            "The update command cannot confirm that the requested "
+            "stable release was installed."
+        )
+        print("The daemon was not automatically started.")
+        return False
+
+    installed_version = get_literal_version("auto-cpufreq")
+    if not version_matches_commit(installed_version, staged_commit):
+        print(
+            "The update command cannot confirm that the exact staged "
+            "Git revision was installed."
+        )
+        print(f"Expected staged revision: {staged_commit}")
+        print(f"Installed package version: {installed_version}")
+        print("The daemon was not automatically started.")
+        return False
+
+    # Preserve the pre-update daemon state rather than enabling a daemon
+    # for users who were running auto-cpufreq only on demand.
+    if daemon_was_installed:
+        print("Re-enabling auto-cpufreq daemon")
+        try:
+            reenable = run(["auto-cpufreq", "--install"])
+        except OSError as exc:
+            print(
+                "auto-cpufreq was updated, but the daemon could not "
+                f"be re-enabled: {exc}"
+            )
+            return False
+
+        if reenable.returncode != 0:
+            print(
+                "auto-cpufreq was updated, but the daemon could not "
+                "be re-enabled."
+            )
+            print(
+                "Run `sudo auto-cpufreq --install` after reviewing "
+                "the error above."
+            )
+            return False
+
+    return True
+
+
 @click.command()
 @click.option("--monitor", is_flag=True, help="Monitor and see suggestions for CPU optimizations")
 @click.option("--live", is_flag=True, help="Monitor and make (temp.) suggested CPU optimizations")
@@ -232,83 +308,37 @@ def main(monitor, live, daemon, install, update, remove, force, turbo, config, s
                 if staged_source is None:
                     sys.exit(1)
 
-                staged_commit = staged_release_commit(staged_source)
-                if staged_commit is None:
-                    print(
-                        "Error: Unable to determine the Git revision of "
-                        "the staged stable release."
-                    )
-                    print("The current auto-cpufreq installation was not changed.")
-                    sys.exit(1)
-
-                daemon_was_installed = (
-                    DAEMON_REMOVE_HELPER.exists()
-                )
-                power_state_pending = power_state_exists()
-
-                if daemon_was_installed or power_state_pending:
-                    remove_daemon()
-                    if daemon_was_installed:
-                        remove_complete_msg()
-
-                if not install_staged_update(staged_source):
-                    print(
-                        "The stable release could not be installed."
-                    )
-                    if daemon_was_installed:
+                try:
+                    staged_commit = staged_release_commit(staged_source)
+                    if staged_commit is None:
                         print(
-                            "The previous daemon was removed before "
-                            "installation and was not re-enabled."
+                            "Error: Unable to determine the Git revision of "
+                            "the staged stable release."
                         )
-                    sys.exit(1)
-
-                if not verify_installed_release(release_tag):
-                    print(
-                        "The update command cannot confirm that the "
-                        "requested stable release was installed."
-                    )
-                    print(
-                        "The daemon was not automatically started."
-                    )
-                    sys.exit(1)
-
-                installed_version = get_literal_version("auto-cpufreq")
-                if not version_matches_commit(installed_version, staged_commit):
-                    print(
-                        "The update command cannot confirm that the exact "
-                        "staged Git revision was installed."
-                    )
-                    print(f"Expected staged revision: {staged_commit}")
-                    print(f"Installed package version: {installed_version}")
-                    print("The daemon was not automatically started.")
-                    sys.exit(1)
-
-                # Preserve daemon state: updating the command must not
-                # silently enable a daemon that was not installed before.
-                if daemon_was_installed:
-                    print("Re-enabling auto-cpufreq daemon")
-
-                    try:
-                        reenable = run(
-                            ["auto-cpufreq", "--install"]
-                        )
-                    except OSError as exc:
                         print(
-                            "auto-cpufreq was updated, but the daemon "
-                            f"could not be re-enabled: {exc}"
+                            "The current auto-cpufreq installation was not changed."
                         )
                         sys.exit(1)
 
-                    if reenable.returncode != 0:
-                        print(
-                            "auto-cpufreq was updated, but the daemon "
-                            "could not be re-enabled."
-                        )
-                        print(
-                            "Run `sudo auto-cpufreq --install` after "
-                            "reviewing the error above."
-                        )
+                    daemon_was_installed = (
+                        DAEMON_REMOVE_HELPER.exists()
+                    )
+                    power_state_pending = power_state_exists()
+
+                    if daemon_was_installed or power_state_pending:
+                        remove_daemon()
+                        if daemon_was_installed:
+                            remove_complete_msg()
+
+                    if not _complete_staged_update(
+                        staged_source,
+                        release_tag,
+                        staged_commit,
+                        daemon_was_installed,
+                    ):
                         sys.exit(1)
+                finally:
+                    _cleanup_staged_update(staged_source)
 
                 print(
                     "auto-cpufreq successfully updated to stable "
