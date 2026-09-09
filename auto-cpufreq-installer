@@ -68,6 +68,21 @@ function manual_install {
   exit 1
 }
 
+function verify_gtk3_runtime {
+  # Debian/Ubuntu provide PyGObject as python3-gi. The GTK3 introspection
+  # package supplies the typelibs used by the auto-cpufreq GUI.
+  # https://pygobject.gnome.org/getting_started.html
+  "$1" - <<'PYGTK'
+import gi
+
+gi.require_version("Gtk", "3.0")
+gi.require_version("Gdk", "3.0")
+gi.require_version("GdkPixbuf", "2.0")
+
+from gi.repository import Gdk, GdkPixbuf, Gio, GLib, Gtk, Pango
+PYGTK
+}
+
 function tool_install {
   echo
   # First argument is the distro
@@ -76,46 +91,43 @@ function tool_install {
     header "Setting up Python environment"
   }
 
-  if [ -f /etc/debian_version ]; then  
+  if [ -f /etc/debian_version ]; then
     detected_distro "Debian based"
-    VERSION=$(cat /etc/debian_version) 
+    VERSION="$(cat /etc/debian_version)"
 
-    # install necessary libgirepository debian package dependencies
-    # https://github.com/AdnanHodzic/auto-cpufreq/pull/826#issuecomment-2794549837
-    if ! apt update; then
+    # apt(8) is intended for interactive use. Debian recommends apt-get for
+    # scripts because its command-line behavior is kept backward compatible.
+    if ! apt-get update; then
       echo "Error: Failed to update package lists."
       return 1
     fi
 
-    if apt-cache show libgirepository-2.0-dev > /dev/null 2>&1; then
-        LIB_GI_REPO="libgirepository-2.0-dev"
-        PYGOBJECT_VER="^3.50.0"
-    else
-        LIB_GI_REPO="libgirepository1.0-dev"
-        # pin PYGOBJECT_VER to libgirepository1.0-dev
-        # https://github.com/AdnanHodzic/auto-cpufreq/issues/813#issuecomment-2712543486
-        PYGOBJECT_VER="3.50.0"
+    # Detect a broken package-manager state before attempting installation.
+    # Do not repair or upgrade the user's system automatically.
+    if ! apt-get check; then
+      echo "Error: APT reports broken or inconsistent package dependencies."
+      echo "Repair the package-manager state and run the installer again."
+      return 1
     fi
 
-    # Update PyGObject in pyproject.toml
-    # https://github.com/AdnanHodzic/auto-cpufreq/pull/826#issuecomment-2794549837
-    if [ -f ./pyproject.toml ]; then
-        if grep -q 'PyGObject *= *{[^}]*version *= *"' pyproject.toml; then
-            sed -i "s/\(PyGObject *= *{[^}]*version *= *\"\)[^\"]*\(.*\)/\1$PYGOBJECT_VER\2/" pyproject.toml
-            echo "PyGObject version updated to $PYGOBJECT_VER in pyproject.toml"
-        else
-            echo "Warning: Could not find PyGObject version entry in pyproject.toml!"
-        fi
-    else
-        echo "Error: pyproject.toml not found and PyGObject version not updated!"
-    fi
-
-
-    echo "Installing $LIB_GI_REPO for Debian version $VERSION..."
+    # Use Debian/Ubuntu's native PyGObject runtime instead of compiling
+    # PyGObject from PyPI. python3-gi provides the Python bindings and
+    # gir1.2-gtk-3.0 provides the GTK3 introspection data used by the GUI.
+    #
+    # gcc and python3-dev remain because other Python dependencies may still
+    # need to build native extensions when a compatible wheel is unavailable.
+    echo "Installing Debian/Ubuntu dependencies for version $VERSION..."
     echo '---- '
-    if ! apt install -y python3-dev python3-pip python3-venv python3-setuptools dmidecode \
-      "$LIB_GI_REPO" libcairo2-dev libgtk-3-dev gcc python3-gi; then
+    if ! apt-get install -y \
+      python3-dev python3-venv python3-setuptools \
+      dmidecode gcc git python3-gi gir1.2-gtk-3.0; then
       echo "Error: Failed to install required system dependencies."
+      return 1
+    fi
+
+    if ! verify_gtk3_runtime python3; then
+      echo "Error: The Debian/Ubuntu PyGObject GTK3 runtime could not be loaded."
+      echo "Verify that python3-gi and gir1.2-gtk-3.0 are correctly installed."
       return 1
     fi
 
@@ -204,21 +216,27 @@ elif [ -f /etc/os-release ];then
     return 1
   fi
 
+  # Debian/Ubuntu intentionally use the distro-provided PyGObject runtime.
+  # Confirm that --system-site-packages made it visible inside the venv before
+  # installing the rest of auto-cpufreq.
+  if [ -f /etc/debian_version ] && ! verify_gtk3_runtime "$venv_python"; then
+    echo "Error: The virtual environment cannot access the system PyGObject GTK3 runtime."
+    return 1
+  fi
+
   if ! "$venv_python" -m pip install --upgrade pip wheel; then
     echo "Error: Failed to install Python build dependencies."
     return 1
   fi
 
-
-  # debian specific PyGObject Installation
-  if [ -f /etc/debian_version ] && [ "$PYGOBJECT_VER" = "3.50.0" ]; then
-    if ! "$venv_python" -m pip install PyGObject==3.50.0; then
+  # Debian/Ubuntu use python3-gi from the distribution through
+  # --system-site-packages. Other supported families retain their existing
+  # PyPI PyGObject installation path.
+  if [ ! -f /etc/debian_version ]; then
+    if ! "$venv_python" -m pip install PyGObject; then
       echo "Error: Failed to install PyGObject."
       return 1
     fi
-  elif ! "$venv_python" -m pip install PyGObject; then
-    echo "Error: Failed to install PyGObject."
-    return 1
   fi
 
   header "Installing auto-cpufreq tool"
