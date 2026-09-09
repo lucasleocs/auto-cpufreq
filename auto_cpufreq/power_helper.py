@@ -281,58 +281,143 @@ def valid_options():
     print("--gnome_power_enable\t\tEnable GNOME Power Profiles daemon")
     print("--gnome_power_disable\t\tDisable GNOME Power Profiles daemon\n")
 
-def disable_power_profiles_daemon():
-    # always disable power-profiles-daemon
+def _systemd_load_state(unit: str):
+    """Return a unit LoadState while distinguishing absence from failure."""
     try:
-        print("\n* Disabling GNOME power profiles")
-        call(["systemctl", "disable", "--now", "power-profiles-daemon"])
-        call(["systemctl", "mask", "power-profiles-daemon"])
-    except:
-        print("\nUnable to disable GNOME power profiles")
-        print("If this causes any problems, please submit an issue:")
-        print(GITHUB+"/issues")
+        state = run(
+            [
+                "systemctl",
+                "show",
+                "--property=LoadState",
+                "--value",
+                unit,
+            ],
+            capture_output=True,
+            text=True,
+        )
+    except (OSError, FileNotFoundError, PermissionError):
+        return None
 
-def disable_tuned_daemon():
-    # always disable TuneD daemon
+    load_state = state.stdout.strip()
+    if load_state == "not-found":
+        return load_state
+    if state.returncode == 0:
+        return load_state
+
+    # Older systemd releases can make `show` fail for a missing unit. An empty
+    # successful list-unit-files query establishes absence without accepting a
+    # genuine systemctl failure as if the service were not installed.
     try:
-        print("\n* Disabling TuneD daemon")
-        call(["systemctl", "disable", "--now", "tuned"])
-        call(["systemctl", "mask", "tuned"])
-    except:
-        print("\nUnable to disable TuneD daemon")
-        print("If this causes any problems, please submit an issue:")
-        print(GITHUB+"/issues")
+        installed = run(
+            [
+                "systemctl",
+                "list-unit-files",
+                unit,
+                "--no-legend",
+                "--no-pager",
+            ],
+            capture_output=True,
+            text=True,
+        )
+    except (OSError, FileNotFoundError, PermissionError):
+        return None
+
+    if installed.returncode == 0 and not installed.stdout.strip():
+        return "not-found"
+    return None
+
+
+def _run_required_power_command(args, description: str) -> bool:
+    try:
+        result = run(args)
+    except (OSError, FileNotFoundError, PermissionError) as exc:
+        print(f"\nUnable to {description}: {exc}")
+        return False
+
+    if result.returncode != 0:
+        print(
+            f"\nUnable to {description}: command exited with "
+            f"status {result.returncode}"
+        )
+        return False
+
+    return True
+
+
+def disable_power_profiles_daemon() -> bool:
+    print("\n* Disabling GNOME power profiles")
+    if not _run_required_power_command(
+        ["systemctl", "disable", "--now", "power-profiles-daemon"],
+        "disable GNOME power profiles",
+    ):
+        return False
+
+    if not _run_required_power_command(
+        ["systemctl", "mask", "power-profiles-daemon"],
+        "mask GNOME power profiles",
+    ):
+        return False
+
+    return True
+
+
+def disable_tuned_daemon() -> bool:
+    print("\n* Disabling TuneD daemon")
+    if not _run_required_power_command(
+        ["systemctl", "disable", "--now", "tuned"],
+        "disable TuneD daemon",
+    ):
+        return False
+
+    if not _run_required_power_command(
+        ["systemctl", "mask", "tuned"],
+        "mask TuneD daemon",
+    ):
+        return False
+
+    return True
 
 # default gnome_power_svc_disable func (balanced)
-def gnome_power_svc_disable():
+def gnome_power_svc_disable() -> bool:
     if not systemctl_exists:
-        return
+        return True
 
     if gnome_power_status != 0:
-        try:
-            state = run(
-                ["systemctl", "show", "--property=LoadState", "--value", "power-profiles-daemon"],
-                capture_output=True,
-                text=True,
-            )
-        except (OSError, FileNotFoundError, PermissionError):
-            return
+        # On non-systemd hosts the import-time status probe is expected to fail;
+        # there is no systemd-managed PPD state to change in that case.
+        if getoutput("ps h -o comm 1").strip() != "systemd":
+            return True
 
-        if state.returncode != 0 or state.stdout.strip() not in ("loaded", "masked"):
-            return
+        load_state = _systemd_load_state("power-profiles-daemon")
+        if load_state is None:
+            print("\nUnable to inspect GNOME power profiles with systemctl")
+            return False
+        if load_state == "not-found":
+            return True
+        if load_state not in ("loaded", "masked"):
+            print(
+                "\nUnable to safely disable GNOME power profiles: "
+                f"unexpected LoadState={load_state!r}"
+            )
+            return False
 
     if gnome_power_status == 0 and powerprofilesctl_exists:
         print("\nUsing profile: balanced")
-        try:
-            call(["powerprofilesctl", "set", "balanced"])
-        except (OSError, FileNotFoundError, PermissionError):
-            pass
+        if not _run_required_power_command(
+            ["powerprofilesctl", "set", "balanced"],
+            "set the GNOME power profile to balanced",
+        ):
+            return False
 
-    disable_power_profiles_daemon()
+    return disable_power_profiles_daemon()
 
-def tuned_svc_disable():
-    if systemctl_exists and tuned_stat_exists:
-        disable_tuned_daemon()
+
+def tuned_svc_disable() -> bool:
+    if not systemctl_exists or not tuned_stat_exists:
+        return True
+    if getoutput("ps h -o comm 1").strip() != "systemd":
+        return True
+    return disable_tuned_daemon()
 
 # cli
 @click.command()

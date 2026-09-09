@@ -588,7 +588,7 @@ Please note that any set override will persist even after reboot.
 
 ### Install - auto-cpufreq daemon
 
-Necessary changes are made to the system over time and this process will continue across reboots. The daemon is deployed and started as a systemd service. Changes are made automatically and live stats are generated for monitoring purposes.
+Necessary changes are made to the system over time and continue across reboots. The daemon is deployed as a persistent service and started through the detected supported init/service manager. Source installs currently handle systemd, OpenRC, dinit, runit, and s6. Changes are made automatically and live stats are generated for monitoring purposes.
 
 **Install the daemon using CLI ([after installing auto-cpufreq](#installing-auto-cpufreq)):**
 
@@ -602,11 +602,13 @@ The daemon can also be installed from the GTK interface. See [GUI](#gui).
 
 **auto-cpufreq daemon service**
 
-Installing the auto-cpufreq daemon also enables the associated service (equivalent to `systemctl enable auto-cpufreq`), causing it to start on boot, and immediately starts it (equivalent to `systemctl start auto-cpufreq`).
+Installing the auto-cpufreq daemon enables its service at boot and starts it immediately through the detected service manager. On systemd systems, this is equivalent to `systemctl enable --now auto-cpufreq`.
 
-Since the daemon is running as a systemd service, its status can be seen by running:
+On systemd, the service status can be seen by running:
 
 `systemctl status auto-cpufreq`
+
+Other supported init systems use their native service status command.
 
 If installed via Snap package, daemon status can be viewed as follows:
 
@@ -622,11 +624,11 @@ Update and clone to a custom directory by running: `sudo auto-cpufreq --update=/
 
 ### Remove - auto-cpufreq daemon
 
-The auto-cpufreq daemon, its systemd service, and all its persistent changes can be removed by running:
+The auto-cpufreq daemon, its service integration, and the persistent system changes managed by auto-cpufreq can be removed by running:
 
 `sudo auto-cpufreq --remove`
 
-This does, in part, the equivalent of `systemctl stop auto-cpufreq && systemctl disable auto-cpufreq`, but the above command should be used instead of using `systemctl`.
+Removal uses the detected service manager, cleans daemon-owned artifacts, and restores saved power-management state only after the auto-cpufreq service is no longer active. This can include GNOME Power Profiles, TuneD, and Bluetooth boot policy state that was changed during daemon installation. Use `auto-cpufreq --remove` instead of stopping or disabling the service directly so the full cleanup and restoration sequence can run.
 
 *Please note:* after the daemon is removed, the auto-cpufreq GUI and desktop entry (icon) are also removed.
 

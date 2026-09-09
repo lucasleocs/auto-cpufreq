@@ -10,6 +10,9 @@ MID="$((COLOUMNS / 2))"
 
 APPLICATIONS_PATH="/usr/share/applications"
 VENV_PATH="/opt/auto-cpufreq"
+POWER_STATE_SNAPSHOT="/var/lib/auto-cpufreq/power-state.json"
+CPUFREQCTL_FILE="/usr/local/bin/cpufreqctl.auto-cpufreq"
+AUTO_CPUFREQ_STATS_FILE="/var/run/auto-cpufreq.stats"
 
 SHARE_DIR="/usr/local/share/auto-cpufreq/"
 
@@ -336,45 +339,111 @@ function tool_install {
 }
 
 function tool_remove {
-  # stop any running auto-cpufreq argument (daemon/live/monitor)
+  local cleanup_failed=0
+
+  # Stop running live/monitor processes on a best-effort basis. A process may
+  # exit between pgrep and kill, so that race must not turn removal into an
+  # artificial failure.
   tool_arg_pids=($(pgrep -f "auto-cpufreq --"))
-  for pid in "${tool_arg_pids[@]}"; do [ $pid != $$ ] && kill "$pid"; done
+  for pid in "${tool_arg_pids[@]}"; do
+    if [ "$pid" != "$$" ]; then
+      kill "$pid" 2>/dev/null || true
+    fi
+  done
 
   function remove_directory {
-    [ -d $1 ] && rm -rf $1
+    local path="$1"
+
+    [ -d "$path" ] || return 0
+
+    if ! rm -rf -- "$path"; then
+      echo "Error: Failed to remove directory: $path"
+      return 1
+    fi
+
+    return 0
   }
+
   function remove_file {
-    [ -f $1 ] && rm $1
+    local path="$1"
+
+    if [ ! -e "$path" ] && [ ! -L "$path" ]; then
+      return 0
+    fi
+
+    if ! rm -f -- "$path"; then
+      echo "Error: Failed to remove file: $path"
+      return 1
+    fi
+
+    return 0
   }
 
-  srv_remove="$AUTO_CPUFREQ_FILE-remove"
+  daemon_install="$AUTO_CPUFREQ_FILE-install"
+  daemon_remove="$AUTO_CPUFREQ_FILE-remove"
+  venv_auto_cpufreq="$VENV_PATH/venv/bin/auto-cpufreq"
 
-  # run uninstall in case of installed daemon
-  if [ -f $srv_remove -o -f $AUTO_CPUFREQ_FILE ]; then
-    eval "$AUTO_CPUFREQ_FILE --remove"
+  # A daemon remove helper means the daemon is still installed. A persistent
+  # power-state snapshot means daemon removal/restoration is still incomplete,
+  # even if the helper itself has already been removed.
+  if [ -f "$daemon_remove" ] || [ -f "$POWER_STATE_SNAPSHOT" ]; then
+    if [ -x "$AUTO_CPUFREQ_FILE" ]; then
+      if ! "$AUTO_CPUFREQ_FILE" --remove; then
+        echo "Error: Failed to remove the installed auto-cpufreq daemon or restore its saved power state."
+        echo "The source installation was left in place so removal can be retried."
+        return 1
+      fi
+    elif [ -x "$venv_auto_cpufreq" ]; then
+      if ! PYTHONPATH="$VENV_PATH" "$venv_auto_cpufreq" --remove; then
+        echo "Error: Failed to remove auto-cpufreq or restore its saved power state using the virtual environment."
+        echo "The source installation was left in place so removal can be retried."
+        return 1
+      fi
+    else
+      echo "Error: auto-cpufreq has daemon or power-state cleanup pending, but no runnable command was found."
+      echo "The source installation was left in place to avoid losing the recovery path."
+      return 1
+    fi
   else
-    echo; echo "Couldn't remove the auto-cpufreq daemon, $srv_remove do not exist."
+    echo
+    echo "auto-cpufreq daemon is not installed and no power-state restoration is pending; skipping daemon removal."
   fi
 
-  # remove auto-cpufreq and all its supporting files
-  remove_directory $SHARE_DIR
+  # Continue cleanup after individual filesystem errors so as much as possible
+  # is removed, but remember every failure and report a non-zero result at end.
+  remove_directory "$SHARE_DIR" || cleanup_failed=1
 
-  remove_file "$AUTO_CPUFREQ_FILE-install"
-  remove_file $srv_remove
-  remove_file $AUTO_CPUFREQ_FILE
-  remove_file $AUTO_CPUFREQ_GTK_FILE
-  remove_file $IMG_FILE
-  remove_file $ORG_FILE
-  remove_file "/usr/local/bin/cpufreqctl.auto-cpufreq"
-  remove_file "/var/run/auto-cpufreq.stats"
+  remove_file "$daemon_install" || cleanup_failed=1
+  remove_file "$daemon_remove" || cleanup_failed=1
+  remove_file "$AUTO_CPUFREQ_FILE" || cleanup_failed=1
+  remove_file "$AUTO_CPUFREQ_GTK_FILE" || cleanup_failed=1
+  remove_file "$IMG_FILE" || cleanup_failed=1
+  remove_file "$ORG_FILE" || cleanup_failed=1
+  remove_file "$CPUFREQCTL_FILE" || cleanup_failed=1
+  remove_file "$AUTO_CPUFREQ_STATS_FILE" || cleanup_failed=1
 
-  remove_file "$APPLICATIONS_PATH/$AUTO_CPUFREQ_GTK_DESKTOP_FILE"
-  update-desktop-database $APPLICATIONS_PATH
+  remove_file "$APPLICATIONS_PATH/$AUTO_CPUFREQ_GTK_DESKTOP_FILE" || cleanup_failed=1
 
-  # remove python virtual environment
-  remove_directory $VENV_PATH
+  if command -v update-desktop-database > /dev/null 2>&1; then
+    if ! update-desktop-database "$APPLICATIONS_PATH"; then
+      echo "Warning: Failed to refresh the desktop application database."
+    fi
+  fi
 
-  echo; echo "auto-cpufreq tool and all its supporting files successfully removed"; echo
+  remove_directory "$VENV_PATH" || cleanup_failed=1
+
+  if [ "$cleanup_failed" -ne 0 ]; then
+    echo
+    echo "Error: auto-cpufreq removal completed with filesystem cleanup failures."
+    echo "Some files may remain. Review the errors above and retry removal."
+    echo
+    return 1
+  fi
+
+  echo
+  echo "auto-cpufreq tool and all its supporting files successfully removed"
+  echo
+  return 0
 }
 
 # root check

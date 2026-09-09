@@ -18,6 +18,11 @@ from auto_cpufreq.globals import (
     ALL_GOVERNORS, AVAILABLE_GOVERNORS, AVAILABLE_GOVERNORS_SORTED, GITHUB, IS_INSTALLED_WITH_AUR, IS_INSTALLED_WITH_SNAP, POWER_SUPPLY_DIR, SNAP_DAEMON_CHECK
 )
 from auto_cpufreq.modules.platform_profile import platform_profile
+from auto_cpufreq.power_state import (
+    power_state_exists,
+    restore_power_state,
+    save_power_state,
+)
 from auto_cpufreq.power_helper import *
 
 filterwarnings("ignore")
@@ -32,6 +37,9 @@ else:
 # - replace get system/CPU load from: psutil.getloadavg() | available in 5.6.2)
 
 SCRIPTS_DIR = Path("/usr/local/share/auto-cpufreq/scripts/")
+DAEMON_INSTALL_HELPER = Path("/usr/local/bin/auto-cpufreq-install")
+DAEMON_REMOVE_HELPER = Path("/usr/local/bin/auto-cpufreq-remove")
+CPUFREQCTL_PATH = Path("/usr/local/bin/cpufreqctl.auto-cpufreq")
 CPUS = os.cpu_count()
 
 
@@ -280,16 +288,16 @@ def cpufreqctl():
     """
     deploy cpufreqctl.auto-cpufreq script
     """
-    if not (IS_INSTALLED_WITH_SNAP or os.path.isfile("/usr/local/bin/cpufreqctl.auto-cpufreq")):
-        copy(SCRIPTS_DIR / "cpufreqctl.sh", "/usr/local/bin/cpufreqctl.auto-cpufreq")
-        call(["chmod", "a+x", "/usr/local/bin/cpufreqctl.auto-cpufreq"])
+    if not IS_INSTALLED_WITH_SNAP and not CPUFREQCTL_PATH.exists():
+        copy(SCRIPTS_DIR / "cpufreqctl.sh", CPUFREQCTL_PATH)
+        CPUFREQCTL_PATH.chmod(0o755)
 
 def cpufreqctl_restore():
     """
     remove cpufreqctl.auto-cpufreq script
     """
-    if not IS_INSTALLED_WITH_SNAP and os.path.isfile("/usr/local/bin/cpufreqctl.auto-cpufreq"):
-        os.remove("/usr/local/bin/cpufreqctl.auto-cpufreq")
+    if not IS_INSTALLED_WITH_SNAP:
+        CPUFREQCTL_PATH.unlink(missing_ok=True)
 
 def footer(l=79): print("\n" + "-" * l + "\n")
 
@@ -306,32 +314,282 @@ def remove_complete_msg():
     print("auto-cpufreq successfully removed.")
     footer()
 
+def _deploy_daemon_helpers():
+    helpers = (
+        ("install", SCRIPTS_DIR / "auto-cpufreq-install.sh", DAEMON_INSTALL_HELPER),
+        ("remove", SCRIPTS_DIR / "auto-cpufreq-remove.sh", DAEMON_REMOVE_HELPER),
+    )
+
+    for label, source, destination in helpers:
+        print(f"\n* Deploy auto-cpufreq {label} script")
+        copy(source, destination)
+        destination.chmod(0o755)
+
+
+def _remove_daemon_helpers() -> bool:
+    # remove_daemon() uses the removal helper as the installed-daemon marker.
+    # Delete it last so a failed install-helper cleanup still leaves a marker
+    # that allows --remove to retry the same cleanup.
+    try:
+        DAEMON_INSTALL_HELPER.unlink(missing_ok=True)
+    except OSError as exc:
+        print(
+            f"\nERROR: Unable to remove daemon lifecycle helper "
+            f"{DAEMON_INSTALL_HELPER}: {exc}"
+        )
+        return False
+
+    try:
+        DAEMON_REMOVE_HELPER.unlink(missing_ok=True)
+    except OSError as exc:
+        print(
+            f"\nERROR: Unable to remove daemon lifecycle helper "
+            f"{DAEMON_REMOVE_HELPER}: {exc}"
+        )
+        return False
+
+    return True
+
+
+def _run_daemon_helper(helper: Path, action: str) -> bool:
+    try:
+        result = run([str(helper)])
+    except OSError as exc:
+        print(f"\nERROR: Unable to {action} auto-cpufreq daemon: {exc}")
+        return False
+
+    if result.returncode != 0:
+        print(
+            f"\nERROR: auto-cpufreq daemon {action} helper "
+            f"exited with status {result.returncode}."
+        )
+        return False
+
+    return True
+
+
+def _cleanup_daemon_artifacts(
+    *,
+    remove_override: bool,
+    remove_stats: bool,
+    remove_cpufreqctl: bool,
+) -> bool:
+    """Remove selected daemon-owned files without consuming recovery state."""
+    success = True
+
+    if remove_override and os.path.exists(governor_override_state):
+        try:
+            os.remove(governor_override_state)
+        except OSError as exc:
+            print(
+                f"\nERROR: Unable to remove governor override "
+                f"{governor_override_state}: {exc}"
+            )
+            success = False
+
+    if remove_stats and auto_cpufreq_stats_path.exists():
+        try:
+            if auto_cpufreq_stats_file is not None:
+                auto_cpufreq_stats_file.close()
+            auto_cpufreq_stats_path.unlink()
+        except OSError as exc:
+            print(
+                f"\nERROR: Unable to remove daemon statistics file "
+                f"{auto_cpufreq_stats_path}: {exc}"
+            )
+            success = False
+
+    if remove_cpufreqctl and not IS_INSTALLED_WITH_SNAP:
+        try:
+            CPUFREQCTL_PATH.unlink(missing_ok=True)
+        except OSError as exc:
+            print(
+                f"\nERROR: Unable to remove cpufreqctl helper "
+                f"{CPUFREQCTL_PATH}: {exc}"
+            )
+            success = False
+
+    return success
+
+
+def _rollback_daemon_setup(
+    *,
+    remove_stats: bool,
+    remove_cpufreqctl: bool,
+) -> bool:
+    # The daemon has not started yet. Remove only files created by this setup
+    # attempt, then consume lifecycle markers and the saved host state. If any
+    # file cannot be removed, keep both recovery mechanisms for a later retry.
+    if not _cleanup_daemon_artifacts(
+        remove_override=False,
+        remove_stats=remove_stats,
+        remove_cpufreqctl=remove_cpufreqctl,
+    ):
+        print(
+            "\nDaemon setup cleanup is incomplete. Lifecycle helpers and "
+            "the saved power-state snapshot were kept for a later retry."
+        )
+        return False
+
+    if not _remove_daemon_helpers():
+        print(
+            "\nDaemon lifecycle helper cleanup is incomplete. The saved "
+            "power-state snapshot was kept so recovery can be retried."
+        )
+        return False
+
+    return _restore_saved_power_state()
+
+
+def _rollback_failed_daemon_install(
+    *,
+    remove_stats: bool,
+    remove_cpufreqctl: bool,
+) -> bool:
+    # The install helper may have started the service before failing. Keep all
+    # runtime files and competing power managers unchanged until the removal
+    # helper proves that auto-cpufreq is no longer active or enabled.
+    if not _run_daemon_helper(DAEMON_REMOVE_HELPER, "remove"):
+        print(
+            "\nThe failed daemon installation could not be safely rolled "
+            "back. The saved power-state snapshot and daemon files were kept "
+            "for a later retry."
+        )
+        return False
+
+    if not _cleanup_daemon_artifacts(
+        remove_override=False,
+        remove_stats=remove_stats,
+        remove_cpufreqctl=remove_cpufreqctl,
+    ):
+        print(
+            "\nThe daemon stopped, but setup cleanup is incomplete. "
+            "Lifecycle helpers and the saved power-state snapshot were kept "
+            "for a later retry."
+        )
+        return False
+
+    if not _remove_daemon_helpers():
+        print(
+            "\nDaemon lifecycle helper cleanup is incomplete. The saved "
+            "power-state snapshot was kept so removal can be retried."
+        )
+        return False
+
+    return _restore_saved_power_state()
+
+
+def _prepare_power_state_snapshot() -> bool:
+    if power_state_exists():
+        print(
+            "\nERROR: A previous auto-cpufreq power-state snapshot is still pending."
+        )
+        print(
+            "Restore it first with `sudo auto-cpufreq --remove` before "
+            "installing the daemon again."
+        )
+        return False
+
+    if not save_power_state():
+        print(
+            "\nERROR: Unable to save the current power-management state."
+        )
+        print(
+            "No persistent auto-cpufreq power-management changes were made."
+        )
+        return False
+
+    return True
+
+
+def _restore_saved_power_state() -> bool:
+    if restore_power_state():
+        print("\nOriginal power-management state restored.")
+        return True
+
+    print(
+        "\nERROR: The original power-management state could not be fully restored."
+    )
+    print(
+        "The saved snapshot was kept so restoration can be retried with "
+        "`sudo auto-cpufreq --remove`."
+    )
+    return False
+
+
 def deploy_daemon():
     print("\n" + "-" * 21 + " Deploying auto-cpufreq as a daemon " + "-" * 22 + "\n")
 
-    cpufreqctl() # deploy cpufreqctl script func call
+    # Save host state before persistent power-management changes. Track which
+    # daemon files belong to this attempt so rollback never deletes a file that
+    # existed before installation started.
+    if not _prepare_power_state_snapshot():
+        sys.exit(1)
 
-    bluetooth_disable() # turn off bluetooth on boot
+    remove_cpufreqctl_on_rollback = (
+        not IS_INSTALLED_WITH_SNAP and not CPUFREQCTL_PATH.exists()
+    )
+    remove_stats_on_rollback = not auto_cpufreq_stats_path.exists()
 
-    auto_cpufreq_stats_path.touch(exist_ok=True)
+    try:
+        cpufreqctl()
+        bluetooth_disable()
+        if remove_stats_on_rollback:
+            auto_cpufreq_stats_path.touch()
+        _deploy_daemon_helpers()
+    except OSError as exc:
+        print(
+            f"\nERROR: Unable to prepare auto-cpufreq daemon "
+            f"installation: {exc}"
+        )
+        print("Rolling back daemon setup before restoring power state.")
+        _rollback_daemon_setup(
+            remove_stats=remove_stats_on_rollback,
+            remove_cpufreqctl=remove_cpufreqctl_on_rollback,
+        )
+        sys.exit(1)
 
-    print("\n* Deploy auto-cpufreq install script")
-    copy(SCRIPTS_DIR / "auto-cpufreq-install.sh", "/usr/local/bin/auto-cpufreq-install")
-    call(["chmod", "a+x", "/usr/local/bin/auto-cpufreq-install"])
-
-    print("\n* Deploy auto-cpufreq remove script")
-    copy(SCRIPTS_DIR / "auto-cpufreq-remove.sh", "/usr/local/bin/auto-cpufreq-remove")
-    call(["chmod", "a+x", "/usr/local/bin/auto-cpufreq-remove"])
-
-    # output warning if gnome power profile is running
+    # Conflicting power-management services must be disabled before
+    # auto-cpufreq itself is started.
     gnome_power_detect_install()
-    gnome_power_svc_disable()
+    if not gnome_power_svc_disable():
+        print(
+            "\nThe GNOME power profiles service could not be disabled "
+            "safely. Rolling back daemon setup before restoring the "
+            "pre-install power-management state."
+        )
+        _rollback_daemon_setup(
+            remove_stats=remove_stats_on_rollback,
+            remove_cpufreqctl=remove_cpufreqctl_on_rollback,
+        )
+        sys.exit(1)
 
-    tuned_svc_disable()
+    if not tuned_svc_disable():
+        print(
+            "\nThe TuneD service could not be disabled safely. "
+            "Rolling back daemon setup before restoring the pre-install "
+            "power-management state."
+        )
+        _rollback_daemon_setup(
+            remove_stats=remove_stats_on_rollback,
+            remove_cpufreqctl=remove_cpufreqctl_on_rollback,
+        )
+        sys.exit(1)
 
-    tlp_service_detect() # output warning if TLP service is detected
+    tlp_service_detect()
 
-    call("/usr/local/bin/auto-cpufreq-install", shell=True)
+    if not _run_daemon_helper(DAEMON_INSTALL_HELPER, "install"):
+        print(
+            "\nThe daemon was not installed successfully. "
+            "Rolling back the partial daemon installation before "
+            "restoring the pre-install power-management state."
+        )
+        _rollback_failed_daemon_install(
+            remove_stats=remove_stats_on_rollback,
+            remove_cpufreqctl=remove_cpufreqctl_on_rollback,
+        )
+        sys.exit(1)
+
 
 def deploy_daemon_performance():
     print("\n" + "-" * 21 + " Deploying auto-cpufreq as a daemon (performance) " + "-" * 22 + "\n")
@@ -358,42 +616,70 @@ def deploy_daemon_performance():
     gnome_power_detect_install()
     #"gnome_power_svc_disable_performance" is not defined
     #gnome_power_svc_disable_performance()
-   
+
     tlp_service_detect() # output warning if TLP service is detected
 
     call("/usr/local/bin/auto-cpufreq-install", shell=True)
 
 def remove_daemon():
-    # check if auto-cpufreq is installed
-    if not os.path.exists("/usr/local/bin/auto-cpufreq-remove"):
+    daemon_present = DAEMON_REMOVE_HELPER.exists()
+    saved_power_state = power_state_exists()
+
+    if not daemon_present and not saved_power_state:
         print("\nauto-cpufreq daemon is not installed.\n")
         sys.exit(1)
 
-    print("\n" + "-" * 21 + " Removing auto-cpufreq daemon " + "-" * 22 + "\n")
+    if daemon_present:
+        print("\n" + "-" * 21 + " Removing auto-cpufreq daemon " + "-" * 22 + "\n")
 
-    bluetooth_enable() # turn on bluetooth on boot
+        # Competing power managers must not be restored until the removal
+        # helper has proved that auto-cpufreq is no longer active or enabled.
+        if not _run_daemon_helper(DAEMON_REMOVE_HELPER, "remove"):
+            print(
+                "\nThe daemon could not be removed. "
+                "Power-management services were left unchanged."
+            )
+            sys.exit(1)
 
-    # output warning if gnome power profile is stopped
-    gnome_power_rm_reminder()
-    gnome_power_svc_enable()
+    elif saved_power_state:
+        print(
+            "\nauto-cpufreq daemon is already removed; "
+            "retrying saved cleanup and power-state restoration.\n"
+        )
 
-    tuned_svc_enable()
+    # Recovery state remains intact until every daemon-owned artifact has been
+    # handled. A filesystem error can therefore be retried with --remove
+    # instead of leaving an incomplete cleanup with no marker to resume from.
+    if not _cleanup_daemon_artifacts(
+        remove_override=True,
+        remove_stats=True,
+        remove_cpufreqctl=True,
+    ):
+        print(
+            "\nDaemon filesystem cleanup is incomplete. Lifecycle helpers "
+            "and any saved power-state snapshot were kept for a later retry."
+        )
+        sys.exit(1)
 
-    # run auto-cpufreq daemon remove script
-    call("/usr/local/bin/auto-cpufreq-remove", shell=True)
+    if daemon_present and not _remove_daemon_helpers():
+        print(
+            "\nDaemon lifecycle helper cleanup is incomplete. "
+            "Power-management restoration was not attempted."
+        )
+        sys.exit(1)
 
-    # remove auto-cpufreq-remove
-    os.remove("/usr/local/bin/auto-cpufreq-remove")
+    if saved_power_state:
+        if not _restore_saved_power_state():
+            sys.exit(1)
+    elif daemon_present:
+        # Installations created before persistent snapshots used a fixed
+        # restoration policy because their original host state was not saved.
+        bluetooth_enable()
 
-    # delete override pickle if it exists
-    if os.path.exists(governor_override_state):  os.remove(governor_override_state)
+        gnome_power_rm_reminder()
+        gnome_power_svc_enable()
+        tuned_svc_enable()
 
-    # delete stats file
-    if auto_cpufreq_stats_path.exists():
-        if auto_cpufreq_stats_file is not None: auto_cpufreq_stats_file.close()
-        auto_cpufreq_stats_path.unlink()
-
-    cpufreqctl_restore() # restore original cpufrectl script
 
 def gov_check():
     for gov in AVAILABLE_GOVERNORS:
