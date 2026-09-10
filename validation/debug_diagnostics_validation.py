@@ -88,6 +88,7 @@ def test_current_epp_is_grouped_per_cpufreq_policy():
         ):
             policy = root / name
             policy.mkdir()
+            (policy / "scaling_governor").write_text("performance\n")
             (policy / "energy_performance_preference").write_text(epp + "\n")
 
         policies = read_cpufreq_policy_info(root)
