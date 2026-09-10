@@ -66,7 +66,10 @@ def read_debug_override(getter, allowed_values) -> str:
         value = getter()
     except Exception:
         return "Unavailable"
-    return str(value) if value in allowed_values else "Unavailable"
+
+    if not isinstance(value, str):
+        return "Unavailable"
+    return value if value in allowed_values else "Unavailable"
 
 
 def _format_service_state(state) -> str:
