@@ -378,28 +378,31 @@ def test_updater_still_uses_literal_version():
     assert "get_formatted_version" not in called
 
 
-def test_diagnostics_subprocess_is_query_only():
+def test_snap_diagnostics_command_is_query_only():
     source = (ROOT / "auto_cpufreq/modules/diagnostics.py").read_text()
     tree = ast.parse(source)
-    command_literals = []
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Call):
-            continue
-        if not (
-            isinstance(node.func, ast.Attribute)
-            and node.func.attr == "run"
-        ):
-            continue
-        if not node.args or not isinstance(node.args[0], ast.List):
-            continue
-        values = []
-        for element in node.args[0].elts:
-            if isinstance(element, ast.Constant) and isinstance(element.value, str):
-                values.append(element.value)
-        if values:
-            command_literals.append(tuple(values))
-
-    assert command_literals == [("snapctl", "services", "auto-cpufreq.service")]
+    functions = {
+        node.name: node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef)
+    }
+    snap_reader = functions["_read_snap_daemon_status"]
+    runner_calls = [
+        node
+        for node in ast.walk(snap_reader)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "snap_runner"
+    ]
+    assert len(runner_calls) == 1
+    command = runner_calls[0].args[0]
+    assert isinstance(command, ast.List)
+    values = [
+        element.value
+        for element in command.elts
+        if isinstance(element, ast.Constant) and isinstance(element.value, str)
+    ]
+    assert values == ["snapctl", "services", "auto-cpufreq.service"]
 
 
 def main():
@@ -421,7 +424,7 @@ def main():
         test_snap_service_state_and_confinement_reporting,
         test_snap_service_query_failure_is_safe,
         test_updater_still_uses_literal_version,
-        test_diagnostics_subprocess_is_query_only,
+        test_snap_diagnostics_command_is_query_only,
     ]
     failed = 0
     for test in tests:
