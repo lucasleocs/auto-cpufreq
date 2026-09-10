@@ -18,6 +18,17 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Verify Python syntax
+        run: |
+          python -m py_compile \
+            auto_cpufreq/modules/diagnostics.py \
+            auto_cpufreq/bin/auto_cpufreq.py \
+            auto_cpufreq/core.py \
+            auto_cpufreq/power_state.py
+
+      - name: Verify diff whitespace
+        run: git diff --check 9066739ec8577fe7d08afb4a8ddeab84825ba799..HEAD
+
       - name: Verify baseline fails regression checks
         run: |
           git worktree add --detach /tmp/diagnostics-baseline 9066739ec8577fe7d08afb4a8ddeab84825ba799
