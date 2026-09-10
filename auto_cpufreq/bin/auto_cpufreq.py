@@ -15,7 +15,6 @@ from auto_cpufreq.core import *
 from auto_cpufreq.globals import GITHUB, IS_INSTALLED_WITH_AUR, IS_INSTALLED_WITH_SNAP
 from auto_cpufreq.modules.diagnostics import (
     format_debug_diagnostics,
-    format_source_version,
     read_intel_pstate_info,
 )
 from auto_cpufreq.modules.platform_profile import platform_profile
@@ -29,17 +28,6 @@ from auto_cpufreq.release_update import staged_release_commit, version_matches_c
 # import everything from power_helper, including bluetooth_disable and bluetooth_enable
 from auto_cpufreq.power_helper import *
 from threading import Thread
-
-
-def _print_cli_version():
-    if IS_INSTALLED_WITH_SNAP or IS_INSTALLED_WITH_AUR:
-        app_version()
-        return
-
-    print(
-        "auto-cpufreq version:",
-        format_source_version(get_literal_version("auto-cpufreq")),
-    )
 
 
 def _cleanup_staged_update(staged_source):
@@ -437,7 +425,7 @@ def main(monitor, live, daemon, install, update, remove, force, turbo, config, s
                 include_config=False,
             )
             print()
-            _print_cli_version()
+            app_version()
             print()
             print(
                 format_debug_diagnostics(
@@ -457,7 +445,7 @@ def main(monitor, live, daemon, install, update, remove, force, turbo, config, s
         elif version:
             footer()
             distro_info()
-            _print_cli_version()
+            app_version()
             footer()
         elif donate:
             footer()

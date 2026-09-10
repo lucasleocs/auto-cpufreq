@@ -12,14 +12,6 @@ class IntelPstateInfo:
     max_perf_pct: int | None = None
 
 
-def format_source_version(version: str) -> str:
-    """Keep the package release readable while retaining source revision metadata."""
-    release, separator, revision = version.partition("+")
-    if separator and revision:
-        return f"{release} (git: {revision})"
-    return release
-
-
 def _read_text(path: Path) -> str | None:
     try:
         value = path.read_text().strip()
