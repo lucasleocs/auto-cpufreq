@@ -13,16 +13,33 @@ from auto_cpufreq.battery_scripts.battery import *
 from auto_cpufreq.config.config import config as conf, find_config_file
 from auto_cpufreq.core import *
 from auto_cpufreq.globals import GITHUB, IS_INSTALLED_WITH_AUR, IS_INSTALLED_WITH_SNAP
+from auto_cpufreq.modules.diagnostics import (
+    format_debug_diagnostics,
+    format_source_version,
+    read_intel_pstate_info,
+)
 from auto_cpufreq.modules.platform_profile import platform_profile
 from auto_cpufreq.modules.system_info import (
     format_platform_profile_summary,
     print_system_report,
+    system_info,
 )
 from auto_cpufreq.modules.system_monitor import ViewType, SystemMonitor
 from auto_cpufreq.release_update import staged_release_commit, version_matches_commit
 # import everything from power_helper, including bluetooth_disable and bluetooth_enable
 from auto_cpufreq.power_helper import *
 from threading import Thread
+
+
+def _print_cli_version():
+    if IS_INSTALLED_WITH_SNAP or IS_INSTALLED_WITH_AUR:
+        app_version()
+        return
+
+    print(
+        "auto-cpufreq version:",
+        format_source_version(get_literal_version("auto-cpufreq")),
+    )
 
 
 def _cleanup_staged_update(staged_source):
@@ -409,30 +426,38 @@ def main(monitor, live, daemon, install, update, remove, force, turbo, config, s
                 bluetooth_enable()
                 footer()
         elif debug:
-            # ToDo: add status of GNOME Power Profile service status
-            config_info_dialog()
             root_check()
             battery_get_thresholds()
             cpufreqctl()
+            report = system_info.generate_system_report()
+            intel_pstate = read_intel_pstate_info()
             footer()
-            print_system_report()
+            print_system_report(
+                report,
+                include_config=False,
+            )
             print()
-            app_version()
+            _print_cli_version()
+            print()
+            print(
+                format_debug_diagnostics(
+                    report,
+                    config_path=config_path if conf.has_config() else None,
+                    intel_pstate=intel_pstate,
+                )
+            )
             print()
             python_info()
             print()
             device_info()
-            print(f"Battery is: {'' if charging() else 'dis'}charging")
             print()
             app_res_use()
             get_load()
-            get_current_gov()
-            get_turbo()
             footer()
         elif version:
             footer()
             distro_info()
-            app_version()
+            _print_cli_version()
             footer()
         elif donate:
             footer()
