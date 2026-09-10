@@ -296,6 +296,9 @@ def main(monitor, live, daemon, install, update, remove, force, turbo, config, s
             get_load()
             get_current_gov()
             get_turbo()
+            hwp_dynamic_boost = get_hwp_dynamic_boost()
+            if hwp_dynamic_boost is not None:
+                print(f"HWP Dynamic Boost: {'On' if hwp_dynamic_boost else 'Off'}")
             footer()
         elif version:
             footer()
