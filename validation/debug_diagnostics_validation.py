@@ -79,6 +79,29 @@ def test_current_governor_is_grouped_per_cpufreq_policy():
     ) in output, output
 
 
+def test_current_epp_is_grouped_per_cpufreq_policy():
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        for name, epp in (
+            ("policy0", "balance_performance"),
+            ("policy4", "power"),
+        ):
+            policy = root / name
+            policy.mkdir()
+            (policy / "energy_performance_preference").write_text(epp + "\n")
+
+        policies = read_cpufreq_policy_info(root)
+        output = format_debug_diagnostics(
+            _report(),
+            cpufreq_policies=policies,
+        )
+
+    assert (
+        "EPP: mixed across policies "
+        "(balance_performance [policy0]; power [policy4])"
+    ) in output, output
+
+
 def test_turbo_control_is_described_as_enabled_not_active():
     enabled = format_debug_diagnostics(_report(turbo=(True, False)))
     disabled = format_debug_diagnostics(_report(turbo=(False, False)))
@@ -90,6 +113,7 @@ def main():
     tests = [
         test_debug_path_does_not_deploy_cpufreqctl,
         test_current_governor_is_grouped_per_cpufreq_policy,
+        test_current_epp_is_grouped_per_cpufreq_policy,
         test_turbo_control_is_described_as_enabled_not_active,
     ]
     failed = 0
