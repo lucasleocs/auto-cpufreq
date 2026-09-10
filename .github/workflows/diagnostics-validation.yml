@@ -34,7 +34,9 @@ jobs:
           fi
 
       - name: Verify current tree passes regression checks
-        run: python validation/debug_diagnostics_validation.py | tee current-output.txt
+        run: |
+          set -o pipefail
+          python validation/debug_diagnostics_validation.py | tee current-output.txt
 
       - name: Upload validation output
         if: always()
