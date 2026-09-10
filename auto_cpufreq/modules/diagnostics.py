@@ -53,6 +53,8 @@ class AmdPstateInfo:
 @dataclass(frozen=True)
 class CpuFreqPolicyInfo:
     name: str
+    scaling_governor: str | None = None
+    energy_performance_preference: str | None = None
     available_governors: tuple[str, ...] | None = None
     available_epp_preferences: tuple[str, ...] | None = None
     scaling_min_freq_khz: int | None = None
@@ -129,6 +131,10 @@ def read_cpufreq_policy_info(
     return tuple(
         CpuFreqPolicyInfo(
             name=path.name,
+            scaling_governor=_read_text(path / "scaling_governor"),
+            energy_performance_preference=_read_text(
+                path / "energy_performance_preference"
+            ),
             available_governors=_read_words(path / "scaling_available_governors"),
             available_epp_preferences=_read_words(
                 path / "energy_performance_available_preferences"
@@ -341,9 +347,9 @@ def _profile_selection(is_ac_plugged: bool | None) -> str:
 def _turbo_status(turbo_state) -> str:
     enabled, driver_managed = turbo_state
     if enabled is True:
-        return "On"
+        return "Enabled"
     if enabled is False:
-        return "Off"
+        return "Disabled"
     if driver_managed:
         return "Driver managed"
     return "Unavailable"
@@ -399,11 +405,32 @@ def format_debug_diagnostics(
     if battery.power_consumption is not None:
         lines.append(f"Battery power: {battery.power_consumption:.2f} W")
 
+    governor = _value_or_unavailable(report.current_gov)
+    if cpufreq_policies and any(
+        policy.scaling_governor is not None for policy in cpufreq_policies
+    ):
+        governor = _format_policy_groups(
+            cpufreq_policies,
+            lambda policy: policy.scaling_governor,
+            _value_or_unavailable,
+        )
+
+    epp = _value_or_unavailable(report.current_epp)
+    if cpufreq_policies and any(
+        policy.energy_performance_preference is not None
+        for policy in cpufreq_policies
+    ):
+        epp = _format_policy_groups(
+            cpufreq_policies,
+            lambda policy: policy.energy_performance_preference,
+            _value_or_unavailable,
+        )
+
     cpu_lines = [
         "",
         "----------------------------- CPU Power State -------------------------------",
         f"Driver: {_value_or_unavailable(report.cpu_driver)}",
-        f"Governor: {_value_or_unavailable(report.current_gov)}",
+        f"Governor: {governor}",
     ]
     if governor_override is not None:
         formatted_override = (
@@ -414,7 +441,7 @@ def format_debug_diagnostics(
         cpu_lines.append(f"Governor override: {formatted_override}")
     cpu_lines.extend(
         [
-            f"EPP: {_value_or_unavailable(report.current_epp)}",
+            f"EPP: {epp}",
             f"EPB: {_value_or_unavailable(report.current_epb)}",
             f"HWP Dynamic Boost: {_hwp_status(report.current_hwp_dynamic_boost)}",
             f"Turbo Boost: {_turbo_status(report.is_turbo_on)}",
