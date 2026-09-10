@@ -17,4 +17,20 @@ jobs:
           python-version: "3.12"
 
       - name: Run diagnostics regression checks
-        run: python validation/debug_diagnostics_validation.py
+        id: regression
+        continue-on-error: true
+        run: |
+          python validation/debug_diagnostics_validation.py > validation-output.txt 2>&1
+          echo "status=$?" >> "$GITHUB_OUTPUT"
+          cat validation-output.txt
+
+      - name: Upload validation output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: diagnostics-validation-output
+          path: validation-output.txt
+
+      - name: Fail on regression
+        if: steps.regression.outputs.status != '0'
+        run: exit 1
