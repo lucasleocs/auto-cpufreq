@@ -15,7 +15,9 @@ from auto_cpufreq.core import *
 from auto_cpufreq.globals import GITHUB, IS_INSTALLED_WITH_AUR, IS_INSTALLED_WITH_SNAP
 from auto_cpufreq.modules.diagnostics import (
     format_debug_diagnostics,
+    read_debug_override,
     read_intel_pstate_info,
+    read_power_services_info,
 )
 from auto_cpufreq.modules.platform_profile import platform_profile
 from auto_cpufreq.modules.system_info import (
@@ -419,6 +421,15 @@ def main(monitor, live, daemon, install, update, remove, force, turbo, config, s
             cpufreqctl()
             report = system_info.generate_system_report()
             intel_pstate = read_intel_pstate_info()
+            governor_override = read_debug_override(
+                get_override,
+                {"default", "powersave", "performance"},
+            )
+            turbo_override = read_debug_override(
+                get_turbo_override,
+                {"auto", "always", "never"},
+            )
+            power_services = read_power_services_info()
             footer()
             print_system_report(
                 report,
@@ -432,6 +443,9 @@ def main(monitor, live, daemon, install, update, remove, force, turbo, config, s
                     report,
                     config_path=config_path if conf.has_config() else None,
                     intel_pstate=intel_pstate,
+                    governor_override=governor_override,
+                    turbo_override=turbo_override,
+                    power_services=power_services,
                 )
             )
             print()
