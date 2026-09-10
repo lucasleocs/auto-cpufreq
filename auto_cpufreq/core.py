@@ -451,18 +451,17 @@ def verify_installed_release(release_tag):
 
 def get_literal_version(package_name):
     try:
-        package_metadata = metadata(package_name)
-        package_name = package_metadata['Name']
-        numbered_version, _, git_version = package_metadata['Version'].partition("+")
-
-        return f"{numbered_version}+{git_version}" # Construct the literal version string
-
-    except PackageNotFoundError: return f"Package '{package_name}' not found"
+        return metadata(package_name)["Version"]
+    except PackageNotFoundError:
+        return f"Package '{package_name}' not found"
 
 # return formatted version for a better readability
 def get_formatted_version():
-    splitted_version = get_literal_version("auto-cpufreq").split("+")
-    return splitted_version[0] + ("" if len(splitted_version) > 1 else " (git: " + splitted_version[1] + ")")
+    literal_version = get_literal_version("auto-cpufreq")
+    release, separator, revision = literal_version.partition("+")
+    if separator and revision:
+        return f"{release} (git: {revision})"
+    return release
 
 def app_res_use():
     p = psutil.Process()
