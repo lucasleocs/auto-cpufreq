@@ -5,13 +5,14 @@ import tempfile
 from pathlib import Path
 from types import SimpleNamespace
 
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+
 from auto_cpufreq.modules.diagnostics import (
     format_debug_diagnostics,
     read_cpufreq_policy_info,
 )
-
-
-ROOT = Path(__file__).resolve().parents[1]
 
 
 def _report(*, turbo=(True, False)):
