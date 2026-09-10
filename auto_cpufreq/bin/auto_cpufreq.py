@@ -420,7 +420,6 @@ def main(monitor, live, daemon, install, update, remove, force, turbo, config, s
         elif debug:
             root_check()
             battery_get_thresholds()
-            cpufreqctl()
             report = system_info.generate_system_report()
             intel_pstate = read_intel_pstate_info()
             amd_pstate = read_amd_pstate_info()
