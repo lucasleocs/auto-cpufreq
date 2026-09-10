@@ -13,10 +13,19 @@ from auto_cpufreq.battery_scripts.battery import *
 from auto_cpufreq.config.config import config as conf, find_config_file
 from auto_cpufreq.core import *
 from auto_cpufreq.globals import GITHUB, IS_INSTALLED_WITH_AUR, IS_INSTALLED_WITH_SNAP
+from auto_cpufreq.modules.diagnostics import (
+    format_debug_diagnostics,
+    read_amd_pstate_info,
+    read_cpufreq_policy_info,
+    read_debug_override,
+    read_intel_pstate_info,
+    read_power_services_info,
+)
 from auto_cpufreq.modules.platform_profile import platform_profile
 from auto_cpufreq.modules.system_info import (
     format_platform_profile_summary,
     print_system_report,
+    system_info,
 )
 from auto_cpufreq.modules.system_monitor import ViewType, SystemMonitor
 from auto_cpufreq.release_update import staged_release_commit, version_matches_commit
@@ -409,25 +418,49 @@ def main(monitor, live, daemon, install, update, remove, force, turbo, config, s
                 bluetooth_enable()
                 footer()
         elif debug:
-            # ToDo: add status of GNOME Power Profile service status
-            config_info_dialog()
             root_check()
             battery_get_thresholds()
             cpufreqctl()
+            report = system_info.generate_system_report()
+            intel_pstate = read_intel_pstate_info()
+            amd_pstate = read_amd_pstate_info()
+            cpufreq_policies = read_cpufreq_policy_info()
+            governor_override = read_debug_override(
+                get_override,
+                {"default", "powersave", "performance"},
+            )
+            turbo_override = read_debug_override(
+                get_turbo_override,
+                {"auto", "always", "never"},
+            )
+            power_services = read_power_services_info(is_snap=IS_INSTALLED_WITH_SNAP)
             footer()
-            print_system_report()
+            print_system_report(
+                report,
+                include_config=False,
+            )
             print()
             app_version()
+            print()
+            print(
+                format_debug_diagnostics(
+                    report,
+                    config_path=config_path if conf.has_config() else None,
+                    intel_pstate=intel_pstate,
+                    amd_pstate=amd_pstate,
+                    cpufreq_policies=cpufreq_policies,
+                    governor_override=governor_override,
+                    turbo_override=turbo_override,
+                    power_services=power_services,
+                )
+            )
             print()
             python_info()
             print()
             device_info()
-            print(f"Battery is: {'' if charging() else 'dis'}charging")
             print()
             app_res_use()
             get_load()
-            get_current_gov()
-            get_turbo()
             footer()
         elif version:
             footer()
