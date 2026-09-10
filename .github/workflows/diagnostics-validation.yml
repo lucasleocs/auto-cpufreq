@@ -16,21 +16,29 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Run diagnostics regression checks
-        id: regression
-        continue-on-error: true
+      - name: Verify baseline fails regression checks
         run: |
-          python validation/debug_diagnostics_validation.py > validation-output.txt 2>&1
-          echo "status=$?" >> "$GITHUB_OUTPUT"
-          cat validation-output.txt
+          git worktree add --detach /tmp/diagnostics-baseline 9066739ec8577fe7d08afb4a8ddeab84825ba799
+          mkdir -p /tmp/diagnostics-baseline/validation
+          cp validation/debug_diagnostics_validation.py /tmp/diagnostics-baseline/validation/
+          set +e
+          (cd /tmp/diagnostics-baseline && python validation/debug_diagnostics_validation.py) > baseline-output.txt 2>&1
+          status=$?
+          set -e
+          cat baseline-output.txt
+          if [ "$status" -eq 0 ]; then
+            echo "baseline unexpectedly passed diagnostics regression checks"
+            exit 1
+          fi
+
+      - name: Verify current tree passes regression checks
+        run: python validation/debug_diagnostics_validation.py | tee current-output.txt
 
       - name: Upload validation output
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: diagnostics-validation-output
-          path: validation-output.txt
-
-      - name: Fail on regression
-        if: steps.regression.outputs.status != '0'
-        run: exit 1
+          path: |
+            baseline-output.txt
+            current-output.txt
