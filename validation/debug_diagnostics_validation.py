@@ -79,6 +79,20 @@ def test_current_governor_is_grouped_per_cpufreq_policy():
     ) in output, output
 
 
+def test_governor_falls_back_when_policy_values_are_unavailable():
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        (root / "policy0").mkdir()
+        (root / "policy4").mkdir()
+        policies = read_cpufreq_policy_info(root)
+        output = format_debug_diagnostics(
+            _report(),
+            cpufreq_policies=policies,
+        )
+
+    assert "Governor: performance" in output, output
+
+
 def test_current_epp_is_grouped_per_cpufreq_policy():
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
@@ -103,6 +117,22 @@ def test_current_epp_is_grouped_per_cpufreq_policy():
     ) in output, output
 
 
+def test_epp_falls_back_when_policy_values_are_unavailable():
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        for name in ("policy0", "policy4"):
+            policy = root / name
+            policy.mkdir()
+            (policy / "scaling_governor").write_text("performance\n")
+        policies = read_cpufreq_policy_info(root)
+        output = format_debug_diagnostics(
+            _report(),
+            cpufreq_policies=policies,
+        )
+
+    assert "EPP: balance_performance" in output, output
+
+
 def test_turbo_control_is_described_as_enabled_not_active():
     enabled = format_debug_diagnostics(_report(turbo=(True, False)))
     disabled = format_debug_diagnostics(_report(turbo=(False, False)))
@@ -114,7 +144,9 @@ def main():
     tests = [
         test_debug_path_does_not_deploy_cpufreqctl,
         test_current_governor_is_grouped_per_cpufreq_policy,
+        test_governor_falls_back_when_policy_values_are_unavailable,
         test_current_epp_is_grouped_per_cpufreq_policy,
+        test_epp_falls_back_when_policy_values_are_unavailable,
         test_turbo_control_is_described_as_enabled_not_active,
     ]
     failed = 0
