@@ -75,6 +75,15 @@ class PowercapZoneSnapshot:
 
 
 @dataclass(frozen=True)
+class ThermalThrottleSnapshot:
+    package_id: int
+    representative_cpu: int
+    throttle_count: ReadResult[int]
+    total_time_ms: ReadResult[int]
+    max_time_ms: ReadResult[int]
+
+
+@dataclass(frozen=True)
 class IntelPowerSnapshot:
     intel_pstate_status: ReadResult[str]
     turbo_allowed: ReadResult[bool]
@@ -82,7 +91,7 @@ class IntelPowerSnapshot:
     cpu_topology: tuple[CpuTopologySnapshot, ...]
     cpufreq_policies: tuple[CpuFreqPolicySnapshot, ...]
     powercap_zones: tuple[PowercapZoneSnapshot, ...] = ()
-    thermal_packages: tuple = ()
+    thermal_packages: tuple[ThermalThrottleSnapshot, ...] = ()
 
 
 def _read_text(path: Path) -> ReadResult[str]:
@@ -334,7 +343,6 @@ class IntelPowerDiscovery:
 
     def _powercap_zone_paths(self) -> tuple[tuple[Path, Optional[str]], ...]:
         try:
-            root_boundary = self.powercap_root.resolve(strict=True)
             root_children = sorted(
                 self.powercap_root.iterdir(),
                 key=lambda child: child.name,
@@ -439,13 +447,53 @@ class IntelPowerDiscovery:
             )
         return tuple(snapshots)
 
+    def _thermal_packages(
+        self,
+        topology: tuple[CpuTopologySnapshot, ...],
+    ) -> tuple[ThermalThrottleSnapshot, ...]:
+        package_cpus: dict[int, list[int]] = {}
+        for cpu in topology:
+            package = cpu.physical_package_id
+            if package.status is not ReadStatus.AVAILABLE or package.value is None:
+                continue
+            package_cpus.setdefault(package.value, []).append(cpu.cpu_id)
+
+        snapshots: list[ThermalThrottleSnapshot] = []
+        for package_id in sorted(package_cpus):
+            for cpu_id in sorted(package_cpus[package_id]):
+                thermal = self.cpu_root / f"cpu{cpu_id}" / "thermal_throttle"
+                count = _read_int(thermal / "package_throttle_count")
+                total = _read_int(thermal / "package_throttle_total_time_ms")
+                maximum = _read_int(thermal / "package_throttle_max_time_ms")
+
+                if all(
+                    result.status is ReadStatus.MISSING
+                    for result in (count, total, maximum)
+                ):
+                    continue
+
+                snapshots.append(
+                    ThermalThrottleSnapshot(
+                        package_id=package_id,
+                        representative_cpu=cpu_id,
+                        throttle_count=count,
+                        total_time_ms=total,
+                        max_time_ms=maximum,
+                    )
+                )
+                break
+
+        return tuple(snapshots)
+
     def snapshot(self, sample_energy: bool = False) -> IntelPowerSnapshot:
         intel_pstate = self.cpu_root / "intel_pstate"
+        topology = self._cpu_topology()
         return IntelPowerSnapshot(
             intel_pstate_status=_read_text(intel_pstate / "status"),
             turbo_allowed=_read_bool01(intel_pstate / "no_turbo", invert=True),
             hwp_dynamic_boost=_read_bool01(intel_pstate / "hwp_dynamic_boost"),
-            cpu_topology=self._cpu_topology(),
+            cpu_topology=topology,
             cpufreq_policies=self._cpufreq_policies(),
             powercap_zones=self._powercap_zones(sample_energy),
+            thermal_packages=self._thermal_packages(topology),
         )
