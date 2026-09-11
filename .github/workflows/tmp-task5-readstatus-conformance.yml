@@ -1,0 +1,159 @@
+name: Temporary Task 5 ReadStatus Conformance
+
+on:
+  push:
+    branches:
+      - tmp/usb-c-power-context-tdd
+
+permissions:
+  contents: write
+
+jobs:
+  readstatus-conformance:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout exact production head
+        uses: actions/checkout@v4
+        with:
+          ref: usb-c-power-context
+          fetch-depth: 0
+
+      - name: Guard expected production head
+        run: test "$(git rev-parse HEAD)" = "162f691de665857793a23499681fcca312d7b114"
+
+      - name: Prepare project Python environment
+        run: python -m pip install -e .
+
+      - name: RED - reporting still depends on Intel re-export
+        shell: bash
+        run: |
+          set -euo pipefail
+          set +e
+          python - <<'PY'
+          from pathlib import Path
+
+          text = Path('auto_cpufreq/modules/system_info.py').read_text()
+          assert 'from auto_cpufreq.modules.sysfs import ReadStatus\n' in text
+          PY
+          status=$?
+          set -e
+          test "$status" -ne 0
+          grep -A4 'from auto_cpufreq.modules.intel_power import (' auto_cpufreq/modules/system_info.py | grep -q 'ReadStatus'
+
+      - name: GREEN - import shared ReadStatus directly
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('auto_cpufreq/modules/system_info.py')
+          text = path.read_text()
+          old = '''from auto_cpufreq.modules.intel_power import (
+              IntelPowerSnapshot,
+              ReadStatus,
+              intel_power,
+          )
+          '''
+          new = '''from auto_cpufreq.modules.intel_power import (
+              IntelPowerSnapshot,
+              intel_power,
+          )
+          '''
+          if text.count(old) != 1:
+              raise SystemExit(f'expected Intel import block exactly once, got {text.count(old)}')
+          text = text.replace(old, new, 1)
+
+          marker = '''from auto_cpufreq.modules.power_context import (
+              BatteryFlow,
+              ExternalPower,
+              PowerContextDiscovery,
+              PowerContextSnapshot,
+          )
+          '''
+          replacement = marker + 'from auto_cpufreq.modules.sysfs import ReadStatus\n'
+          if text.count(marker) != 1:
+              raise SystemExit(f'expected power_context import block exactly once, got {text.count(marker)}')
+          path.write_text(text.replace(marker, replacement, 1))
+          PY
+
+      - name: Verify conformance and reporting behavior
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m compileall -q auto_cpufreq
+          python - <<'PY'
+          from pathlib import Path
+
+          from auto_cpufreq.modules.power_context import (
+              BatteryFlow,
+              ExternalPower,
+              PowerContextSnapshot,
+              PowerSupplySnapshot,
+          )
+          from auto_cpufreq.modules.sysfs import ReadResult, ReadStatus
+          from auto_cpufreq.modules.system_info import (
+              format_power_context_debug,
+              format_power_context_summary,
+          )
+
+          text = Path('auto_cpufreq/modules/system_info.py').read_text()
+          assert 'from auto_cpufreq.modules.sysfs import ReadStatus\n' in text
+          intel_block = text.split('from auto_cpufreq.modules.intel_power import (', 1)[1].split(')\n', 1)[0]
+          assert 'ReadStatus' not in intel_block
+
+          A = ReadStatus.AVAILABLE
+          M = ReadStatus.MISSING
+          supply = PowerSupplySnapshot(
+              supply_id='USBC',
+              sysfs_path=Path('/synthetic/USBC'),
+              type=ReadResult(A, 'USB'),
+              scope=ReadResult(M),
+              online=ReadResult(A, True),
+              status=ReadResult(M),
+              usb_type=ReadResult(A, 'PD'),
+              voltage_now=ReadResult(A, 20_000_000),
+              current_now=ReadResult(A, 2_000_000),
+              power_now=ReadResult(M),
+              input_current_limit=ReadResult(A, 3_250_000),
+              input_voltage_limit=ReadResult(M),
+              input_power_limit=ReadResult(A, 65_000_000),
+              capacity=ReadResult(M),
+              capacity_level=ReadResult(M),
+          )
+          snapshot = PowerContextSnapshot(
+              power_supply_status=A,
+              typec_status=M,
+              usb_pd_status=M,
+              external_power=ExternalPower.ONLINE,
+              battery_flow=BatteryFlow.UNKNOWN,
+              power_supplies=(supply,),
+              batteries=(),
+              typec_ports=(),
+              usb_pd_objects=(),
+          )
+          summary = '\n'.join(format_power_context_summary(snapshot))
+          debug = '\n'.join(format_power_context_debug(snapshot))
+          assert 'External power: Online' in summary
+          assert 'USB-PD: Missing' in summary
+          assert 'charger' not in summary.lower()
+          assert 'Input power limit: 65.000 W' in debug
+          assert 'Power now: Unavailable' in debug
+          PY
+
+          git diff --check
+          test "$(git diff --name-only)" = "auto_cpufreq/modules/system_info.py"
+          test -z "$(git diff --name-only -- auto_cpufreq/modules/policy.py auto_cpufreq/modules/daemon_scheduler.py auto_cpufreq/modules/intel_rapl.py auto_cpufreq/power_helper.py)"
+          git diff -- auto_cpufreq/modules/system_info.py
+
+      - name: Amend fifth implementation commit safely
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "Lucas"
+          git config user.email "122493239+lucasleocs@users.noreply.github.com"
+          git add auto_cpufreq/modules/system_info.py
+          git commit --amend --no-edit
+          git push \
+            --force-with-lease=refs/heads/usb-c-power-context:162f691de665857793a23499681fcca312d7b114 \
+            origin HEAD:usb-c-power-context
