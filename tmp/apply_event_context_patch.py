@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 from pathlib import Path
-import re
 
 
 CORE = Path("auto_cpufreq/core.py")
@@ -19,29 +18,26 @@ core = core.replace(
     1,
 )
 
-pattern = re.compile(
-    r"    # determine which power profile should be used\n"
-    r"    if charging\(\):\n"
-    r"        print\(\"Battery is: charging\\\n\"\)\n"
-    r"        source = PowerSource\.CHARGER\n"
-    r"    else:\n"
-    r"        print\(\"Battery is: discharging\\\n\"\)\n"
-    r"        source = PowerSource\.BATTERY\n\n"
-    r"    get_policy_backend\(\)\.apply\(source\)"
-)
+function_start = core.index("def set_autofreq(source=None):\n")
+next_function = core.index("\n\ndef mon_autofreq", function_start)
+start_marker = "    # determine which power profile should be used\n"
+end_marker = "    get_policy_backend().apply(source)"
+start = core.index(start_marker, function_start, next_function)
+end_start = core.index(end_marker, start, next_function)
+end = end_start + len(end_marker)
+
 replacement = (
     "    # determine which power profile should be used\n"
     "    if source is None:\n"
     "        source = get_power_source()\n\n"
     "    if source is PowerSource.CHARGER:\n"
-    "        print(\"Battery is: charging\")\n"
+    "        print(\"Battery is: charging\\n\")\n"
     "    else:\n"
-    "        print(\"Battery is: discharging\")\n\n"
+    "        print(\"Battery is: discharging\\n\")\n\n"
     "    get_policy_backend().apply(source)\n"
     "    return source"
 )
-core, count = pattern.subn(replacement, core, count=1)
-assert count == 1, count
+core = core[:start] + replacement + core[end:]
 CORE.write_text(core, encoding="utf-8")
 
 
