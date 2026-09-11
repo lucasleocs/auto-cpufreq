@@ -6,7 +6,11 @@ Type=simple
 User=root
 WorkingDirectory=/opt/auto-cpufreq/venv
 Environment=PYTHONPATH=/opt/auto-cpufreq
+Environment=AUTO_CPUFREQ_RAPL_FAILSAFE=1
+RuntimeDirectory=auto-cpufreq
+RuntimeDirectoryMode=0700
 ExecStart=/opt/auto-cpufreq/venv/bin/python /opt/auto-cpufreq/venv/bin/auto-cpufreq --daemon
+ExecStopPost=/opt/auto-cpufreq/venv/bin/auto-cpufreq-restore-rapl
 Restart=on-failure
 WatchdogSec=30s
 
