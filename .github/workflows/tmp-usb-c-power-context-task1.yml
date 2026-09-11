@@ -1,4 +1,4 @@
-name: Temporary USB-C Power Context Task 4 TDD
+name: Temporary USB-C Power Context Task 5 TDD
 
 on:
   push:
@@ -9,7 +9,7 @@ permissions:
   contents: write
 
 jobs:
-  task4:
+  task5:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout implementation branch
@@ -18,151 +18,76 @@ jobs:
           ref: usb-c-power-context
           fetch-depth: 0
 
-      - name: RED - USB-PD tests must fail before implementation
+      - name: RED - reporting tests must fail before implementation
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p /tmp/auto-cpufreq-power-context-tests
-          cat > /tmp/auto-cpufreq-power-context-tests/test_usb_pd_context.py <<'PY'
+          cat > /tmp/auto-cpufreq-power-context-tests/test_power_context_reporting.py <<'PY'
           import unittest
           from pathlib import Path
-          from tempfile import TemporaryDirectory
-          from unittest.mock import patch
 
           from auto_cpufreq.modules.power_context import (
+              BatteryFlow,
               ExternalPower,
-              PowerContextDiscovery,
-              UsbPdCapabilityKind,
-              _discover_usb_pd_objects,
+              PowerContextSnapshot,
+              PowerSupplySnapshot,
           )
-          from auto_cpufreq.modules.sysfs import ReadStatus
+          from auto_cpufreq.modules.sysfs import ReadResult, ReadStatus
+          from auto_cpufreq.modules.system_info import (
+              format_power_context_debug,
+              format_power_context_summary,
+          )
+
+          A = ReadStatus.AVAILABLE
+          M = ReadStatus.MISSING
 
 
-          def make_cap(pd, group, name, **attrs):
-              path = pd / group / name
-              path.mkdir(parents=True, exist_ok=True)
-              for key, value in attrs.items():
-                  (path / key).write_text(str(value) + "\n")
+          class ReportingTests(unittest.TestCase):
+              def snapshot(self):
+                  supply = PowerSupplySnapshot(
+                      supply_id="USBC",
+                      sysfs_path=Path("/synthetic/USBC"),
+                      type=ReadResult(A, "USB"),
+                      scope=ReadResult(M),
+                      online=ReadResult(A, True),
+                      status=ReadResult(M),
+                      usb_type=ReadResult(A, "PD"),
+                      voltage_now=ReadResult(A, 20_000_000),
+                      current_now=ReadResult(A, 2_000_000),
+                      power_now=ReadResult(M),
+                      input_current_limit=ReadResult(A, 3_250_000),
+                      input_voltage_limit=ReadResult(M),
+                      input_power_limit=ReadResult(A, 65_000_000),
+                      capacity=ReadResult(M),
+                      capacity_level=ReadResult(M),
+                  )
+                  return PowerContextSnapshot(
+                      power_supply_status=A,
+                      typec_status=M,
+                      usb_pd_status=M,
+                      external_power=ExternalPower.ONLINE,
+                      battery_flow=BatteryFlow.UNKNOWN,
+                      power_supplies=(supply,),
+                      batteries=(),
+                      typec_ports=(),
+                      usb_pd_objects=(),
+                  )
 
+              def test_summary_is_compact_and_does_not_invent_power(self):
+                  text = "\n".join(format_power_context_summary(self.snapshot()))
+                  self.assertIn("External power: Online", text)
+                  self.assertIn("Battery flow: Unknown", text)
+                  self.assertIn("USB-PD: Missing", text)
+                  self.assertNotIn("40.0 W", text)
+                  self.assertNotIn("charger", text.lower())
 
-          class UsbPdTests(unittest.TestCase):
-              def test_types_units_numeric_order_and_unknown_kind(self):
-                  with TemporaryDirectory() as td:
-                      root = Path(td)
-                      pd = root / "pd0"
-                      pd.mkdir()
-                      (pd / "revision").write_text("3.1\n")
-                      (pd / "version").write_text("1.0\n")
-                      make_cap(pd, "source-capabilities", "10:future_supply", mystery="9")
-                      make_cap(pd, "source-capabilities", "2:variable_supply", maximum_voltage="20000mV", minimum_voltage="5000mV", maximum_current="3000mA")
-                      make_cap(pd, "source-capabilities", "1:fixed_supply", voltage="5000mV", maximum_current="3000mA", dual_role_power="1")
-                      make_cap(pd, "source-capabilities", "3:battery", maximum_voltage="20000mV", minimum_voltage="5000mV", maximum_power="45000mW")
-                      make_cap(pd, "source-capabilities", "4:programmable_supply", maximum_voltage="11000mV", minimum_voltage="3300mV", maximum_current="3000mA", pps_power_limited="1")
-                      make_cap(pd, "source-capabilities", "5:spr_adjustable_voltage_supply", maximum_current_9V_to_15V="3000mA", maximum_current_15V_to_20V="2500mA", peak_current="2")
-
-                      status, objects = _discover_usb_pd_objects(root)
-                      self.assertEqual(status, ReadStatus.AVAILABLE)
-                      self.assertEqual(objects[0].revision.value, "3.1")
-                      self.assertEqual(objects[0].version.value, "1.0")
-                      caps = objects[0].source_capabilities
-                      self.assertEqual([c.position for c in caps], [1, 2, 3, 4, 5, 10])
-                      self.assertEqual(caps[0].kind, UsbPdCapabilityKind.FIXED_SUPPLY)
-                      fixed = {a.name: a for a in caps[0].attributes}
-                      self.assertEqual(fixed["voltage"].value.value, 5000)
-                      self.assertEqual(fixed["voltage"].unit, "mV")
-                      self.assertEqual(fixed["maximum_current"].value.value, 3000)
-                      self.assertEqual(fixed["maximum_current"].unit, "mA")
-                      self.assertEqual(fixed["dual_role_power"].value.value, True)
-                      battery = {a.name: a for a in caps[2].attributes}
-                      self.assertEqual(battery["maximum_power"].value.value, 45000)
-                      self.assertEqual(battery["maximum_power"].unit, "mW")
-                      self.assertEqual(caps[-1].kind, UsbPdCapabilityKind.UNKNOWN)
-                      self.assertEqual(caps[-1].attributes, ())
-
-              def test_sink_schema_and_bad_suffix_are_local(self):
-                  with TemporaryDirectory() as td:
-                      root = Path(td)
-                      pd = root / "pd0"
-                      pd.mkdir()
-                      make_cap(pd, "sink-capabilities", "1:fixed_supply", voltage="5000mV", operational_current="3000watts", dual_role_power="0")
-                      make_cap(pd, "sink-capabilities", "2:variable_supply", maximum_voltage="20000mV", minimum_voltage="5000mV", operational_current="2500mA")
-                      make_cap(pd, "sink-capabilities", "3:battery", maximum_voltage="20000mV", minimum_voltage="5000mV", operational_power="30000mW")
-                      make_cap(pd, "sink-capabilities", "4:programmable_supply", maximum_voltage="11000mV", minimum_voltage="3300mV", maximum_current="3000mA")
-                      make_cap(pd, "sink-capabilities", "5:spr_adjustable_voltage_supply", maximum_current_9V_to_15V="3000mA", maximum_current_15V_to_20V="2500mA")
-                      _, objects = _discover_usb_pd_objects(root)
-                      fixed = {a.name: a for a in objects[0].sink_capabilities[0].attributes}
-                      self.assertEqual(fixed["voltage"].value.status, ReadStatus.AVAILABLE)
-                      self.assertEqual(fixed["operational_current"].value.status, ReadStatus.INVALID)
-                      self.assertEqual(fixed["dual_role_power"].value.value, False)
-                      variable = {a.name: a for a in objects[0].sink_capabilities[1].attributes}
-                      self.assertEqual(variable["operational_current"].value.value, 2500)
-                      battery = {a.name: a for a in objects[0].sink_capabilities[2].attributes}
-                      self.assertEqual(battery["operational_power"].unit, "mW")
-
-              def test_missing_empty_and_malformed_capability_name(self):
-                  with TemporaryDirectory() as td:
-                      base = Path(td)
-                      missing_status, missing = _discover_usb_pd_objects(base / "missing")
-                      empty = base / "empty"
-                      empty.mkdir()
-                      empty_status, empty_items = _discover_usb_pd_objects(empty)
-                      root = base / "pdroot"
-                      root.mkdir()
-                      pd = root / "pd0"
-                      pd.mkdir()
-                      make_cap(pd, "source-capabilities", "broken-name", voltage="5000mV")
-                      _, objects = _discover_usb_pd_objects(root)
-                      self.assertEqual(missing_status, ReadStatus.MISSING)
-                      self.assertEqual(missing, ())
-                      self.assertEqual(empty_status, ReadStatus.AVAILABLE)
-                      self.assertEqual(empty_items, ())
-                      cap = objects[0].source_capabilities[0]
-                      self.assertIsNone(cap.position)
-                      self.assertEqual(cap.kind, UsbPdCapabilityKind.UNKNOWN)
-                      self.assertEqual(cap.attributes, ())
-
-              def test_disappearing_object_is_localized(self):
-                  with TemporaryDirectory() as td:
-                      root = Path(td)
-                      for name in ("pd0", "pd1"):
-                          obj = root / name
-                          obj.mkdir()
-                          (obj / "revision").write_text("3.1\n")
-                      original = Path.read_text
-
-                      def selective(path, *args, **kwargs):
-                          if str(path).endswith("pd0/revision"):
-                              raise FileNotFoundError
-                          return original(path, *args, **kwargs)
-
-                      with patch.object(Path, "read_text", selective):
-                          status, objects = _discover_usb_pd_objects(root)
-                      self.assertEqual(status, ReadStatus.AVAILABLE)
-                      self.assertEqual(len(objects), 2)
-                      self.assertEqual(objects[0].revision.status, ReadStatus.MISSING)
-                      self.assertEqual(objects[1].revision.value, "3.1")
-
-              def test_injected_roots_compose_without_host_fallback_or_correlation(self):
-                  with TemporaryDirectory() as td:
-                      base = Path(td)
-                      ps = base / "power_supply"
-                      tc = base / "typec"
-                      pdroot = base / "usb_power_delivery"
-                      ps.mkdir(); tc.mkdir(); pdroot.mkdir()
-                      adp = ps / "ADP1"; adp.mkdir()
-                      (adp / "type").write_text("Mains\n")
-                      (adp / "online").write_text("1\n")
-                      port = tc / "port7"; port.mkdir()
-                      (port / "power_role").write_text("sink\n")
-                      (port / "power_operation_mode").write_text("usb_power_delivery\n")
-                      pd = pdroot / "pd42"; pd.mkdir()
-                      (pd / "revision").write_text("3.1\n")
-
-                      snapshot = PowerContextDiscovery(ps, tc, pdroot).discover()
-                      self.assertEqual(snapshot.external_power, ExternalPower.ONLINE)
-                      self.assertEqual([s.supply_id for s in snapshot.power_supplies], ["ADP1"])
-                      self.assertEqual([p.port_id for p in snapshot.typec_ports], ["port7"])
-                      self.assertEqual([p.pd_id for p in snapshot.usb_pd_objects], ["pd42"])
+              def test_debug_preserves_missing_and_formats_exposed_limit(self):
+                  text = "\n".join(format_power_context_debug(self.snapshot()))
+                  self.assertIn("Power Supply subsystem: Available", text)
+                  self.assertIn("USBC", text)
+                  self.assertIn("Input power limit: 65.000 W", text)
+                  self.assertIn("Power now: Unavailable", text)
 
 
           if __name__ == "__main__":
@@ -170,339 +95,473 @@ jobs:
           PY
 
           set +e
-          PYTHONPATH="$PWD" python /tmp/auto-cpufreq-power-context-tests/test_usb_pd_context.py > /tmp/task4-red.log 2>&1
+          PYTHONPATH="$PWD" python /tmp/auto-cpufreq-power-context-tests/test_power_context_reporting.py > /tmp/task5-red.log 2>&1
           status=$?
           set -e
-          cat /tmp/task4-red.log
+          cat /tmp/task5-red.log
           if [ "$status" -eq 0 ]; then
-            echo "RED gate failed: USB-PD tests unexpectedly passed before implementation"
+            echo "RED gate failed: reporting tests unexpectedly passed before implementation"
             exit 1
           fi
-          grep -Eq "PowerContextDiscovery|UsbPdCapabilityKind|_discover_usb_pd_objects" /tmp/task4-red.log
+          grep -Eq "format_power_context_debug|format_power_context_summary|ImportError" /tmp/task5-red.log
 
-      - name: GREEN - implement USB-PD discovery and top-level snapshot
+      - name: GREEN - integrate PowerContext into reporting only
         shell: bash
         run: |
           set -euo pipefail
           python - <<'PY'
           from pathlib import Path
-          path = Path("auto_cpufreq/modules/power_context.py")
+
+          path = Path("auto_cpufreq/modules/system_info.py")
           text = path.read_text()
-          old = "from auto_cpufreq.modules.sysfs import ReadResult, ReadStatus, read_int, read_text\n"
-          new = "from typing import Optional, Tuple, Union\n\nfrom auto_cpufreq.modules.sysfs import (\n    ReadResult,\n    ReadStatus,\n    read_bool01,\n    read_int,\n    read_text,\n)\n"
+
+          old = '''from auto_cpufreq.modules.intel_power import (
+              IntelPowerSnapshot,
+              ReadStatus,
+              intel_power,
+          )
+          '''
+          new = '''from auto_cpufreq.modules.intel_power import (
+              IntelPowerSnapshot,
+              intel_power,
+          )
+          from auto_cpufreq.modules.power_context import (
+              BatteryFlow,
+              ExternalPower,
+              PowerContextDiscovery,
+              PowerContextSnapshot,
+          )
+          from auto_cpufreq.modules.sysfs import ReadStatus
+          '''
           if old not in text:
-              raise SystemExit("expected sysfs import not found")
+              raise SystemExit("expected intel_power import block not found")
+          text = text.replace(old, new, 1)
+
+          old = '''    platform_profile: PlatformProfileSnapshot = PlatformProfileSnapshot()
+              intel_power: IntelPowerSnapshot | None = None
+          '''
+          new = '''    platform_profile: PlatformProfileSnapshot = PlatformProfileSnapshot()
+              intel_power: IntelPowerSnapshot | None = None
+              power_context: Optional[PowerContextSnapshot] = None
+          '''
+          if old not in text:
+              raise SystemExit("expected SystemReport tail not found")
+          text = text.replace(old, new, 1)
+
+          old = '''    def generate_system_report(
+                  self,
+                  include_intel_power: bool = False,
+                  sample_intel_energy: bool = False,
+              ) -> SystemReport:
+          '''
+          new = '''    def generate_system_report(
+                  self,
+                  include_intel_power: bool = False,
+                  sample_intel_energy: bool = False,
+                  include_power_context: bool = False,
+              ) -> SystemReport:
+          '''
+          if old not in text:
+              raise SystemExit("expected generate_system_report signature not found")
+          text = text.replace(old, new, 1)
+
+          old = '''        intel_snapshot = (
+                  intel_power.snapshot(sample_energy=sample_intel_energy)
+                  if include_intel_power
+                  else None
+              )
+          
+              return SystemReport(
+          '''
+          new = '''        intel_snapshot = (
+                  intel_power.snapshot(sample_energy=sample_intel_energy)
+                  if include_intel_power
+                  else None
+              )
+              power_context_snapshot = (
+                  power_context_discovery().discover()
+                  if include_power_context
+                  else None
+              )
+          
+              return SystemReport(
+          '''
+          if old not in text:
+              raise SystemExit("expected Intel snapshot block not found")
+          text = text.replace(old, new, 1)
+
+          old = '''            platform_profile=platform_profile.snapshot(),
+                  intel_power=intel_snapshot,
+              )
+          
+          
+          system_info = SystemInfo()
+          '''
+          new = '''            platform_profile=platform_profile.snapshot(),
+                  intel_power=intel_snapshot,
+                  power_context=power_context_snapshot,
+              )
+          
+          
+          def power_context_discovery() -> PowerContextDiscovery:
+              sys_root = (
+                  Path(SNAP_HOST_ROOT) / "sys"
+                  if IS_INSTALLED_WITH_SNAP
+                  else Path("/sys")
+              )
+              return PowerContextDiscovery(
+                  power_supply_root=sys_root / "class/power_supply",
+                  typec_root=sys_root / "class/typec",
+                  usb_pd_root=sys_root / "class/usb_power_delivery",
+                  ignored_supply_substrings=tuple(get_power_supply_ignore_list()),
+              )
+          
+          
+          system_info = SystemInfo()
+          '''
+          if old not in text:
+              raise SystemExit("expected SystemReport construction tail not found")
+          text = text.replace(old, new, 1)
+
+          marker = '''def format_system_report(
+              report: SystemReport,
+              include_distro: bool = True,
+              include_config: bool = True,
+          ) -> str:
+          '''
+          if marker not in text:
+              raise SystemExit("format_system_report marker not found")
+
+          formatting = '''def _format_power_read(result, formatter=str) -> str:
+              if result.status is ReadStatus.MISSING:
+                  return "Unavailable"
+              if result.status is ReadStatus.UNREADABLE:
+                  return "Could not be read"
+              if result.status is ReadStatus.INVALID:
+                  return "Invalid"
+              if result.value is None:
+                  return "Unknown"
+              return formatter(result.value)
+          
+          
+          def _format_power_subsystem_status(status: ReadStatus) -> str:
+              return {
+                  ReadStatus.AVAILABLE: "Available",
+                  ReadStatus.MISSING: "Missing",
+                  ReadStatus.UNREADABLE: "Unreadable",
+                  ReadStatus.INVALID: "Invalid",
+              }.get(status, "Unknown")
+          
+          
+          def _format_external_power(value: ExternalPower) -> str:
+              return {
+                  ExternalPower.ONLINE: "Online",
+                  ExternalPower.OFFLINE: "Offline",
+                  ExternalPower.UNKNOWN: "Unknown",
+              }[value]
+          
+          
+          def _format_battery_flow(value: BatteryFlow) -> str:
+              return {
+                  BatteryFlow.CHARGING: "Charging",
+                  BatteryFlow.DISCHARGING: "Discharging",
+                  BatteryFlow.NOT_CHARGING: "Not charging",
+                  BatteryFlow.FULL: "Full",
+                  BatteryFlow.MIXED: "Mixed",
+                  BatteryFlow.UNKNOWN: "Unknown",
+              }[value]
+          
+          
+          def _format_micro_unit(value: int, unit: str) -> str:
+              return f"{value / 1_000_000:.3f} {unit}"
+          
+          
+          def _format_yes_no(value: bool) -> str:
+              return "Yes" if value else "No"
+          
+          
+          def _format_usb_pd_attribute(attribute) -> str:
+              if attribute.unit is None:
+                  value = _format_power_read(
+                      attribute.value,
+                      lambda item: _format_yes_no(item)
+                      if isinstance(item, bool)
+                      else str(item),
+                  )
+              else:
+                  value = _format_power_read(
+                      attribute.value,
+                      lambda item: f"{item} {attribute.unit}",
+                  )
+              label = attribute.name.replace("_", " ").capitalize()
+              return f"{label}: {value}"
+          
+          
+          def format_power_context_debug(snapshot: PowerContextSnapshot) -> list[str]:
+              lines = [
+                  f"External power: {_format_external_power(snapshot.external_power)}",
+                  f"Battery flow: {_format_battery_flow(snapshot.battery_flow)}",
+                  "Power Supply subsystem: "
+                  + _format_power_subsystem_status(snapshot.power_supply_status),
+              ]
+          
+              for supply in snapshot.power_supplies:
+                  lines.append(f"  {supply.supply_id}")
+                  fields = (
+                      ("Type", supply.type, str),
+                      ("Scope", supply.scope, str),
+                      ("Online", supply.online, _format_yes_no),
+                      ("Status", supply.status, str),
+                      ("USB type", supply.usb_type, str),
+                      ("Voltage now", supply.voltage_now, lambda value: _format_micro_unit(value, "V")),
+                      ("Current now", supply.current_now, lambda value: _format_micro_unit(value, "A")),
+                      ("Power now", supply.power_now, lambda value: _format_micro_unit(value, "W")),
+                      ("Input current limit", supply.input_current_limit, lambda value: _format_micro_unit(value, "A")),
+                      ("Input voltage limit", supply.input_voltage_limit, lambda value: _format_micro_unit(value, "V")),
+                      ("Input power limit", supply.input_power_limit, lambda value: _format_micro_unit(value, "W")),
+                      ("Capacity", supply.capacity, lambda value: f"{value}%"),
+                      ("Capacity level", supply.capacity_level, str),
+                  )
+                  for label, result, formatter in fields:
+                      lines.append(f"    {label}: {_format_power_read(result, formatter)}")
+          
+              lines.append(
+                  "Type-C subsystem: "
+                  + _format_power_subsystem_status(snapshot.typec_status)
+              )
+              for port in snapshot.typec_ports:
+                  lines.append(f"  {port.port_id}")
+                  lines.append(
+                      "    Power role: "
+                      + _format_power_read(port.power_role)
+                  )
+                  lines.append(
+                      "    Power operation mode: "
+                      + _format_power_read(port.power_operation_mode)
+                  )
+                  lines.append(
+                      "    Partner present: "
+                      + _format_power_read(port.partner_present, _format_yes_no)
+                  )
+                  lines.append(
+                      "    Partner USB-PD capable: "
+                      + _format_power_read(
+                          port.partner_usb_pd_capable,
+                          _format_yes_no,
+                      )
+                  )
+          
+              lines.append(
+                  "USB Power Delivery subsystem: "
+                  + _format_power_subsystem_status(snapshot.usb_pd_status)
+              )
+              for pd in snapshot.usb_pd_objects:
+                  lines.append(f"  {pd.pd_id}")
+                  lines.append(f"    Revision: {_format_power_read(pd.revision)}")
+                  lines.append(f"    Version: {_format_power_read(pd.version)}")
+                  for label, capabilities in (
+                      ("Source capabilities", pd.source_capabilities),
+                      ("Sink capabilities", pd.sink_capabilities),
+                  ):
+                      lines.append(f"    {label}:")
+                      if not capabilities:
+                          lines.append("      None exposed")
+                          continue
+                      for capability in capabilities:
+                          position = (
+                              str(capability.position)
+                              if capability.position is not None
+                              else "?"
+                          )
+                          lines.append(
+                              f"      PDO {position}: {capability.kind.value} "
+                              f"({capability.sysfs_name})"
+                          )
+                          for attribute in capability.attributes:
+                              lines.append(
+                                  "        " + _format_usb_pd_attribute(attribute)
+                              )
+          
+              return lines
+          
+          
+          def format_power_context_summary(snapshot: PowerContextSnapshot) -> list[str]:
+              def counted_status(status: ReadStatus, count: int, noun: str) -> str:
+                  if status is ReadStatus.AVAILABLE:
+                      return f"Available ({count} {noun})"
+                  return _format_power_subsystem_status(status)
+          
+              return [
+                  f"External power: {_format_external_power(snapshot.external_power)}",
+                  f"Battery flow: {_format_battery_flow(snapshot.battery_flow)}",
+                  "Type-C: "
+                  + counted_status(
+                      snapshot.typec_status,
+                      len(snapshot.typec_ports),
+                      "ports",
+                  ),
+                  "USB-PD: "
+                  + counted_status(
+                      snapshot.usb_pd_status,
+                      len(snapshot.usb_pd_objects),
+                      "objects",
+                  ),
+              ]
+          
+          
+          '''
+          text = text.replace(marker, formatting + marker, 1)
+
+          old = '''    if report.intel_power is not None:
+                  lines.extend(
+                      [
+                          "",
+                          "-" * 25 + " Intel Power Diagnostics " + "-" * 25,
+                          "",
+                      ]
+                  )
+                  lines.extend(format_intel_power_summary(report.intel_power))
+          
+              return "\\n".join(lines)
+          '''
+          new = '''    if report.intel_power is not None:
+                  lines.extend(
+                      [
+                          "",
+                          "-" * 25 + " Intel Power Diagnostics " + "-" * 25,
+                          "",
+                      ]
+                  )
+                  lines.extend(format_intel_power_summary(report.intel_power))
+          
+              if report.power_context is not None:
+                  lines.extend(
+                      [
+                          "",
+                          "-" * 24 + " Power Context Diagnostics " + "-" * 24,
+                          "",
+                      ]
+                  )
+                  lines.extend(format_power_context_debug(report.power_context))
+          
+              return "\\n".join(lines)
+          '''
+          if old not in text:
+              raise SystemExit("expected format_system_report tail not found")
+          path.write_text(text.replace(old, new, 1))
+
+          path = Path("auto_cpufreq/modules/system_monitor.py")
+          text = path.read_text()
+          old = '''    format_intel_power_summary,
+              format_platform_profile_summary,
+              system_info,
+          )
+          '''
+          new = '''    format_intel_power_summary,
+              format_platform_profile_summary,
+              format_power_context_summary,
+              system_info,
+          )
+          '''
+          if old not in text:
+              raise SystemExit("expected system_monitor import block not found")
+          text = text.replace(old, new, 1)
+
+          old = '''                report = system_info.generate_system_report(
+                          include_intel_power=True,
+                          sample_intel_energy=True,
+                      )
+          '''
+          new = '''                report = system_info.generate_system_report(
+                          include_intel_power=True,
+                          sample_intel_energy=True,
+                          include_power_context=True,
+                      )
+          '''
+          if old not in text:
+              raise SystemExit("expected STATS collection call not found")
+          text = text.replace(old, new, 1)
+
+          marker = '''        # System Statistics
+              self.right_content.extend(
+          '''
+          block = '''        if self.type == ViewType.STATS and report.power_context is not None:
+                  self.right_content.append(
+                      urwid.AttrMap(aligned_text("Power Context"), "header")
+                  )
+                  for line in format_power_context_summary(report.power_context):
+                      self.right_content.append(aligned_text(line))
+                  self.right_content.append(aligned_text(""))
+          
+          '''
+          if marker not in text:
+              raise SystemExit("expected System Statistics marker not found")
+          path.write_text(text.replace(marker, block + marker, 1))
+
+          path = Path("auto_cpufreq/bin/auto_cpufreq.py")
+          text = path.read_text()
+          old = '''            report = system_info.generate_system_report(
+                          include_intel_power=True,
+                          sample_intel_energy=False,
+                      )
+          '''
+          new = '''            report = system_info.generate_system_report(
+                          include_intel_power=True,
+                          sample_intel_energy=False,
+                          include_power_context=True,
+                      )
+          '''
+          if old not in text:
+              raise SystemExit("expected debug collection call not found")
           path.write_text(text.replace(old, new, 1))
           PY
 
-          cat >> auto_cpufreq/modules/power_context.py <<'PY'
-
-
-          class UsbPdCapabilityKind(str, Enum):
-              FIXED_SUPPLY = "fixed_supply"
-              VARIABLE_SUPPLY = "variable_supply"
-              BATTERY = "battery"
-              PROGRAMMABLE_SUPPLY = "programmable_supply"
-              SPR_ADJUSTABLE_VOLTAGE_SUPPLY = "spr_adjustable_voltage_supply"
-              UNKNOWN = "unknown"
-
-
-          @dataclass(frozen=True)
-          class UsbPdAttributeSnapshot:
-              name: str
-              value: ReadResult[Union[int, bool]]
-              unit: Optional[str] = None
-
-
-          @dataclass(frozen=True)
-          class UsbPdCapabilitySnapshot:
-              position: Optional[int]
-              kind: UsbPdCapabilityKind
-              sysfs_name: str
-              attributes: Tuple[UsbPdAttributeSnapshot, ...]
-
-
-          @dataclass(frozen=True)
-          class UsbPdSnapshot:
-              pd_id: str
-              sysfs_path: Path
-              revision: ReadResult[str]
-              version: ReadResult[str]
-              source_capabilities: Tuple[UsbPdCapabilitySnapshot, ...]
-              sink_capabilities: Tuple[UsbPdCapabilitySnapshot, ...]
-
-
-          @dataclass(frozen=True)
-          class PowerContextSnapshot:
-              power_supply_status: ReadStatus
-              typec_status: ReadStatus
-              usb_pd_status: ReadStatus
-              external_power: ExternalPower
-              battery_flow: BatteryFlow
-              power_supplies: Tuple[PowerSupplySnapshot, ...]
-              batteries: Tuple[PowerSupplySnapshot, ...]
-              typec_ports: Tuple[TypeCPortSnapshot, ...]
-              usb_pd_objects: Tuple[UsbPdSnapshot, ...]
-
-
-          _USB_PD_KIND_BY_NAME = {
-              kind.value: kind
-              for kind in UsbPdCapabilityKind
-              if kind is not UsbPdCapabilityKind.UNKNOWN
-          }
-
-
-          def _read_suffixed_int(path: Path, suffix: str) -> ReadResult[int]:
-              result = read_text(path)
-              if result.status is not ReadStatus.AVAILABLE:
-                  return ReadResult(result.status)
-              value = result.value or ""
-              if not value.endswith(suffix):
-                  return ReadResult(ReadStatus.INVALID)
-              number = value[:-len(suffix)]
-              try:
-                  return ReadResult(ReadStatus.AVAILABLE, int(number))
-              except ValueError:
-                  return ReadResult(ReadStatus.INVALID)
-
-
-          def _pd_attr(
-              path: Path,
-              name: str,
-              reader,
-              unit: Optional[str] = None,
-          ) -> UsbPdAttributeSnapshot:
-              return UsbPdAttributeSnapshot(name, reader(path / name), unit)
-
-
-          def _fixed_schema(path: Path, position: int, source: bool):
-              attrs = []
-              if position == 1:
-                  common = (
-                      "dual_role_power",
-                      "unconstrained_power",
-                      "usb_communication_capable",
-                      "dual_role_data",
-                      "unchunked_extended_messages_supported",
-                  )
-                  for name in common:
-                      attrs.append(_pd_attr(path, name, read_bool01))
-                  attrs.append(
-                      _pd_attr(
-                          path,
-                          "usb_suspend_supported" if source else "higher_capability",
-                          read_bool01,
-                      )
-                  )
-              attrs.append(_pd_attr(path, "voltage", lambda p: _read_suffixed_int(p, "mV"), "mV"))
-              if source:
-                  attrs.append(_pd_attr(path, "peak_current", read_int))
-                  attrs.append(_pd_attr(path, "maximum_current", lambda p: _read_suffixed_int(p, "mA"), "mA"))
-              else:
-                  attrs.append(_pd_attr(path, "fast_role_swap_current", read_int))
-                  attrs.append(_pd_attr(path, "operational_current", lambda p: _read_suffixed_int(p, "mA"), "mA"))
-              return tuple(attrs)
-
-
-          def _voltage_range_schema(path: Path, current_name: str):
-              return (
-                  _pd_attr(path, "maximum_voltage", lambda p: _read_suffixed_int(p, "mV"), "mV"),
-                  _pd_attr(path, "minimum_voltage", lambda p: _read_suffixed_int(p, "mV"), "mV"),
-                  _pd_attr(path, current_name, lambda p: _read_suffixed_int(p, "mA"), "mA"),
-              )
-
-
-          def _battery_schema(path: Path, power_name: str):
-              return (
-                  _pd_attr(path, "maximum_voltage", lambda p: _read_suffixed_int(p, "mV"), "mV"),
-                  _pd_attr(path, "minimum_voltage", lambda p: _read_suffixed_int(p, "mV"), "mV"),
-                  _pd_attr(path, power_name, lambda p: _read_suffixed_int(p, "mW"), "mW"),
-              )
-
-
-          def _programmable_schema(path: Path, source: bool):
-              attrs = list(_voltage_range_schema(path, "maximum_current"))
-              if source:
-                  attrs.append(_pd_attr(path, "pps_power_limited", read_bool01))
-              return tuple(attrs)
-
-
-          def _spr_adjustable_schema(path: Path, source: bool):
-              attrs = [
-                  _pd_attr(path, "maximum_current_9V_to_15V", lambda p: _read_suffixed_int(p, "mA"), "mA"),
-                  _pd_attr(path, "maximum_current_15V_to_20V", lambda p: _read_suffixed_int(p, "mA"), "mA"),
-              ]
-              if source:
-                  attrs.append(_pd_attr(path, "peak_current", read_int))
-              return tuple(attrs)
-
-
-          def _parse_pd_capability(path: Path, source: bool) -> UsbPdCapabilitySnapshot:
-              match = re.fullmatch(r"([0-9]+):(.+)", path.name)
-              if match is None:
-                  return UsbPdCapabilitySnapshot(
-                      position=None,
-                      kind=UsbPdCapabilityKind.UNKNOWN,
-                      sysfs_name=path.name,
-                      attributes=(),
-                  )
-
-              position = int(match.group(1))
-              kind = _USB_PD_KIND_BY_NAME.get(
-                  match.group(2),
-                  UsbPdCapabilityKind.UNKNOWN,
-              )
-              if kind is UsbPdCapabilityKind.UNKNOWN:
-                  attrs = ()
-              elif kind is UsbPdCapabilityKind.FIXED_SUPPLY:
-                  attrs = _fixed_schema(path, position, source)
-              elif kind is UsbPdCapabilityKind.VARIABLE_SUPPLY:
-                  attrs = _voltage_range_schema(
-                      path,
-                      "maximum_current" if source else "operational_current",
-                  )
-              elif kind is UsbPdCapabilityKind.BATTERY:
-                  attrs = _battery_schema(
-                      path,
-                      "maximum_power" if source else "operational_power",
-                  )
-              elif kind is UsbPdCapabilityKind.PROGRAMMABLE_SUPPLY:
-                  attrs = _programmable_schema(path, source)
-              else:
-                  attrs = _spr_adjustable_schema(path, source)
-
-              return UsbPdCapabilitySnapshot(
-                  position=position,
-                  kind=kind,
-                  sysfs_name=path.name,
-                  attributes=attrs,
-              )
-
-
-          def _pd_capability_sort_key(path: Path):
-              match = re.fullmatch(r"([0-9]+):(.+)", path.name)
-              if match is None:
-                  return 1, 0, path.name
-              return 0, int(match.group(1)), path.name
-
-
-          def _discover_pd_capabilities(
-              pd_path: Path,
-              group: str,
-              source: bool,
-          ) -> Tuple[UsbPdCapabilitySnapshot, ...]:
-              group_path = pd_path / group
-              try:
-                  entries = sorted(group_path.iterdir(), key=_pd_capability_sort_key)
-              except (FileNotFoundError, OSError):
-                  return ()
-              return tuple(_parse_pd_capability(path, source) for path in entries)
-
-
-          def _discover_usb_pd_objects(
-              root: Path,
-          ) -> tuple[ReadStatus, Tuple[UsbPdSnapshot, ...]]:
-              root = Path(root)
-              try:
-                  entries = sorted(root.iterdir(), key=lambda item: item.name)
-              except FileNotFoundError:
-                  return ReadStatus.MISSING, ()
-              except OSError:
-                  return ReadStatus.UNREADABLE, ()
-
-              snapshots = []
-              for path in entries:
-                  snapshots.append(
-                      UsbPdSnapshot(
-                          pd_id=path.name,
-                          sysfs_path=path,
-                          revision=read_text(path / "revision"),
-                          version=read_text(path / "version"),
-                          source_capabilities=_discover_pd_capabilities(
-                              path,
-                              "source-capabilities",
-                              True,
-                          ),
-                          sink_capabilities=_discover_pd_capabilities(
-                              path,
-                              "sink-capabilities",
-                              False,
-                          ),
-                      )
-                  )
-              return ReadStatus.AVAILABLE, tuple(snapshots)
-
-
-          class PowerContextDiscovery:
-              def __init__(
-                  self,
-                  power_supply_root=Path("/sys/class/power_supply"),
-                  typec_root=Path("/sys/class/typec"),
-                  usb_pd_root=Path("/sys/class/usb_power_delivery"),
-                  ignored_supply_substrings=(),
-              ):
-                  self.power_supply_root = Path(power_supply_root)
-                  self.typec_root = Path(typec_root)
-                  self.usb_pd_root = Path(usb_pd_root)
-                  self.ignored_supply_substrings = tuple(ignored_supply_substrings)
-
-              def discover(self) -> PowerContextSnapshot:
-                  power_status, supplies = _discover_power_supplies(
-                      self.power_supply_root,
-                      self.ignored_supply_substrings,
-                  )
-                  typec_status, ports = _discover_typec_ports(self.typec_root)
-                  usb_pd_status, pd_objects = _discover_usb_pd_objects(self.usb_pd_root)
-                  batteries = _system_batteries(supplies)
-                  return PowerContextSnapshot(
-                      power_supply_status=power_status,
-                      typec_status=typec_status,
-                      usb_pd_status=usb_pd_status,
-                      external_power=_aggregate_external_power(supplies),
-                      battery_flow=_aggregate_battery_flow(batteries),
-                      power_supplies=supplies,
-                      batteries=batteries,
-                      typec_ports=ports,
-                      usb_pd_objects=pd_objects,
-                  )
-          PY
-
-      - name: Verify GREEN and prior discovery behavior
+      - name: Verify GREEN and control-path isolation
         shell: bash
         run: |
           set -euo pipefail
-          PYTHONPATH="$PWD" python /tmp/auto-cpufreq-power-context-tests/test_usb_pd_context.py
-          cat > /tmp/auto-cpufreq-power-context-tests/regression.py <<'PY'
+          PYTHONPATH="$PWD" python /tmp/auto-cpufreq-power-context-tests/test_power_context_reporting.py
+
+          PYTHONPATH="$PWD" python - <<'PY'
           from pathlib import Path
           from tempfile import TemporaryDirectory
-          from auto_cpufreq.modules.power_context import ExternalPower, _aggregate_external_power, _discover_power_supplies, _discover_typec_ports
+
+          from auto_cpufreq.modules.power_context import (
+              ExternalPower,
+              PowerContextDiscovery,
+          )
 
           with TemporaryDirectory() as td:
               root = Path(td)
-              ps = root / "ps"; ps.mkdir()
-              adp = ps / "ADP1"; adp.mkdir()
-              (adp / "type").write_text("Mains\n")
-              (adp / "online").write_text("0\n")
-              _, supplies = _discover_power_supplies(ps)
-              assert _aggregate_external_power(supplies) is ExternalPower.OFFLINE
-              tc = root / "tc"; tc.mkdir()
-              port = tc / "port2"; port.mkdir()
-              (port / "power_role").write_text("[source] sink\n")
-              (port / "power_operation_mode").write_text("3.0A\n")
-              _, ports = _discover_typec_ports(tc)
-              assert ports[0].power_role.value == "source"
+              ps = root / "power_supply"
+              tc = root / "typec"
+              pd = root / "usb_power_delivery"
+              ps.mkdir(); tc.mkdir(); pd.mkdir()
+              source = ps / "ADP1"
+              source.mkdir()
+              (source / "type").write_text("Mains\n")
+              (source / "online").write_text("1\n")
+              snapshot = PowerContextDiscovery(ps, tc, pd).discover()
+              assert snapshot.external_power is ExternalPower.ONLINE
+              assert snapshot.power_supplies[0].supply_id == "ADP1"
           PY
-          PYTHONPATH="$PWD" python /tmp/auto-cpufreq-power-context-tests/regression.py
-          python -m compileall -q auto_cpufreq/modules/power_context.py
-          git diff --check
-          git diff -- auto_cpufreq/modules/power_context.py
 
-      - name: Commit Task 4 production change to implementation branch
+          python -m compileall -q auto_cpufreq
+          git diff --check
+          test -z "$(git diff --name-only -- auto_cpufreq/modules/policy.py auto_cpufreq/modules/daemon_scheduler.py auto_cpufreq/modules/intel_rapl.py auto_cpufreq/power_helper.py)"
+
+          grep -q 'include_power_context=True' auto_cpufreq/bin/auto_cpufreq.py
+          grep -q 'include_power_context=True' auto_cpufreq/modules/system_monitor.py
+          grep -q 'format_power_context_summary' auto_cpufreq/modules/system_monitor.py
+
+          git diff -- auto_cpufreq/modules/system_info.py auto_cpufreq/modules/system_monitor.py auto_cpufreq/bin/auto_cpufreq.py
+
+      - name: Commit Task 5 production change to implementation branch
         shell: bash
         run: |
           set -euo pipefail
           git config user.name "Lucas"
           git config user.email "122493239+lucasleocs@users.noreply.github.com"
-          git add auto_cpufreq/modules/power_context.py
-          git commit -m "feat: discover USB Power Delivery capabilities"
+          git add auto_cpufreq/modules/system_info.py auto_cpufreq/modules/system_monitor.py auto_cpufreq/bin/auto_cpufreq.py
+          git commit -m "feat: report power context diagnostics"
           git push origin HEAD:usb-c-power-context
