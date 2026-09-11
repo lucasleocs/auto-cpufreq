@@ -17,3 +17,5 @@ jobs:
         run: python -m pip install .
       - name: Run event context deduplication checks
         run: PYTHONPATH=. python tmp/test_event_context_dedup.py
+      - name: Run daemon context integration checks
+        run: PYTHONPATH=. python tmp/test_daemon_context_integration.py
