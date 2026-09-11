@@ -1,0 +1,17 @@
+name: Temporary Intel Power Task 1 Check
+
+on:
+  push:
+    branches:
+      - tmp/intel-power-stage1-task1
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Run synthetic sysfs check
+        run: python tmp/test_intel_power_task1.py
