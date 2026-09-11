@@ -468,6 +468,7 @@ def main(monitor, live, daemon, install, update, remove, force, turbo, config, s
             report = system_info.generate_system_report(
                 include_intel_power=True,
                 sample_intel_energy=False,
+                include_power_context=True,
             )
             print_system_report(report)
             print()

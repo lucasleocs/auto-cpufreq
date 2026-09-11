@@ -22,9 +22,15 @@ from auto_cpufreq.globals import (
 )
 from auto_cpufreq.modules.intel_power import (
     IntelPowerSnapshot,
-    ReadStatus,
     intel_power,
 )
+from auto_cpufreq.modules.power_context import (
+    BatteryFlow,
+    ExternalPower,
+    PowerContextDiscovery,
+    PowerContextSnapshot,
+)
+from auto_cpufreq.modules.sysfs import ReadStatus
 from auto_cpufreq.modules.platform_profile import (
     PlatformProfileSnapshot,
     platform_profile,
@@ -89,6 +95,7 @@ class SystemReport:
     offline_cpus: tuple[int, ...] = ()
     platform_profile: PlatformProfileSnapshot = PlatformProfileSnapshot()
     intel_power: IntelPowerSnapshot | None = None
+    power_context: Optional[PowerContextSnapshot] = None
 
 
 class SystemInfo:
@@ -803,6 +810,7 @@ class SystemInfo:
         self,
         include_intel_power: bool = False,
         sample_intel_energy: bool = False,
+        include_power_context: bool = False,
     ) -> SystemReport:
         """Collect one reporting snapshot without changing system state."""
         battery_info = self.battery_info()
@@ -819,6 +827,11 @@ class SystemInfo:
         intel_snapshot = (
             intel_power.snapshot(sample_energy=sample_intel_energy)
             if include_intel_power
+            else None
+        )
+        power_context_snapshot = (
+            power_context_discovery().discover()
+            if include_power_context
             else None
         )
 
@@ -852,7 +865,22 @@ class SystemInfo:
             offline_cpus=tuple(self.offline_cpu_ids()),
             platform_profile=platform_profile.snapshot(),
             intel_power=intel_snapshot,
+            power_context=power_context_snapshot,
         )
+
+
+def power_context_discovery() -> PowerContextDiscovery:
+    sys_root = (
+        Path(SNAP_HOST_ROOT) / "sys"
+        if IS_INSTALLED_WITH_SNAP
+        else Path("/sys")
+    )
+    return PowerContextDiscovery(
+        power_supply_root=sys_root / "class/power_supply",
+        typec_root=sys_root / "class/typec",
+        usb_pd_root=sys_root / "class/usb_power_delivery",
+        ignored_supply_substrings=tuple(get_power_supply_ignore_list()),
+    )
 
 
 system_info = SystemInfo()
@@ -1045,6 +1073,208 @@ def format_intel_power_summary(snapshot: IntelPowerSnapshot) -> list[str]:
     return lines
 
 
+def _format_power_read(result, formatter=str) -> str:
+    if result.status is ReadStatus.MISSING:
+        return "Unavailable"
+    if result.status is ReadStatus.UNREADABLE:
+        return "Could not be read"
+    if result.status is ReadStatus.INVALID:
+        return "Invalid"
+    if result.value is None:
+        return "Unknown"
+    return formatter(result.value)
+
+
+def _format_power_subsystem_status(status: ReadStatus) -> str:
+    return {
+        ReadStatus.AVAILABLE: "Available",
+        ReadStatus.MISSING: "Missing",
+        ReadStatus.UNREADABLE: "Unreadable",
+        ReadStatus.INVALID: "Invalid",
+    }.get(status, "Unknown")
+
+
+def _format_external_power(value: ExternalPower) -> str:
+    return {
+        ExternalPower.ONLINE: "Online",
+        ExternalPower.OFFLINE: "Offline",
+        ExternalPower.UNKNOWN: "Unknown",
+    }[value]
+
+
+def _format_battery_flow(value: BatteryFlow) -> str:
+    return {
+        BatteryFlow.CHARGING: "Charging",
+        BatteryFlow.DISCHARGING: "Discharging",
+        BatteryFlow.NOT_CHARGING: "Not charging",
+        BatteryFlow.FULL: "Full",
+        BatteryFlow.MIXED: "Mixed",
+        BatteryFlow.UNKNOWN: "Unknown",
+    }[value]
+
+
+def _format_micro_unit(value: int, unit: str) -> str:
+    return f"{value / 1_000_000:.3f} {unit}"
+
+
+def _format_yes_no(value: bool) -> str:
+    return "Yes" if value else "No"
+
+
+def _format_usb_pd_attribute(attribute) -> str:
+    if attribute.unit is None:
+        value = _format_power_read(
+            attribute.value,
+            lambda item: _format_yes_no(item)
+            if isinstance(item, bool)
+            else str(item),
+        )
+    else:
+        value = _format_power_read(
+            attribute.value,
+            lambda item: f"{item} {attribute.unit}",
+        )
+    label = attribute.name.replace("_", " ").capitalize()
+    return f"{label}: {value}"
+
+
+def format_power_context_debug(snapshot: PowerContextSnapshot) -> list[str]:
+    lines = [
+        f"External power: {_format_external_power(snapshot.external_power)}",
+        f"Battery flow: {_format_battery_flow(snapshot.battery_flow)}",
+        "Power Supply subsystem: "
+        + _format_power_subsystem_status(snapshot.power_supply_status),
+    ]
+
+    for supply in snapshot.power_supplies:
+        lines.append(f"  {supply.supply_id}")
+        fields = (
+            ("Type", supply.type, str),
+            ("Scope", supply.scope, str),
+            ("Online", supply.online, _format_yes_no),
+            ("Status", supply.status, str),
+            ("USB type", supply.usb_type, str),
+            (
+                "Voltage now",
+                supply.voltage_now,
+                lambda value: _format_micro_unit(value, "V"),
+            ),
+            (
+                "Current now",
+                supply.current_now,
+                lambda value: _format_micro_unit(value, "A"),
+            ),
+            (
+                "Power now",
+                supply.power_now,
+                lambda value: _format_micro_unit(value, "W"),
+            ),
+            (
+                "Input current limit",
+                supply.input_current_limit,
+                lambda value: _format_micro_unit(value, "A"),
+            ),
+            (
+                "Input voltage limit",
+                supply.input_voltage_limit,
+                lambda value: _format_micro_unit(value, "V"),
+            ),
+            (
+                "Input power limit",
+                supply.input_power_limit,
+                lambda value: _format_micro_unit(value, "W"),
+            ),
+            ("Capacity", supply.capacity, lambda value: f"{value}%"),
+            ("Capacity level", supply.capacity_level, str),
+        )
+        for label, result, formatter in fields:
+            lines.append(
+                f"    {label}: {_format_power_read(result, formatter)}"
+            )
+
+    lines.append(
+        "Type-C subsystem: "
+        + _format_power_subsystem_status(snapshot.typec_status)
+    )
+    for port in snapshot.typec_ports:
+        lines.append(f"  {port.port_id}")
+        lines.append(
+            "    Power role: " + _format_power_read(port.power_role)
+        )
+        lines.append(
+            "    Power operation mode: "
+            + _format_power_read(port.power_operation_mode)
+        )
+        lines.append(
+            "    Partner present: "
+            + _format_power_read(port.partner_present, _format_yes_no)
+        )
+        lines.append(
+            "    Partner USB-PD capable: "
+            + _format_power_read(
+                port.partner_usb_pd_capable,
+                _format_yes_no,
+            )
+        )
+
+    lines.append(
+        "USB Power Delivery subsystem: "
+        + _format_power_subsystem_status(snapshot.usb_pd_status)
+    )
+    for pd in snapshot.usb_pd_objects:
+        lines.append(f"  {pd.pd_id}")
+        lines.append(f"    Revision: {_format_power_read(pd.revision)}")
+        lines.append(f"    Version: {_format_power_read(pd.version)}")
+        for label, capabilities in (
+            ("Source capabilities", pd.source_capabilities),
+            ("Sink capabilities", pd.sink_capabilities),
+        ):
+            lines.append(f"    {label}:")
+            if not capabilities:
+                lines.append("      None exposed")
+                continue
+            for capability in capabilities:
+                position = (
+                    str(capability.position)
+                    if capability.position is not None
+                    else "?"
+                )
+                lines.append(
+                    f"      PDO {position}: {capability.kind.value} "
+                    f"({capability.sysfs_name})"
+                )
+                for attribute in capability.attributes:
+                    lines.append(
+                        "        " + _format_usb_pd_attribute(attribute)
+                    )
+
+    return lines
+
+
+def format_power_context_summary(snapshot: PowerContextSnapshot) -> list[str]:
+    def counted_status(status: ReadStatus, count: int, noun: str) -> str:
+        if status is ReadStatus.AVAILABLE:
+            return f"Available ({count} {noun})"
+        return _format_power_subsystem_status(status)
+
+    return [
+        f"External power: {_format_external_power(snapshot.external_power)}",
+        f"Battery flow: {_format_battery_flow(snapshot.battery_flow)}",
+        "Type-C: "
+        + counted_status(
+            snapshot.typec_status,
+            len(snapshot.typec_ports),
+            "ports",
+        ),
+        "USB-PD: "
+        + counted_status(
+            snapshot.usb_pd_status,
+            len(snapshot.usb_pd_objects),
+            "objects",
+        ),
+    ]
+
+
 def format_system_report(
     report: SystemReport,
     include_distro: bool = True,
@@ -1179,6 +1409,16 @@ def format_system_report(
             ]
         )
         lines.extend(format_intel_power_summary(report.intel_power))
+
+    if report.power_context is not None:
+        lines.extend(
+            [
+                "",
+                "-" * 24 + " Power Context Diagnostics " + "-" * 24,
+                "",
+            ]
+        )
+        lines.extend(format_power_context_debug(report.power_context))
 
     return "\n".join(lines)
 
