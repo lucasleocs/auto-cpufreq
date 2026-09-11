@@ -1,0 +1,209 @@
+name: Temporary USB-C Power Context Task 5 Recovery
+
+on:
+  push:
+    branches:
+      - tmp/usb-c-power-context-tdd
+
+permissions:
+  contents: write
+
+jobs:
+  task5-recovery:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout implementation branch
+        uses: actions/checkout@v4
+        with:
+          ref: usb-c-power-context
+          fetch-depth: 0
+
+      - name: Prepare project Python environment
+        run: python -m pip install -e .
+
+      - name: Reproduce RED
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/auto-cpufreq-power-context-tests
+          cat > /tmp/auto-cpufreq-power-context-tests/test_power_context_reporting.py <<'PY'
+          import unittest
+          from pathlib import Path
+
+          from auto_cpufreq.modules.power_context import (
+              BatteryFlow,
+              ExternalPower,
+              PowerContextSnapshot,
+              PowerSupplySnapshot,
+          )
+          from auto_cpufreq.modules.sysfs import ReadResult, ReadStatus
+          from auto_cpufreq.modules.system_info import (
+              format_power_context_debug,
+              format_power_context_summary,
+          )
+
+          A = ReadStatus.AVAILABLE
+          M = ReadStatus.MISSING
+
+
+          class ReportingTests(unittest.TestCase):
+              def snapshot(self):
+                  supply = PowerSupplySnapshot(
+                      supply_id="USBC",
+                      sysfs_path=Path("/synthetic/USBC"),
+                      type=ReadResult(A, "USB"),
+                      scope=ReadResult(M),
+                      online=ReadResult(A, True),
+                      status=ReadResult(M),
+                      usb_type=ReadResult(A, "PD"),
+                      voltage_now=ReadResult(A, 20_000_000),
+                      current_now=ReadResult(A, 2_000_000),
+                      power_now=ReadResult(M),
+                      input_current_limit=ReadResult(A, 3_250_000),
+                      input_voltage_limit=ReadResult(M),
+                      input_power_limit=ReadResult(A, 65_000_000),
+                      capacity=ReadResult(M),
+                      capacity_level=ReadResult(M),
+                  )
+                  return PowerContextSnapshot(
+                      power_supply_status=A,
+                      typec_status=M,
+                      usb_pd_status=M,
+                      external_power=ExternalPower.ONLINE,
+                      battery_flow=BatteryFlow.UNKNOWN,
+                      power_supplies=(supply,),
+                      batteries=(),
+                      typec_ports=(),
+                      usb_pd_objects=(),
+                  )
+
+              def test_summary_is_compact_and_does_not_invent_power(self):
+                  text = "\n".join(format_power_context_summary(self.snapshot()))
+                  self.assertIn("External power: Online", text)
+                  self.assertIn("Battery flow: Unknown", text)
+                  self.assertIn("USB-PD: Missing", text)
+                  self.assertNotIn("40.0 W", text)
+                  self.assertNotIn("charger", text.lower())
+
+              def test_debug_preserves_missing_and_formats_exposed_limit(self):
+                  text = "\n".join(format_power_context_debug(self.snapshot()))
+                  self.assertIn("Power Supply subsystem: Available", text)
+                  self.assertIn("USBC", text)
+                  self.assertIn("Input power limit: 65.000 W", text)
+                  self.assertIn("Power now: Unavailable", text)
+
+
+          if __name__ == "__main__":
+              unittest.main()
+          PY
+
+          set +e
+          PYTHONPATH="$PWD" python /tmp/auto-cpufreq-power-context-tests/test_power_context_reporting.py > /tmp/task5-red.log 2>&1
+          status=$?
+          set -e
+          cat /tmp/task5-red.log
+          test "$status" -ne 0
+          grep -Eq "format_power_context_debug|format_power_context_summary|cannot import name" /tmp/task5-red.log
+
+      - name: Apply audited transformation and repair known harness typo
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          import subprocess
+          from textwrap import dedent
+
+          workflow = subprocess.check_output(
+              [
+                  "git",
+                  "show",
+                  "origin/tmp/usb-c-power-context-tdd:.github/workflows/tmp-usb-c-power-context-task1.yml",
+              ],
+              text=True,
+          )
+          green = workflow.split(
+              "      - name: GREEN - integrate PowerContext into reporting only\n",
+              1,
+          )[1].split("      - name: Verify GREEN and control-path isolation\n", 1)[0]
+          script = green.split("          python - <<'PY'\n", 1)[1].rsplit("\n          PY\n", 1)[0]
+          exec(compile(dedent(script), "task5-green-transform.py", "exec"), {})
+
+          path = Path("auto_cpufreq/modules/system_info.py")
+          text = path.read_text()
+          fixes = {
+              '        power_supply_root=sys_root / "class/power_supply"\n':
+                  '        power_supply_root=sys_root / "class/power_supply",\n',
+              '        typec_root=sys_root / "class/typec"\n':
+                  '        typec_root=sys_root / "class/typec",\n',
+              '        usb_pd_root=sys_root / "class/usb_power_delivery"\n':
+                  '        usb_pd_root=sys_root / "class/usb_power_delivery",\n',
+          }
+          for old, new in fixes.items():
+              if text.count(old) != 1:
+                  raise SystemExit(f"known harness typo did not match exactly once: {old!r}")
+              text = text.replace(old, new, 1)
+          path.write_text(text)
+          PY
+
+      - name: Verify GREEN and isolation
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m compileall -q auto_cpufreq
+          PYTHONPATH="$PWD" python /tmp/auto-cpufreq-power-context-tests/test_power_context_reporting.py
+
+          PYTHONPATH="$PWD" python - <<'PY'
+          from pathlib import Path
+          from tempfile import TemporaryDirectory
+          from auto_cpufreq.modules.power_context import ExternalPower, PowerContextDiscovery
+
+          with TemporaryDirectory() as td:
+              root = Path(td)
+              ps = root / "power_supply"
+              tc = root / "typec"
+              pd = root / "usb_power_delivery"
+              ps.mkdir(); tc.mkdir(); pd.mkdir()
+              source = ps / "ADP1"
+              source.mkdir()
+              (source / "type").write_text("Mains\n")
+              (source / "online").write_text("1\n")
+              snapshot = PowerContextDiscovery(ps, tc, pd).discover()
+              assert snapshot.external_power is ExternalPower.ONLINE
+              assert snapshot.power_supplies[0].supply_id == "ADP1"
+          PY
+
+          git diff --check
+          changed="$(git diff --name-only | sort)"
+          expected="$(printf '%s\n' \
+            auto_cpufreq/bin/auto_cpufreq.py \
+            auto_cpufreq/modules/system_info.py \
+            auto_cpufreq/modules/system_monitor.py | sort)"
+          test "$changed" = "$expected"
+
+          test -z "$(git diff --name-only -- \
+            auto_cpufreq/modules/policy.py \
+            auto_cpufreq/modules/daemon_scheduler.py \
+            auto_cpufreq/modules/intel_rapl.py \
+            auto_cpufreq/power_helper.py)"
+
+          test "$(grep -c 'include_power_context=True' auto_cpufreq/modules/system_monitor.py)" -eq 1
+          test "$(grep -c 'include_power_context=True' auto_cpufreq/bin/auto_cpufreq.py)" -eq 1
+          grep -q 'format_power_context_summary' auto_cpufreq/modules/system_monitor.py
+          grep -q 'Power Context Diagnostics' auto_cpufreq/modules/system_info.py
+
+          git diff --stat
+          git diff -- auto_cpufreq/modules/system_info.py auto_cpufreq/modules/system_monitor.py auto_cpufreq/bin/auto_cpufreq.py
+
+      - name: Commit verified Task 5 implementation
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "Lucas"
+          git config user.email "122493239+lucasleocs@users.noreply.github.com"
+          git add \
+            auto_cpufreq/modules/system_info.py \
+            auto_cpufreq/modules/system_monitor.py \
+            auto_cpufreq/bin/auto_cpufreq.py
+          git commit -m "feat: report power context diagnostics"
+          git push origin HEAD:usb-c-power-context
