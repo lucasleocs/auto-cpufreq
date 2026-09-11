@@ -1,7 +1,4 @@
-from io import StringIO
 from unittest.mock import patch
-
-from click.testing import CliRunner
 
 import auto_cpufreq.modules.system_info as system_info_module
 from auto_cpufreq.bin import auto_cpufreq as cli_module
@@ -74,7 +71,9 @@ def make_snapshot() -> IntelPowerSnapshot:
                 scaling_min_freq_khz=available(400_000),
                 scaling_max_freq_khz=available(4_500_000),
                 epp=available("balance_performance"),
-                available_epp=available(("performance", "balance_performance", "balance_power", "power")),
+                available_epp=available(
+                    ("performance", "balance_performance", "balance_power", "power")
+                ),
             ),
         ),
         powercap_zones=(zone,),
@@ -122,24 +121,57 @@ def main() -> None:
     assert "long_term: 15.000 W, 28.000 s" in enhanced_text
     assert "Package 0 thermal throttling" in enhanced_text
 
-    # --debug must explicitly request one enhanced snapshot, without sleeping
-    # for a second energy sample.
+    # The command callback also checks sys.argv itself, so reproduce the real
+    # invocation contract instead of relying only on Click's CliRunner argv.
     sentinel_report = object()
-    runner = CliRunner()
     with (
+        patch.object(cli_module.sys, "argv", ["auto-cpufreq", "--debug"]),
         patch.object(cli_module, "root_check"),
         patch.object(cli_module, "battery_get_thresholds"),
         patch.object(cli_module, "cpufreqctl"),
         patch.object(cli_module, "footer"),
         patch.object(cli_module, "app_version"),
-        patch.object(cli_module, "find_config_file", return_value="/tmp/nonexistent-auto-cpufreq.conf"),
+        patch.object(cli_module, "python_info"),
+        patch.object(cli_module, "device_info"),
+        patch.object(cli_module, "app_res_use"),
+        patch.object(cli_module, "get_load"),
+        patch.object(cli_module, "get_current_gov"),
+        patch.object(cli_module, "get_turbo"),
+        patch.object(cli_module, "charging", return_value=False),
+        patch.object(
+            cli_module,
+            "find_config_file",
+            return_value="/tmp/nonexistent-auto-cpufreq.conf",
+        ),
         patch.object(cli_module.conf, "set_path"),
-        patch.object(cli_module.system_info, "generate_system_report", return_value=sentinel_report) as generate,
+        patch.object(cli_module.conf, "has_config", return_value=False),
+        patch.object(
+            cli_module.system_info,
+            "generate_system_report",
+            return_value=sentinel_report,
+        ) as generate,
         patch.object(cli_module, "print_system_report") as printer,
     ):
-        result = runner.invoke(cli_module.main, ["--debug"])
+        cli_module.main.callback(
+            monitor=False,
+            live=False,
+            daemon=False,
+            install=False,
+            update=None,
+            remove=False,
+            force=None,
+            turbo=None,
+            config=None,
+            stats=False,
+            pp=False,
+            get_state=False,
+            bluetooth_boot_off=False,
+            bluetooth_boot_on=False,
+            debug=True,
+            version=False,
+            donate=False,
+        )
 
-    assert result.exit_code == 0, result.output
     generate.assert_called_once_with(
         include_intel_power=True,
         sample_intel_energy=False,
