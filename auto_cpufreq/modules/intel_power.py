@@ -65,6 +65,7 @@ class PowerSample:
 @dataclass(frozen=True)
 class PowercapZoneSnapshot:
     zone_id: str
+    control_type: Optional[str]
     sysfs_name: str
     name: ReadResult[str]
     energy_uj: ReadResult[int]
@@ -152,6 +153,10 @@ def _numeric_suffix(path: Path, prefix: str) -> tuple[int, str]:
         return int(suffix), path.name
     except ValueError:
         return 2**31 - 1, path.name
+
+
+def _is_within(path: Path, boundary: Path) -> bool:
+    return path == boundary or boundary in path.parents
 
 
 class EnergySampler:
@@ -259,8 +264,7 @@ class IntelPowerDiscovery:
     def _constraint_indexes(zone_path: Path) -> tuple[int, ...]:
         indexes: set[int] = set()
         try:
-            candidates = zone_path.glob("constraint_*_name")
-            for path in candidates:
+            for path in zone_path.glob("constraint_*_name"):
                 suffix = path.name.removeprefix("constraint_").removesuffix("_name")
                 if suffix.isdigit():
                     indexes.add(int(suffix))
@@ -307,47 +311,100 @@ class IntelPowerDiscovery:
         except OSError:
             return False
 
-    def _powercap_zone_paths(self) -> tuple[Path, ...]:
-        if not self.powercap_root.exists():
+    @staticmethod
+    def _zone_children(path: Path, boundary: Path) -> tuple[Path, ...]:
+        try:
+            children = sorted(path.iterdir(), key=lambda child: child.name)
+        except OSError:
             return ()
 
-        queue: list[Path] = [self.powercap_root]
-        seen_dirs: set[Path] = set()
         zones: list[Path] = []
-
-        while queue:
-            directory = queue.pop(0)
+        for child in children:
             try:
-                resolved = directory.resolve(strict=True)
-            except OSError:
-                continue
-            if resolved in seen_dirs:
-                continue
-            seen_dirs.add(resolved)
-
-            try:
-                children = sorted(directory.iterdir(), key=lambda path: path.name)
-            except OSError:
-                continue
-
-            for child in children:
-                try:
-                    if child.is_dir():
-                        queue.append(child)
-                except OSError:
+                if not child.is_dir():
                     continue
+                resolved = child.resolve(strict=True)
+            except OSError:
+                continue
+            if not _is_within(resolved, boundary):
+                continue
+            if IntelPowerDiscovery._is_powercap_zone(child):
+                zones.append(child)
+        return tuple(zones)
 
-            if directory != self.powercap_root and self._is_powercap_zone(directory):
-                zones.append(directory)
+    def _powercap_zone_paths(self) -> tuple[tuple[Path, Optional[str]], ...]:
+        try:
+            root_boundary = self.powercap_root.resolve(strict=True)
+            root_children = sorted(
+                self.powercap_root.iterdir(),
+                key=lambda child: child.name,
+            )
+        except OSError:
+            return ()
 
-        return tuple(sorted(zones, key=lambda path: str(path)))
+        control_types: list[tuple[Path, Path]] = []
+        root_aliases: list[Path] = []
+
+        for child in root_children:
+            try:
+                if not child.is_dir():
+                    continue
+                resolved = child.resolve(strict=True)
+            except OSError:
+                continue
+
+            if self._is_powercap_zone(child):
+                root_aliases.append(child)
+                continue
+
+            zone_children = self._zone_children(child, resolved)
+            if zone_children:
+                control_types.append((child, resolved))
+
+        seen_resolved: set[Path] = set()
+        zones: list[tuple[Path, Optional[str]]] = []
+
+        def visit_zone(
+            zone_path: Path,
+            control_type: Optional[str],
+            boundary: Path,
+        ) -> None:
+            try:
+                resolved = zone_path.resolve(strict=True)
+            except OSError:
+                return
+            if not _is_within(resolved, boundary) or resolved in seen_resolved:
+                return
+            if not self._is_powercap_zone(zone_path):
+                return
+
+            seen_resolved.add(resolved)
+            zones.append((zone_path, control_type))
+            for child in self._zone_children(zone_path, boundary):
+                visit_zone(child, control_type, boundary)
+
+        for control_path, boundary in control_types:
+            for zone_path in self._zone_children(control_path, boundary):
+                visit_zone(zone_path, control_path.name, boundary)
+
+        # Some kernels expose convenient top-level zone aliases in the class
+        # directory. Use them only as a fallback: canonical control-type paths
+        # above win through resolved-path deduplication.
+        for alias in root_aliases:
+            try:
+                boundary = alias.resolve(strict=True)
+            except OSError:
+                continue
+            visit_zone(alias, None, boundary)
+
+        return tuple(zones)
 
     def _powercap_zones(
         self,
         sample_energy: bool,
     ) -> tuple[PowercapZoneSnapshot, ...]:
         snapshots: list[PowercapZoneSnapshot] = []
-        for zone_path in self._powercap_zone_paths():
+        for zone_path, control_type in self._powercap_zone_paths():
             try:
                 zone_id = str(zone_path.relative_to(self.powercap_root))
             except ValueError:
@@ -371,6 +428,7 @@ class IntelPowerDiscovery:
             snapshots.append(
                 PowercapZoneSnapshot(
                     zone_id=zone_id,
+                    control_type=control_type,
                     sysfs_name=zone_path.name,
                     name=_read_text(zone_path / "name"),
                     energy_uj=energy,
