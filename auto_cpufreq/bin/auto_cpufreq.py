@@ -12,7 +12,11 @@ from shutil import rmtree
 from auto_cpufreq.battery_scripts.battery import *
 from auto_cpufreq.config.config import config as conf, find_config_file
 from auto_cpufreq.core import *
-from auto_cpufreq.modules.daemon_scheduler import create_daemon_scheduler
+from auto_cpufreq.modules.daemon_scheduler import (
+    PolicyTrigger,
+    create_daemon_scheduler,
+    should_reapply_policy,
+)
 from auto_cpufreq.globals import GITHUB, IS_INSTALLED_WITH_AUR, IS_INSTALLED_WITH_SNAP
 from auto_cpufreq.modules.platform_profile import platform_profile
 from auto_cpufreq.modules.system_info import (
@@ -100,6 +104,31 @@ def _complete_staged_update(
             return False
 
     return True
+
+
+def _daemon_policy_cycle(source=None):
+    footer()
+    gov_check()
+    cpufreqctl()
+    print_system_report()
+    return set_autofreq(source)
+
+
+def _run_daemon_policy_loop(scheduler):
+    last_source = _daemon_policy_cycle()
+
+    while True:
+        triggers = scheduler.wait_for_policy_trigger()
+        current_source = get_power_source()
+
+        if not should_reapply_policy(
+            triggers,
+            last_source,
+            current_source,
+        ):
+            continue
+
+        last_source = _daemon_policy_cycle(current_source)
 
 
 @click.command()
@@ -257,13 +286,7 @@ def main(monitor, live, daemon, install, update, remove, force, turbo, config, s
                 )
 
             try:
-                while True:
-                    footer()
-                    gov_check()
-                    cpufreqctl()
-                    print_system_report()
-                    set_autofreq()
-                    scheduler.wait_for_policy_trigger()
+                _run_daemon_policy_loop(scheduler)
             except KeyboardInterrupt:
                 pass
             finally:
