@@ -1,0 +1,59 @@
+name: Temporary Task 5 Harness Fix
+
+on:
+  push:
+    branches:
+      - tmp/usb-c-power-context-tdd
+
+permissions:
+  contents: write
+
+jobs:
+  fix-harness:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: tmp/usb-c-power-context-tdd
+          fetch-depth: 0
+
+      - name: Correct generated PowerContextDiscovery arguments
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('.github/workflows/tmp-usb-c-power-context-task1.yml')
+          text = path.read_text()
+          replacements = {
+              '              "        power_supply_root=sys_root / \\"class/power_supply\\"",':
+                  '              "        power_supply_root=sys_root / \\"class/power_supply\\",",',
+              '              "        typec_root=sys_root / \\"class/typec\\"",':
+                  '              "        typec_root=sys_root / \\"class/typec\\",",',
+              '              "        usb_pd_root=sys_root / \\"class/usb_power_delivery\\"",':
+                  '              "        usb_pd_root=sys_root / \\"class/usb_power_delivery\\",",',
+          }
+          changed = False
+          for old, new in replacements.items():
+              if old in text:
+                  text = text.replace(old, new, 1)
+                  changed = True
+              elif new not in text:
+                  raise SystemExit(f'expected harness line not found: {old}')
+          if changed:
+              path.write_text(text)
+          PY
+
+          if git diff --quiet -- .github/workflows/tmp-usb-c-power-context-task1.yml; then
+            echo "Harness already corrected"
+            exit 0
+          fi
+
+          git diff --check
+          git diff -- .github/workflows/tmp-usb-c-power-context-task1.yml
+          git config user.name "Lucas"
+          git config user.email "122493239+lucasleocs@users.noreply.github.com"
+          git add .github/workflows/tmp-usb-c-power-context-task1.yml
+          git commit -m "test: correct Task 5 generated call syntax"
+          git push origin HEAD:tmp/usb-c-power-context-tdd
