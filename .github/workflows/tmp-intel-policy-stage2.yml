@@ -17,3 +17,5 @@ jobs:
         run: python -m pip install .
       - name: Run policy backend contract checks
         run: PYTHONPATH=. python tmp/test_policy_stage2.py
+      - name: Run policy dispatcher integration checks
+        run: PYTHONPATH=. python tmp/test_policy_core_integration.py
