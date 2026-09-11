@@ -14,4 +14,4 @@ jobs:
         with:
           python-version: '3.12'
       - name: Run synthetic sysfs check
-        run: python tmp/test_intel_power_task1.py
+        run: PYTHONPATH=. python tmp/test_intel_power_task1.py
