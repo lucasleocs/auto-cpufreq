@@ -15,6 +15,10 @@ jobs:
           python-version: '3.12'
       - name: Install project dependencies
         run: python -m pip install .
+      - name: Apply Modern Intel HWP core patch
+        run: PYTHONPATH=. python tmp/apply_modern_hwp_core_patch.py
+      - name: Compile production files
+        run: python -m compileall -q auto_cpufreq/core.py auto_cpufreq/modules/policy.py
       - name: Run Modern Intel action routing checks
         run: PYTHONPATH=. python tmp/test_modern_policy_actions.py
       - name: Run Modern Intel HWP core behavior checks
