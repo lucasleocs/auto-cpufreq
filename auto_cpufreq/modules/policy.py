@@ -25,6 +25,7 @@ class PolicyActions:
 class ModernIntelActions:
     apply: Callable[[PowerSource], None]
     monitor: Callable[[PowerSource], None]
+    apply_power_envelope: Optional[Callable[[PowerSource], None]] = None
 
 
 class LegacyPolicy:
@@ -47,6 +48,10 @@ class LegacyPolicy:
             self._actions.monitor_charger()
         else:
             self._actions.monitor_battery()
+
+    def apply_power_envelope(self, source: PowerSource) -> None:
+        """Legacy policy never controls Intel RAPL envelopes."""
+        return None
 
 
 class ModernIntelHwpPolicy(LegacyPolicy):
@@ -74,6 +79,13 @@ class ModernIntelHwpPolicy(LegacyPolicy):
             super().monitor(source)
             return
         self._modern_actions.monitor(source)
+
+    def apply_power_envelope(self, source: PowerSource) -> None:
+        if self._modern_actions is None:
+            return
+        callback = self._modern_actions.apply_power_envelope
+        if callback is not None:
+            callback(source)
 
 
 def modern_intel_hwp_eligible(snapshot: IntelPowerSnapshot) -> bool:
