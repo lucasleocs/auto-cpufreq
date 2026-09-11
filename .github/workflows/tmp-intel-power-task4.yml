@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   verify:
-    if: ${{ !contains(github.event.head_commit.message, 'temp: apply task4 production changes') }}
+    if: "${{ !contains(github.event.head_commit.message, 'temp-task4-production') }}"
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -36,5 +36,5 @@ jobs:
           git add auto_cpufreq/modules/intel_power.py \
                   auto_cpufreq/modules/system_info.py \
                   auto_cpufreq/bin/auto_cpufreq.py
-          git commit -m "temp: apply task4 production changes"
+          git commit -m "temp-task4-production"
           git push origin HEAD:tmp/intel-power-stage1-task4
