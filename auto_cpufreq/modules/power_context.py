@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
+import re
 
 from auto_cpufreq.modules.sysfs import ReadResult, ReadStatus, read_int, read_text
 
@@ -193,3 +194,86 @@ def _aggregate_battery_flow(
     if all(flow is first for flow in flows[1:]):
         return first
     return BatteryFlow.MIXED
+
+
+@dataclass(frozen=True)
+class TypeCPortSnapshot:
+    port_id: str
+    sysfs_path: Path
+    power_role: ReadResult[str]
+    power_operation_mode: ReadResult[str]
+    partner_present: ReadResult[bool]
+    partner_usb_pd_capable: ReadResult[bool]
+
+
+def _read_yes_no(path: Path) -> ReadResult[bool]:
+    result = read_text(path)
+    if result.status is not ReadStatus.AVAILABLE:
+        return ReadResult(result.status)
+    if result.value == "yes":
+        return ReadResult(ReadStatus.AVAILABLE, True)
+    if result.value == "no":
+        return ReadResult(ReadStatus.AVAILABLE, False)
+    return ReadResult(ReadStatus.INVALID)
+
+
+def _read_presence(path: Path) -> ReadResult[bool]:
+    try:
+        Path(path).stat()
+    except FileNotFoundError:
+        return ReadResult(ReadStatus.AVAILABLE, False)
+    except OSError:
+        return ReadResult(ReadStatus.UNREADABLE)
+    return ReadResult(ReadStatus.AVAILABLE, True)
+
+
+def _typec_port_sort_key(path: Path) -> tuple[int, str]:
+    match = re.fullmatch(r"port([0-9]+)", path.name)
+    if match is None:
+        return 2**31 - 1, path.name
+    return int(match.group(1)), path.name
+
+
+def _discover_typec_ports(
+    root: Path,
+) -> tuple[ReadStatus, tuple[TypeCPortSnapshot, ...]]:
+    root = Path(root)
+    try:
+        entries = [
+            entry
+            for entry in root.iterdir()
+            if re.fullmatch(r"port[0-9]+", entry.name)
+        ]
+    except FileNotFoundError:
+        return ReadStatus.MISSING, ()
+    except OSError:
+        return ReadStatus.UNREADABLE, ()
+
+    snapshots = []
+    for port in sorted(entries, key=_typec_port_sort_key):
+        partner = root / f"{port.name}-partner"
+        partner_present = _read_presence(partner)
+        if (
+            partner_present.status is ReadStatus.AVAILABLE
+            and partner_present.value is True
+        ):
+            partner_usb_pd_capable = _read_yes_no(
+                partner / "supports_usb_power_delivery"
+            )
+        elif partner_present.status is ReadStatus.AVAILABLE:
+            partner_usb_pd_capable = ReadResult(ReadStatus.MISSING)
+        else:
+            partner_usb_pd_capable = ReadResult(partner_present.status)
+
+        snapshots.append(
+            TypeCPortSnapshot(
+                port_id=port.name,
+                sysfs_path=port,
+                power_role=_active_enum(read_text(port / "power_role")),
+                power_operation_mode=read_text(port / "power_operation_mode"),
+                partner_present=partner_present,
+                partner_usb_pd_capable=partner_usb_pd_capable,
+            )
+        )
+
+    return ReadStatus.AVAILABLE, tuple(snapshots)
