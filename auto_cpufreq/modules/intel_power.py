@@ -497,3 +497,6 @@ class IntelPowerDiscovery:
             powercap_zones=self._powercap_zones(sample_energy),
             thermal_packages=self._thermal_packages(topology),
         )
+
+
+intel_power = IntelPowerDiscovery()
