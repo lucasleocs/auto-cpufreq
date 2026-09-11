@@ -17,7 +17,13 @@ from auto_cpufreq.config.config import config
 from auto_cpufreq.globals import (
     ALL_GOVERNORS, AVAILABLE_GOVERNORS, AVAILABLE_GOVERNORS_SORTED, GITHUB, IS_INSTALLED_WITH_AUR, IS_INSTALLED_WITH_SNAP, POWER_SUPPLY_DIR, SNAP_DAEMON_CHECK
 )
+from auto_cpufreq.modules.intel_power import IntelPowerDiscovery
 from auto_cpufreq.modules.platform_profile import platform_profile
+from auto_cpufreq.modules.policy import (
+    PolicyActions,
+    PowerSource,
+    select_policy_backend,
+)
 from auto_cpufreq.release_update import (
     decide_release_update,
     extract_git_commit,
@@ -75,6 +81,7 @@ else:
     turbo_override_state    = Path("/opt/auto-cpufreq/turbo-override.pickle")
 
 last_applied_config_section = None
+_policy_backend = None
 
 def file_stats():
     global auto_cpufreq_stats_file
@@ -1728,6 +1735,21 @@ def mon_performance():
             get_turbo()
     footer()
 
+def get_policy_backend():
+    global _policy_backend
+    if _policy_backend is None:
+        _policy_backend = select_policy_backend(
+            IntelPowerDiscovery().snapshot(),
+            PolicyActions(
+                apply_charger=set_performance,
+                apply_battery=set_powersave,
+                monitor_charger=mon_performance,
+                monitor_battery=mon_powersave,
+            ),
+        )
+    return _policy_backend
+
+
 def set_autofreq():
     """
     set cpufreq governor based if device is charging
@@ -1737,10 +1759,13 @@ def set_autofreq():
     # determine which power profile should be used
     if charging():
         print("Battery is: charging\n")
-        set_performance()
+        source = PowerSource.CHARGER
     else:
         print("Battery is: discharging\n")
-        set_powersave()
+        source = PowerSource.BATTERY
+
+    get_policy_backend().apply(source)
+
 
 def mon_autofreq():
     """
@@ -1754,12 +1779,14 @@ def mon_autofreq():
         print("Battery is: charging\n")
         get_current_gov()
         print(f'Suggesting use of "{AVAILABLE_GOVERNORS_SORTED[0]}" governor')
-        mon_performance()
+        source = PowerSource.CHARGER
     else:
         print("Battery is: discharging\n")
         get_current_gov()
         print(f'Suggesting use of "{AVAILABLE_GOVERNORS_SORTED[-1]}" governor')
-        mon_powersave()
+        source = PowerSource.BATTERY
+
+    get_policy_backend().monitor(source)
 
 def python_info():
     print("Python:", platform.python_version())
