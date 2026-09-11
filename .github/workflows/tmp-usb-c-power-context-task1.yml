@@ -1,4 +1,4 @@
-name: Temporary USB-C Power Context Task 3 TDD
+name: Temporary USB-C Power Context Task 4 TDD
 
 on:
   push:
@@ -9,7 +9,7 @@ permissions:
   contents: write
 
 jobs:
-  task3:
+  task4:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout implementation branch
@@ -18,86 +18,151 @@ jobs:
           ref: usb-c-power-context
           fetch-depth: 0
 
-      - name: RED - Type-C tests must fail before implementation
+      - name: RED - USB-PD tests must fail before implementation
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p /tmp/auto-cpufreq-power-context-tests
-          cat > /tmp/auto-cpufreq-power-context-tests/test_typec_context.py <<'PY'
+          cat > /tmp/auto-cpufreq-power-context-tests/test_usb_pd_context.py <<'PY'
           import unittest
           from pathlib import Path
           from tempfile import TemporaryDirectory
+          from unittest.mock import patch
 
-          from auto_cpufreq.modules.power_context import _discover_typec_ports
+          from auto_cpufreq.modules.power_context import (
+              ExternalPower,
+              PowerContextDiscovery,
+              UsbPdCapabilityKind,
+              _discover_usb_pd_objects,
+          )
           from auto_cpufreq.modules.sysfs import ReadStatus
 
 
-          class TypeCTests(unittest.TestCase):
-              def test_numeric_order_roles_partner_and_pd_flag(self):
+          def make_cap(pd, group, name, **attrs):
+              path = pd / group / name
+              path.mkdir(parents=True, exist_ok=True)
+              for key, value in attrs.items():
+                  (path / key).write_text(str(value) + "\n")
+
+
+          class UsbPdTests(unittest.TestCase):
+              def test_types_units_numeric_order_and_unknown_kind(self):
                   with TemporaryDirectory() as td:
                       root = Path(td)
-                      for name, role, mode in (
-                          ("port10", "source [sink]", "usb_power_delivery"),
-                          ("port2", "[source] sink", "3.0A"),
-                      ):
-                          port = root / name
-                          port.mkdir()
-                          (port / "power_role").write_text(role + "\n")
-                          (port / "power_operation_mode").write_text(mode + "\n")
-                      partner = root / "port10-partner"
-                      partner.mkdir()
-                      (partner / "supports_usb_power_delivery").write_text("yes\n")
+                      pd = root / "pd0"
+                      pd.mkdir()
+                      (pd / "revision").write_text("3.1\n")
+                      (pd / "version").write_text("1.0\n")
+                      make_cap(pd, "source-capabilities", "10:future_supply", mystery="9")
+                      make_cap(pd, "source-capabilities", "2:variable_supply", maximum_voltage="20000mV", minimum_voltage="5000mV", maximum_current="3000mA")
+                      make_cap(pd, "source-capabilities", "1:fixed_supply", voltage="5000mV", maximum_current="3000mA", dual_role_power="1")
+                      make_cap(pd, "source-capabilities", "3:battery", maximum_voltage="20000mV", minimum_voltage="5000mV", maximum_power="45000mW")
+                      make_cap(pd, "source-capabilities", "4:programmable_supply", maximum_voltage="11000mV", minimum_voltage="3300mV", maximum_current="3000mA", pps_power_limited="1")
+                      make_cap(pd, "source-capabilities", "5:spr_adjustable_voltage_supply", maximum_current_9V_to_15V="3000mA", maximum_current_15V_to_20V="2500mA", peak_current="2")
 
-                      status, ports = _discover_typec_ports(root)
+                      status, objects = _discover_usb_pd_objects(root)
                       self.assertEqual(status, ReadStatus.AVAILABLE)
-                      self.assertEqual([p.port_id for p in ports], ["port2", "port10"])
-                      self.assertEqual(ports[0].power_role.value, "source")
-                      self.assertEqual(ports[0].partner_present.value, False)
-                      self.assertEqual(ports[0].partner_usb_pd_capable.status, ReadStatus.MISSING)
-                      self.assertEqual(ports[1].power_role.value, "sink")
-                      self.assertEqual(ports[1].power_operation_mode.value, "usb_power_delivery")
-                      self.assertEqual(ports[1].partner_present.value, True)
-                      self.assertEqual(ports[1].partner_usb_pd_capable.value, True)
+                      self.assertEqual(objects[0].revision.value, "3.1")
+                      self.assertEqual(objects[0].version.value, "1.0")
+                      caps = objects[0].source_capabilities
+                      self.assertEqual([c.position for c in caps], [1, 2, 3, 4, 5, 10])
+                      self.assertEqual(caps[0].kind, UsbPdCapabilityKind.FIXED_SUPPLY)
+                      fixed = {a.name: a for a in caps[0].attributes}
+                      self.assertEqual(fixed["voltage"].value.value, 5000)
+                      self.assertEqual(fixed["voltage"].unit, "mV")
+                      self.assertEqual(fixed["maximum_current"].value.value, 3000)
+                      self.assertEqual(fixed["maximum_current"].unit, "mA")
+                      self.assertEqual(fixed["dual_role_power"].value.value, True)
+                      battery = {a.name: a for a in caps[2].attributes}
+                      self.assertEqual(battery["maximum_power"].value.value, 45000)
+                      self.assertEqual(battery["maximum_power"].unit, "mW")
+                      self.assertEqual(caps[-1].kind, UsbPdCapabilityKind.UNKNOWN)
+                      self.assertEqual(caps[-1].attributes, ())
 
-              def test_invalid_partner_flag_is_local(self):
+              def test_sink_schema_and_bad_suffix_are_local(self):
                   with TemporaryDirectory() as td:
                       root = Path(td)
-                      port = root / "port0"
-                      port.mkdir()
-                      (port / "power_role").write_text("sink\n")
-                      (port / "power_operation_mode").write_text("usb_power_delivery\n")
-                      partner = root / "port0-partner"
-                      partner.mkdir()
-                      (partner / "supports_usb_power_delivery").write_text("maybe\n")
-                      _, ports = _discover_typec_ports(root)
-                      self.assertEqual(ports[0].partner_usb_pd_capable.status, ReadStatus.INVALID)
-                      self.assertEqual(ports[0].power_operation_mode.value, "usb_power_delivery")
+                      pd = root / "pd0"
+                      pd.mkdir()
+                      make_cap(pd, "sink-capabilities", "1:fixed_supply", voltage="5000mV", operational_current="3000watts", dual_role_power="0")
+                      make_cap(pd, "sink-capabilities", "2:variable_supply", maximum_voltage="20000mV", minimum_voltage="5000mV", operational_current="2500mA")
+                      make_cap(pd, "sink-capabilities", "3:battery", maximum_voltage="20000mV", minimum_voltage="5000mV", operational_power="30000mW")
+                      make_cap(pd, "sink-capabilities", "4:programmable_supply", maximum_voltage="11000mV", minimum_voltage="3300mV", maximum_current="3000mA")
+                      make_cap(pd, "sink-capabilities", "5:spr_adjustable_voltage_supply", maximum_current_9V_to_15V="3000mA", maximum_current_15V_to_20V="2500mA")
+                      _, objects = _discover_usb_pd_objects(root)
+                      fixed = {a.name: a for a in objects[0].sink_capabilities[0].attributes}
+                      self.assertEqual(fixed["voltage"].value.status, ReadStatus.AVAILABLE)
+                      self.assertEqual(fixed["operational_current"].value.status, ReadStatus.INVALID)
+                      self.assertEqual(fixed["dual_role_power"].value.value, False)
+                      variable = {a.name: a for a in objects[0].sink_capabilities[1].attributes}
+                      self.assertEqual(variable["operational_current"].value.value, 2500)
+                      battery = {a.name: a for a in objects[0].sink_capabilities[2].attributes}
+                      self.assertEqual(battery["operational_power"].unit, "mW")
 
-              def test_partner_no_is_false_without_inference(self):
-                  with TemporaryDirectory() as td:
-                      root = Path(td)
-                      port = root / "port0"
-                      port.mkdir()
-                      (port / "power_role").write_text("sink\n")
-                      (port / "power_operation_mode").write_text("usb_power_delivery\n")
-                      partner = root / "port0-partner"
-                      partner.mkdir()
-                      (partner / "supports_usb_power_delivery").write_text("no\n")
-                      _, ports = _discover_typec_ports(root)
-                      self.assertEqual(ports[0].partner_usb_pd_capable.value, False)
-                      self.assertEqual(ports[0].power_operation_mode.value, "usb_power_delivery")
-
-              def test_missing_and_empty_roots_are_distinct(self):
+              def test_missing_empty_and_malformed_capability_name(self):
                   with TemporaryDirectory() as td:
                       base = Path(td)
-                      missing_status, missing = _discover_typec_ports(base / "missing")
+                      missing_status, missing = _discover_usb_pd_objects(base / "missing")
                       empty = base / "empty"
                       empty.mkdir()
-                      empty_status, ports = _discover_typec_ports(empty)
+                      empty_status, empty_items = _discover_usb_pd_objects(empty)
+                      root = base / "pdroot"
+                      root.mkdir()
+                      pd = root / "pd0"
+                      pd.mkdir()
+                      make_cap(pd, "source-capabilities", "broken-name", voltage="5000mV")
+                      _, objects = _discover_usb_pd_objects(root)
                       self.assertEqual(missing_status, ReadStatus.MISSING)
                       self.assertEqual(missing, ())
                       self.assertEqual(empty_status, ReadStatus.AVAILABLE)
-                      self.assertEqual(ports, ())
+                      self.assertEqual(empty_items, ())
+                      cap = objects[0].source_capabilities[0]
+                      self.assertIsNone(cap.position)
+                      self.assertEqual(cap.kind, UsbPdCapabilityKind.UNKNOWN)
+                      self.assertEqual(cap.attributes, ())
+
+              def test_disappearing_object_is_localized(self):
+                  with TemporaryDirectory() as td:
+                      root = Path(td)
+                      for name in ("pd0", "pd1"):
+                          obj = root / name
+                          obj.mkdir()
+                          (obj / "revision").write_text("3.1\n")
+                      original = Path.read_text
+
+                      def selective(path, *args, **kwargs):
+                          if str(path).endswith("pd0/revision"):
+                              raise FileNotFoundError
+                          return original(path, *args, **kwargs)
+
+                      with patch.object(Path, "read_text", selective):
+                          status, objects = _discover_usb_pd_objects(root)
+                      self.assertEqual(status, ReadStatus.AVAILABLE)
+                      self.assertEqual(len(objects), 2)
+                      self.assertEqual(objects[0].revision.status, ReadStatus.MISSING)
+                      self.assertEqual(objects[1].revision.value, "3.1")
+
+              def test_injected_roots_compose_without_host_fallback_or_correlation(self):
+                  with TemporaryDirectory() as td:
+                      base = Path(td)
+                      ps = base / "power_supply"
+                      tc = base / "typec"
+                      pdroot = base / "usb_power_delivery"
+                      ps.mkdir(); tc.mkdir(); pdroot.mkdir()
+                      adp = ps / "ADP1"; adp.mkdir()
+                      (adp / "type").write_text("Mains\n")
+                      (adp / "online").write_text("1\n")
+                      port = tc / "port7"; port.mkdir()
+                      (port / "power_role").write_text("sink\n")
+                      (port / "power_operation_mode").write_text("usb_power_delivery\n")
+                      pd = pdroot / "pd42"; pd.mkdir()
+                      (pd / "revision").write_text("3.1\n")
+
+                      snapshot = PowerContextDiscovery(ps, tc, pdroot).discover()
+                      self.assertEqual(snapshot.external_power, ExternalPower.ONLINE)
+                      self.assertEqual([s.supply_id for s in snapshot.power_supplies], ["ADP1"])
+                      self.assertEqual([p.port_id for p in snapshot.typec_ports], ["port7"])
+                      self.assertEqual([p.pd_id for p in snapshot.usb_pd_objects], ["pd42"])
 
 
           if __name__ == "__main__":
@@ -105,17 +170,17 @@ jobs:
           PY
 
           set +e
-          PYTHONPATH="$PWD" python /tmp/auto-cpufreq-power-context-tests/test_typec_context.py > /tmp/task3-red.log 2>&1
+          PYTHONPATH="$PWD" python /tmp/auto-cpufreq-power-context-tests/test_usb_pd_context.py > /tmp/task4-red.log 2>&1
           status=$?
           set -e
-          cat /tmp/task3-red.log
+          cat /tmp/task4-red.log
           if [ "$status" -eq 0 ]; then
-            echo "RED gate failed: Type-C test unexpectedly passed before implementation"
+            echo "RED gate failed: USB-PD tests unexpectedly passed before implementation"
             exit 1
           fi
-          grep -q "_discover_typec_ports" /tmp/task3-red.log
+          grep -Eq "PowerContextDiscovery|UsbPdCapabilityKind|_discover_usb_pd_objects" /tmp/task4-red.log
 
-      - name: GREEN - implement Type-C discovery
+      - name: GREEN - implement USB-PD discovery and top-level snapshot
         shell: bash
         run: |
           set -euo pipefail
@@ -123,130 +188,321 @@ jobs:
           from pathlib import Path
           path = Path("auto_cpufreq/modules/power_context.py")
           text = path.read_text()
-          marker = "from pathlib import Path\n"
-          if marker not in text:
-              raise SystemExit("pathlib import marker not found")
-          if "import re\n" not in text:
-              text = text.replace(marker, marker + "import re\n", 1)
-          path.write_text(text)
+          old = "from auto_cpufreq.modules.sysfs import ReadResult, ReadStatus, read_int, read_text\n"
+          new = "from typing import Optional, Tuple, Union\n\nfrom auto_cpufreq.modules.sysfs import (\n    ReadResult,\n    ReadStatus,\n    read_bool01,\n    read_int,\n    read_text,\n)\n"
+          if old not in text:
+              raise SystemExit("expected sysfs import not found")
+          path.write_text(text.replace(old, new, 1))
           PY
 
           cat >> auto_cpufreq/modules/power_context.py <<'PY'
 
 
+          class UsbPdCapabilityKind(str, Enum):
+              FIXED_SUPPLY = "fixed_supply"
+              VARIABLE_SUPPLY = "variable_supply"
+              BATTERY = "battery"
+              PROGRAMMABLE_SUPPLY = "programmable_supply"
+              SPR_ADJUSTABLE_VOLTAGE_SUPPLY = "spr_adjustable_voltage_supply"
+              UNKNOWN = "unknown"
+
+
           @dataclass(frozen=True)
-          class TypeCPortSnapshot:
-              port_id: str
+          class UsbPdAttributeSnapshot:
+              name: str
+              value: ReadResult[Union[int, bool]]
+              unit: Optional[str] = None
+
+
+          @dataclass(frozen=True)
+          class UsbPdCapabilitySnapshot:
+              position: Optional[int]
+              kind: UsbPdCapabilityKind
+              sysfs_name: str
+              attributes: Tuple[UsbPdAttributeSnapshot, ...]
+
+
+          @dataclass(frozen=True)
+          class UsbPdSnapshot:
+              pd_id: str
               sysfs_path: Path
-              power_role: ReadResult[str]
-              power_operation_mode: ReadResult[str]
-              partner_present: ReadResult[bool]
-              partner_usb_pd_capable: ReadResult[bool]
+              revision: ReadResult[str]
+              version: ReadResult[str]
+              source_capabilities: Tuple[UsbPdCapabilitySnapshot, ...]
+              sink_capabilities: Tuple[UsbPdCapabilitySnapshot, ...]
 
 
-          def _read_yes_no(path: Path) -> ReadResult[bool]:
+          @dataclass(frozen=True)
+          class PowerContextSnapshot:
+              power_supply_status: ReadStatus
+              typec_status: ReadStatus
+              usb_pd_status: ReadStatus
+              external_power: ExternalPower
+              battery_flow: BatteryFlow
+              power_supplies: Tuple[PowerSupplySnapshot, ...]
+              batteries: Tuple[PowerSupplySnapshot, ...]
+              typec_ports: Tuple[TypeCPortSnapshot, ...]
+              usb_pd_objects: Tuple[UsbPdSnapshot, ...]
+
+
+          _USB_PD_KIND_BY_NAME = {
+              kind.value: kind
+              for kind in UsbPdCapabilityKind
+              if kind is not UsbPdCapabilityKind.UNKNOWN
+          }
+
+
+          def _read_suffixed_int(path: Path, suffix: str) -> ReadResult[int]:
               result = read_text(path)
               if result.status is not ReadStatus.AVAILABLE:
                   return ReadResult(result.status)
-              if result.value == "yes":
-                  return ReadResult(ReadStatus.AVAILABLE, True)
-              if result.value == "no":
-                  return ReadResult(ReadStatus.AVAILABLE, False)
-              return ReadResult(ReadStatus.INVALID)
-
-
-          def _read_presence(path: Path) -> ReadResult[bool]:
+              value = result.value or ""
+              if not value.endswith(suffix):
+                  return ReadResult(ReadStatus.INVALID)
+              number = value[:-len(suffix)]
               try:
-                  Path(path).stat()
-              except FileNotFoundError:
-                  return ReadResult(ReadStatus.AVAILABLE, False)
-              except OSError:
-                  return ReadResult(ReadStatus.UNREADABLE)
-              return ReadResult(ReadStatus.AVAILABLE, True)
+                  return ReadResult(ReadStatus.AVAILABLE, int(number))
+              except ValueError:
+                  return ReadResult(ReadStatus.INVALID)
 
 
-          def _typec_port_sort_key(path: Path) -> tuple[int, str]:
-              match = re.fullmatch(r"port([0-9]+)", path.name)
+          def _pd_attr(
+              path: Path,
+              name: str,
+              reader,
+              unit: Optional[str] = None,
+          ) -> UsbPdAttributeSnapshot:
+              return UsbPdAttributeSnapshot(name, reader(path / name), unit)
+
+
+          def _fixed_schema(path: Path, position: int, source: bool):
+              attrs = []
+              if position == 1:
+                  common = (
+                      "dual_role_power",
+                      "unconstrained_power",
+                      "usb_communication_capable",
+                      "dual_role_data",
+                      "unchunked_extended_messages_supported",
+                  )
+                  for name in common:
+                      attrs.append(_pd_attr(path, name, read_bool01))
+                  attrs.append(
+                      _pd_attr(
+                          path,
+                          "usb_suspend_supported" if source else "higher_capability",
+                          read_bool01,
+                      )
+                  )
+              attrs.append(_pd_attr(path, "voltage", lambda p: _read_suffixed_int(p, "mV"), "mV"))
+              if source:
+                  attrs.append(_pd_attr(path, "peak_current", read_int))
+                  attrs.append(_pd_attr(path, "maximum_current", lambda p: _read_suffixed_int(p, "mA"), "mA"))
+              else:
+                  attrs.append(_pd_attr(path, "fast_role_swap_current", read_int))
+                  attrs.append(_pd_attr(path, "operational_current", lambda p: _read_suffixed_int(p, "mA"), "mA"))
+              return tuple(attrs)
+
+
+          def _voltage_range_schema(path: Path, current_name: str):
+              return (
+                  _pd_attr(path, "maximum_voltage", lambda p: _read_suffixed_int(p, "mV"), "mV"),
+                  _pd_attr(path, "minimum_voltage", lambda p: _read_suffixed_int(p, "mV"), "mV"),
+                  _pd_attr(path, current_name, lambda p: _read_suffixed_int(p, "mA"), "mA"),
+              )
+
+
+          def _battery_schema(path: Path, power_name: str):
+              return (
+                  _pd_attr(path, "maximum_voltage", lambda p: _read_suffixed_int(p, "mV"), "mV"),
+                  _pd_attr(path, "minimum_voltage", lambda p: _read_suffixed_int(p, "mV"), "mV"),
+                  _pd_attr(path, power_name, lambda p: _read_suffixed_int(p, "mW"), "mW"),
+              )
+
+
+          def _programmable_schema(path: Path, source: bool):
+              attrs = list(_voltage_range_schema(path, "maximum_current"))
+              if source:
+                  attrs.append(_pd_attr(path, "pps_power_limited", read_bool01))
+              return tuple(attrs)
+
+
+          def _spr_adjustable_schema(path: Path, source: bool):
+              attrs = [
+                  _pd_attr(path, "maximum_current_9V_to_15V", lambda p: _read_suffixed_int(p, "mA"), "mA"),
+                  _pd_attr(path, "maximum_current_15V_to_20V", lambda p: _read_suffixed_int(p, "mA"), "mA"),
+              ]
+              if source:
+                  attrs.append(_pd_attr(path, "peak_current", read_int))
+              return tuple(attrs)
+
+
+          def _parse_pd_capability(path: Path, source: bool) -> UsbPdCapabilitySnapshot:
+              match = re.fullmatch(r"([0-9]+):(.+)", path.name)
               if match is None:
-                  return 2**31 - 1, path.name
-              return int(match.group(1)), path.name
+                  return UsbPdCapabilitySnapshot(
+                      position=None,
+                      kind=UsbPdCapabilityKind.UNKNOWN,
+                      sysfs_name=path.name,
+                      attributes=(),
+                  )
+
+              position = int(match.group(1))
+              kind = _USB_PD_KIND_BY_NAME.get(
+                  match.group(2),
+                  UsbPdCapabilityKind.UNKNOWN,
+              )
+              if kind is UsbPdCapabilityKind.UNKNOWN:
+                  attrs = ()
+              elif kind is UsbPdCapabilityKind.FIXED_SUPPLY:
+                  attrs = _fixed_schema(path, position, source)
+              elif kind is UsbPdCapabilityKind.VARIABLE_SUPPLY:
+                  attrs = _voltage_range_schema(
+                      path,
+                      "maximum_current" if source else "operational_current",
+                  )
+              elif kind is UsbPdCapabilityKind.BATTERY:
+                  attrs = _battery_schema(
+                      path,
+                      "maximum_power" if source else "operational_power",
+                  )
+              elif kind is UsbPdCapabilityKind.PROGRAMMABLE_SUPPLY:
+                  attrs = _programmable_schema(path, source)
+              else:
+                  attrs = _spr_adjustable_schema(path, source)
+
+              return UsbPdCapabilitySnapshot(
+                  position=position,
+                  kind=kind,
+                  sysfs_name=path.name,
+                  attributes=attrs,
+              )
 
 
-          def _discover_typec_ports(
+          def _pd_capability_sort_key(path: Path):
+              match = re.fullmatch(r"([0-9]+):(.+)", path.name)
+              if match is None:
+                  return 1, 0, path.name
+              return 0, int(match.group(1)), path.name
+
+
+          def _discover_pd_capabilities(
+              pd_path: Path,
+              group: str,
+              source: bool,
+          ) -> Tuple[UsbPdCapabilitySnapshot, ...]:
+              group_path = pd_path / group
+              try:
+                  entries = sorted(group_path.iterdir(), key=_pd_capability_sort_key)
+              except (FileNotFoundError, OSError):
+                  return ()
+              return tuple(_parse_pd_capability(path, source) for path in entries)
+
+
+          def _discover_usb_pd_objects(
               root: Path,
-          ) -> tuple[ReadStatus, tuple[TypeCPortSnapshot, ...]]:
+          ) -> tuple[ReadStatus, Tuple[UsbPdSnapshot, ...]]:
               root = Path(root)
               try:
-                  entries = [
-                      entry
-                      for entry in root.iterdir()
-                      if re.fullmatch(r"port[0-9]+", entry.name)
-                  ]
+                  entries = sorted(root.iterdir(), key=lambda item: item.name)
               except FileNotFoundError:
                   return ReadStatus.MISSING, ()
               except OSError:
                   return ReadStatus.UNREADABLE, ()
 
               snapshots = []
-              for port in sorted(entries, key=_typec_port_sort_key):
-                  partner = root / f"{port.name}-partner"
-                  partner_present = _read_presence(partner)
-                  if (
-                      partner_present.status is ReadStatus.AVAILABLE
-                      and partner_present.value is True
-                  ):
-                      partner_usb_pd_capable = _read_yes_no(
-                          partner / "supports_usb_power_delivery"
-                      )
-                  elif partner_present.status is ReadStatus.AVAILABLE:
-                      partner_usb_pd_capable = ReadResult(ReadStatus.MISSING)
-                  else:
-                      partner_usb_pd_capable = ReadResult(partner_present.status)
-
+              for path in entries:
                   snapshots.append(
-                      TypeCPortSnapshot(
-                          port_id=port.name,
-                          sysfs_path=port,
-                          power_role=_active_enum(read_text(port / "power_role")),
-                          power_operation_mode=read_text(port / "power_operation_mode"),
-                          partner_present=partner_present,
-                          partner_usb_pd_capable=partner_usb_pd_capable,
+                      UsbPdSnapshot(
+                          pd_id=path.name,
+                          sysfs_path=path,
+                          revision=read_text(path / "revision"),
+                          version=read_text(path / "version"),
+                          source_capabilities=_discover_pd_capabilities(
+                              path,
+                              "source-capabilities",
+                              True,
+                          ),
+                          sink_capabilities=_discover_pd_capabilities(
+                              path,
+                              "sink-capabilities",
+                              False,
+                          ),
                       )
                   )
-
               return ReadStatus.AVAILABLE, tuple(snapshots)
+
+
+          class PowerContextDiscovery:
+              def __init__(
+                  self,
+                  power_supply_root=Path("/sys/class/power_supply"),
+                  typec_root=Path("/sys/class/typec"),
+                  usb_pd_root=Path("/sys/class/usb_power_delivery"),
+                  ignored_supply_substrings=(),
+              ):
+                  self.power_supply_root = Path(power_supply_root)
+                  self.typec_root = Path(typec_root)
+                  self.usb_pd_root = Path(usb_pd_root)
+                  self.ignored_supply_substrings = tuple(ignored_supply_substrings)
+
+              def discover(self) -> PowerContextSnapshot:
+                  power_status, supplies = _discover_power_supplies(
+                      self.power_supply_root,
+                      self.ignored_supply_substrings,
+                  )
+                  typec_status, ports = _discover_typec_ports(self.typec_root)
+                  usb_pd_status, pd_objects = _discover_usb_pd_objects(self.usb_pd_root)
+                  batteries = _system_batteries(supplies)
+                  return PowerContextSnapshot(
+                      power_supply_status=power_status,
+                      typec_status=typec_status,
+                      usb_pd_status=usb_pd_status,
+                      external_power=_aggregate_external_power(supplies),
+                      battery_flow=_aggregate_battery_flow(batteries),
+                      power_supplies=supplies,
+                      batteries=batteries,
+                      typec_ports=ports,
+                      usb_pd_objects=pd_objects,
+                  )
           PY
 
-      - name: Verify GREEN and previous power-supply behavior
+      - name: Verify GREEN and prior discovery behavior
         shell: bash
         run: |
           set -euo pipefail
-          PYTHONPATH="$PWD" python /tmp/auto-cpufreq-power-context-tests/test_typec_context.py
-          cat > /tmp/auto-cpufreq-power-context-tests/task2-regression.py <<'PY'
+          PYTHONPATH="$PWD" python /tmp/auto-cpufreq-power-context-tests/test_usb_pd_context.py
+          cat > /tmp/auto-cpufreq-power-context-tests/regression.py <<'PY'
           from pathlib import Path
           from tempfile import TemporaryDirectory
-          from auto_cpufreq.modules.power_context import ExternalPower, _aggregate_external_power, _discover_power_supplies
+          from auto_cpufreq.modules.power_context import ExternalPower, _aggregate_external_power, _discover_power_supplies, _discover_typec_ports
 
           with TemporaryDirectory() as td:
               root = Path(td)
-              adp = root / "ADP1"
-              adp.mkdir()
+              ps = root / "ps"; ps.mkdir()
+              adp = ps / "ADP1"; adp.mkdir()
               (adp / "type").write_text("Mains\n")
               (adp / "online").write_text("0\n")
-              _, supplies = _discover_power_supplies(root)
+              _, supplies = _discover_power_supplies(ps)
               assert _aggregate_external_power(supplies) is ExternalPower.OFFLINE
+              tc = root / "tc"; tc.mkdir()
+              port = tc / "port2"; port.mkdir()
+              (port / "power_role").write_text("[source] sink\n")
+              (port / "power_operation_mode").write_text("3.0A\n")
+              _, ports = _discover_typec_ports(tc)
+              assert ports[0].power_role.value == "source"
           PY
-          PYTHONPATH="$PWD" python /tmp/auto-cpufreq-power-context-tests/task2-regression.py
+          PYTHONPATH="$PWD" python /tmp/auto-cpufreq-power-context-tests/regression.py
           python -m compileall -q auto_cpufreq/modules/power_context.py
           git diff --check
           git diff -- auto_cpufreq/modules/power_context.py
 
-      - name: Commit Task 3 production change to implementation branch
+      - name: Commit Task 4 production change to implementation branch
         shell: bash
         run: |
           set -euo pipefail
           git config user.name "Lucas"
           git config user.email "122493239+lucasleocs@users.noreply.github.com"
           git add auto_cpufreq/modules/power_context.py
-          git commit -m "feat: discover USB Type-C context"
+          git commit -m "feat: discover USB Power Delivery capabilities"
           git push origin HEAD:usb-c-power-context
