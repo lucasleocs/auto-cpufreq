@@ -1,0 +1,200 @@
+name: Temporary USB-C Power Context Task 1 TDD
+
+on:
+  push:
+    branches:
+      - tmp/usb-c-power-context-tdd
+
+permissions:
+  contents: write
+
+jobs:
+  task1:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout implementation branch
+        uses: actions/checkout@v4
+        with:
+          ref: usb-c-power-context
+          fetch-depth: 0
+
+      - name: Capture pre-refactor Intel reader baseline
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/auto-cpufreq-power-context-tests
+          cat > /tmp/auto-cpufreq-power-context-tests/capture_intel_reader_baseline.py <<'PY'
+          import json
+          from pathlib import Path
+          from tempfile import TemporaryDirectory
+          from auto_cpufreq.modules import intel_power
+
+          with TemporaryDirectory() as td:
+              root = Path(td)
+              (root / "text").write_text("value\n")
+              (root / "integer").write_text("42\n")
+              (root / "invalid").write_text("bad\n")
+              (root / "true").write_text("1\n")
+              (root / "false").write_text("0\n")
+              results = {
+                  "text": (intel_power._read_text(root / "text").status.value, intel_power._read_text(root / "text").value),
+                  "integer": (intel_power._read_int(root / "integer").status.value, intel_power._read_int(root / "integer").value),
+                  "invalid": (intel_power._read_int(root / "invalid").status.value, intel_power._read_int(root / "invalid").value),
+                  "missing": (intel_power._read_text(root / "missing").status.value, intel_power._read_text(root / "missing").value),
+                  "true": (intel_power._read_bool01(root / "true").status.value, intel_power._read_bool01(root / "true").value),
+                  "false": (intel_power._read_bool01(root / "false").status.value, intel_power._read_bool01(root / "false").value),
+                  "invert": (intel_power._read_bool01(root / "true", invert=True).status.value, intel_power._read_bool01(root / "true", invert=True).value),
+              }
+              print(json.dumps(results, sort_keys=True))
+          PY
+          PYTHONPATH="$PWD" python /tmp/auto-cpufreq-power-context-tests/capture_intel_reader_baseline.py > /tmp/intel-reader-before.json
+          cat /tmp/intel-reader-before.json
+
+      - name: RED - shared reader test must fail before implementation
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > /tmp/auto-cpufreq-power-context-tests/test_sysfs_refactor.py <<'PY'
+          import unittest
+          from pathlib import Path
+          from tempfile import TemporaryDirectory
+          from unittest.mock import patch
+
+          from auto_cpufreq.modules.sysfs import ReadResult, ReadStatus, read_bool01, read_int, read_text
+
+
+          class SysfsReaderTests(unittest.TestCase):
+              def test_available_missing_invalid_and_bool(self):
+                  with TemporaryDirectory() as td:
+                      root = Path(td)
+                      (root / "text").write_text("value\n")
+                      (root / "integer").write_text("42\n")
+                      (root / "invalid").write_text("bad\n")
+                      (root / "true").write_text("1\n")
+                      (root / "false").write_text("0\n")
+                      self.assertEqual(read_text(root / "text"), ReadResult(ReadStatus.AVAILABLE, "value"))
+                      self.assertEqual(read_text(root / "missing").status, ReadStatus.MISSING)
+                      self.assertEqual(read_int(root / "integer"), ReadResult(ReadStatus.AVAILABLE, 42))
+                      self.assertEqual(read_int(root / "invalid").status, ReadStatus.INVALID)
+                      self.assertEqual(read_bool01(root / "true").value, True)
+                      self.assertEqual(read_bool01(root / "false").value, False)
+                      self.assertEqual(read_bool01(root / "true", invert=True).value, False)
+
+              def test_oserror_is_unreadable(self):
+                  with patch.object(Path, "read_text", side_effect=PermissionError):
+                      self.assertEqual(read_text(Path("/synthetic/unreadable")).status, ReadStatus.UNREADABLE)
+
+
+          if __name__ == "__main__":
+              unittest.main()
+          PY
+          set +e
+          PYTHONPATH="$PWD" python /tmp/auto-cpufreq-power-context-tests/test_sysfs_refactor.py > /tmp/task1-red.log 2>&1
+          status=$?
+          set -e
+          cat /tmp/task1-red.log
+          if [ "$status" -eq 0 ]; then
+            echo "RED gate failed: test unexpectedly passed before implementation"
+            exit 1
+          fi
+          grep -q "auto_cpufreq.modules.sysfs" /tmp/task1-red.log
+
+      - name: GREEN - add shared readers and mechanically route Intel readers
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > auto_cpufreq/modules/sysfs.py <<'PY'
+          from dataclasses import dataclass
+          from enum import Enum
+          from pathlib import Path
+          from typing import Generic, Optional, TypeVar
+
+
+          T = TypeVar("T")
+
+
+          class ReadStatus(str, Enum):
+              AVAILABLE = "available"
+              MISSING = "missing"
+              UNREADABLE = "unreadable"
+              INVALID = "invalid"
+
+
+          @dataclass(frozen=True)
+          class ReadResult(Generic[T]):
+              status: ReadStatus
+              value: Optional[T] = None
+
+
+          def read_text(path: Path) -> ReadResult[str]:
+              try:
+                  return ReadResult(ReadStatus.AVAILABLE, Path(path).read_text().strip())
+              except FileNotFoundError:
+                  return ReadResult(ReadStatus.MISSING)
+              except OSError:
+                  return ReadResult(ReadStatus.UNREADABLE)
+
+
+          def read_int(path: Path) -> ReadResult[int]:
+              result = read_text(path)
+              if result.status is not ReadStatus.AVAILABLE:
+                  return ReadResult(result.status)
+              try:
+                  return ReadResult(ReadStatus.AVAILABLE, int(result.value))
+              except (TypeError, ValueError):
+                  return ReadResult(ReadStatus.INVALID)
+
+
+          def read_bool01(path: Path, invert: bool = False) -> ReadResult[bool]:
+              result = read_text(path)
+              if result.status is not ReadStatus.AVAILABLE:
+                  return ReadResult(result.status)
+              if result.value not in ("0", "1"):
+                  return ReadResult(ReadStatus.INVALID)
+              value = result.value == "1"
+              return ReadResult(ReadStatus.AVAILABLE, not value if invert else value)
+          PY
+
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("auto_cpufreq/modules/intel_power.py")
+          text = path.read_text()
+
+          old_head_start = '''from dataclasses import dataclass\nfrom enum import Enum\nfrom pathlib import Path\nimport time\nfrom typing import Generic, Optional, TypeVar\n\n\nT = TypeVar("T")\n\n\nclass ReadStatus(str, Enum):\n    AVAILABLE = "available"\n    MISSING = "missing"\n    UNREADABLE = "unreadable"\n    INVALID = "invalid"\n\n\n@dataclass(frozen=True)\nclass ReadResult(Generic[T]):\n    status: ReadStatus\n    value: Optional[T] = None\n\n\n'''
+          new_head_start = '''from dataclasses import dataclass\nfrom pathlib import Path\nimport time\nfrom typing import Optional\n\nfrom auto_cpufreq.modules.sysfs import (\n    ReadResult,\n    ReadStatus,\n    read_bool01 as _read_bool01,\n    read_int as _read_int,\n    read_text as _read_text,\n)\n\n\n'''
+          if old_head_start not in text:
+              raise SystemExit("expected Intel reader/type header not found")
+          text = text.replace(old_head_start, new_head_start, 1)
+
+          start = text.index("def _read_text(path: Path) -> ReadResult[str]:")
+          end = text.index("def _parse_cpu_list(value: str) -> tuple[int, ...]:")
+          text = text[:start] + text[end:]
+
+          start = text.index("def _read_bool01(path: Path, invert: bool = False) -> ReadResult[bool]:")
+          end = text.index("def _numeric_suffix(path: Path, prefix: str) -> tuple[int, str]:")
+          text = text[:start] + text[end:]
+
+          path.write_text(text)
+          PY
+
+      - name: Verify GREEN, baseline equivalence, compile, and focused diff
+        shell: bash
+        run: |
+          set -euo pipefail
+          PYTHONPATH="$PWD" python /tmp/auto-cpufreq-power-context-tests/test_sysfs_refactor.py
+          PYTHONPATH="$PWD" python /tmp/auto-cpufreq-power-context-tests/capture_intel_reader_baseline.py > /tmp/intel-reader-after.json
+          diff -u /tmp/intel-reader-before.json /tmp/intel-reader-after.json
+          python -m compileall -q auto_cpufreq/modules/sysfs.py auto_cpufreq/modules/intel_power.py
+          git diff --check
+          git diff -- auto_cpufreq/modules/sysfs.py auto_cpufreq/modules/intel_power.py
+
+      - name: Commit Task 1 production files to implementation branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "Lucas"
+          git config user.email "122493239+lucasleocs@users.noreply.github.com"
+          git add auto_cpufreq/modules/sysfs.py auto_cpufreq/modules/intel_power.py
+          git commit -m "refactor: share generic sysfs readers"
+          git push origin HEAD:usb-c-power-context
