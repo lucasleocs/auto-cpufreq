@@ -7,6 +7,7 @@ import urwid
 import time
 from .system_info import (
     SystemReport,
+    format_intel_power_summary,
     format_platform_profile_summary,
     system_info,
 )
@@ -102,7 +103,13 @@ class SystemMonitor:
 
     def _collect_report(self):
         try:
-            report = system_info.generate_system_report()
+            if self.type == ViewType.STATS:
+                report = system_info.generate_system_report(
+                    include_intel_power=True,
+                    sample_intel_energy=True,
+                )
+            else:
+                report = system_info.generate_system_report()
 
             if self.suggestion:
                 suggested_governor = system_info.governor_suggestion(report)
@@ -383,6 +390,14 @@ class SystemMonitor:
             )
 
         self.right_content.append(aligned_text(""))
+
+        if self.type == ViewType.STATS and report.intel_power is not None:
+            self.right_content.append(
+                urwid.AttrMap(aligned_text("Intel Power"), "header")
+            )
+            for line in format_intel_power_summary(report.intel_power):
+                self.right_content.append(aligned_text(line))
+            self.right_content.append(aligned_text(""))
 
         # System Statistics
         self.right_content.extend(
