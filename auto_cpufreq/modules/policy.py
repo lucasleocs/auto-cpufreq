@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 from enum import Enum
-from typing import Callable
+from typing import Callable, Optional
 
 from auto_cpufreq.modules.intel_power import (
     IntelPowerSnapshot,
@@ -19,6 +19,12 @@ class PolicyActions:
     apply_battery: Callable[[], None]
     monitor_charger: Callable[[], None]
     monitor_battery: Callable[[], None]
+
+
+@dataclass(frozen=True)
+class ModernIntelActions:
+    apply: Callable[[PowerSource], None]
+    monitor: Callable[[PowerSource], None]
 
 
 class LegacyPolicy:
@@ -44,14 +50,29 @@ class LegacyPolicy:
 
 
 class ModernIntelHwpPolicy(LegacyPolicy):
-    """Stage-2 placeholder for the future Modern Intel HWP behavior.
-
-    This intentionally inherits the legacy routing unchanged. Stage 3 will
-    replace the apply behavior only after the backend boundary is proven not
-    to alter current policy decisions.
-    """
+    """Route eligible HWP systems to Modern Intel actions when available."""
 
     name = "modern-intel-hwp"
+
+    def __init__(
+        self,
+        actions: PolicyActions,
+        modern_actions: Optional[ModernIntelActions] = None,
+    ) -> None:
+        super().__init__(actions)
+        self._modern_actions = modern_actions
+
+    def apply(self, source: PowerSource) -> None:
+        if self._modern_actions is None:
+            super().apply(source)
+            return
+        self._modern_actions.apply(source)
+
+    def monitor(self, source: PowerSource) -> None:
+        if self._modern_actions is None:
+            super().monitor(source)
+            return
+        self._modern_actions.monitor(source)
 
 
 def modern_intel_hwp_eligible(snapshot: IntelPowerSnapshot) -> bool:
@@ -78,6 +99,8 @@ def modern_intel_hwp_eligible(snapshot: IntelPowerSnapshot) -> bool:
 def select_policy_backend(
     snapshot: IntelPowerSnapshot,
     actions: PolicyActions,
+    modern_actions: Optional[ModernIntelActions] = None,
 ) -> LegacyPolicy:
-    backend = ModernIntelHwpPolicy if modern_intel_hwp_eligible(snapshot) else LegacyPolicy
-    return backend(actions)
+    if modern_intel_hwp_eligible(snapshot):
+        return ModernIntelHwpPolicy(actions, modern_actions)
+    return LegacyPolicy(actions)
