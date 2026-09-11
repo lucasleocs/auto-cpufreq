@@ -1,4 +1,4 @@
-name: Temporary USB-C Power Context Task 1 TDD
+name: Temporary USB-C Power Context Task 2 TDD
 
 on:
   push:
@@ -9,7 +9,7 @@ permissions:
   contents: write
 
 jobs:
-  task1:
+  task2:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout implementation branch
@@ -18,183 +18,336 @@ jobs:
           ref: usb-c-power-context
           fetch-depth: 0
 
-      - name: Capture pre-refactor Intel reader baseline
+      - name: RED - power supply context tests must fail before implementation
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p /tmp/auto-cpufreq-power-context-tests
-          cat > /tmp/auto-cpufreq-power-context-tests/capture_intel_reader_baseline.py <<'PY'
-          import json
-          from pathlib import Path
-          from tempfile import TemporaryDirectory
-          from auto_cpufreq.modules import intel_power
-
-          with TemporaryDirectory() as td:
-              root = Path(td)
-              (root / "text").write_text("value\n")
-              (root / "integer").write_text("42\n")
-              (root / "invalid").write_text("bad\n")
-              (root / "true").write_text("1\n")
-              (root / "false").write_text("0\n")
-              results = {
-                  "text": (intel_power._read_text(root / "text").status.value, intel_power._read_text(root / "text").value),
-                  "integer": (intel_power._read_int(root / "integer").status.value, intel_power._read_int(root / "integer").value),
-                  "invalid": (intel_power._read_int(root / "invalid").status.value, intel_power._read_int(root / "invalid").value),
-                  "missing": (intel_power._read_text(root / "missing").status.value, intel_power._read_text(root / "missing").value),
-                  "true": (intel_power._read_bool01(root / "true").status.value, intel_power._read_bool01(root / "true").value),
-                  "false": (intel_power._read_bool01(root / "false").status.value, intel_power._read_bool01(root / "false").value),
-                  "invert": (intel_power._read_bool01(root / "true", invert=True).status.value, intel_power._read_bool01(root / "true", invert=True).value),
-              }
-              print(json.dumps(results, sort_keys=True))
-          PY
-          PYTHONPATH="$PWD" python /tmp/auto-cpufreq-power-context-tests/capture_intel_reader_baseline.py > /tmp/intel-reader-before.json
-          cat /tmp/intel-reader-before.json
-
-      - name: RED - shared reader test must fail before implementation
-        shell: bash
-        run: |
-          set -euo pipefail
-          cat > /tmp/auto-cpufreq-power-context-tests/test_sysfs_refactor.py <<'PY'
+          cat > /tmp/auto-cpufreq-power-context-tests/test_power_supply_context.py <<'PY'
           import unittest
           from pathlib import Path
           from tempfile import TemporaryDirectory
           from unittest.mock import patch
 
-          from auto_cpufreq.modules.sysfs import ReadResult, ReadStatus, read_bool01, read_int, read_text
+          from auto_cpufreq.modules.power_context import (
+              BatteryFlow,
+              ExternalPower,
+              _aggregate_battery_flow,
+              _aggregate_external_power,
+              _discover_power_supplies,
+              _system_batteries,
+          )
+          from auto_cpufreq.modules.sysfs import ReadStatus
 
 
-          class SysfsReaderTests(unittest.TestCase):
-              def test_available_missing_invalid_and_bool(self):
+          def make_supply(root, name, **attrs):
+              path = root / name
+              path.mkdir(parents=True)
+              for key, value in attrs.items():
+                  (path / key).write_text(str(value) + "\n")
+
+
+          class PowerSupplyTests(unittest.TestCase):
+              def test_multiple_sources_batteries_and_online_two(self):
                   with TemporaryDirectory() as td:
                       root = Path(td)
-                      (root / "text").write_text("value\n")
-                      (root / "integer").write_text("42\n")
-                      (root / "invalid").write_text("bad\n")
-                      (root / "true").write_text("1\n")
-                      (root / "false").write_text("0\n")
-                      self.assertEqual(read_text(root / "text"), ReadResult(ReadStatus.AVAILABLE, "value"))
-                      self.assertEqual(read_text(root / "missing").status, ReadStatus.MISSING)
-                      self.assertEqual(read_int(root / "integer"), ReadResult(ReadStatus.AVAILABLE, 42))
-                      self.assertEqual(read_int(root / "invalid").status, ReadStatus.INVALID)
-                      self.assertEqual(read_bool01(root / "true").value, True)
-                      self.assertEqual(read_bool01(root / "false").value, False)
-                      self.assertEqual(read_bool01(root / "true", invert=True).value, False)
+                      make_supply(root, "ADP1", type="Mains", online="0")
+                      make_supply(root, "USBC", type="USB", online="2", usb_type="SDP DCP [PD]")
+                      make_supply(root, "BAT0", type="Battery", scope="System", status="Charging")
+                      make_supply(root, "BAT1", type="Battery", status="Discharging")
+                      make_supply(root, "MOUSE", type="Battery", scope="Device", status="Discharging")
+                      status, supplies = _discover_power_supplies(root)
+                      batteries = _system_batteries(supplies)
+                      self.assertEqual(status, ReadStatus.AVAILABLE)
+                      self.assertEqual([s.supply_id for s in supplies], ["ADP1", "BAT0", "BAT1", "MOUSE", "USBC"])
+                      self.assertEqual(next(s for s in supplies if s.supply_id == "USBC").online.value, True)
+                      self.assertEqual(next(s for s in supplies if s.supply_id == "USBC").usb_type.value, "PD")
+                      self.assertEqual(_aggregate_external_power(supplies), ExternalPower.ONLINE)
+                      self.assertEqual([b.supply_id for b in batteries], ["BAT0", "BAT1"])
+                      self.assertEqual(_aggregate_battery_flow(batteries), BatteryFlow.MIXED)
 
-              def test_oserror_is_unreadable(self):
-                  with patch.object(Path, "read_text", side_effect=PermissionError):
-                      self.assertEqual(read_text(Path("/synthetic/unreadable")).status, ReadStatus.UNREADABLE)
+              def test_known_offline_source_with_missing_scope_is_offline(self):
+                  with TemporaryDirectory() as td:
+                      root = Path(td)
+                      make_supply(root, "ADP1", type="Mains", online="0")
+                      _, supplies = _discover_power_supplies(root)
+                      self.assertEqual(_aggregate_external_power(supplies), ExternalPower.OFFLINE)
+
+              def test_offline_plus_unreadable_online_is_unknown(self):
+                  with TemporaryDirectory() as td:
+                      root = Path(td)
+                      make_supply(root, "ADP1", type="Mains", online="0")
+                      make_supply(root, "USBC", type="USB", online="1")
+                      original = Path.read_text
+
+                      def selective(path, *args, **kwargs):
+                          if str(path).endswith("USBC/online"):
+                              raise PermissionError
+                          return original(path, *args, **kwargs)
+
+                      with patch.object(Path, "read_text", selective):
+                          _, supplies = _discover_power_supplies(root)
+                      self.assertEqual(_aggregate_external_power(supplies), ExternalPower.UNKNOWN)
+
+              def test_missing_empty_invalid_online_capacity_and_ignore(self):
+                  with TemporaryDirectory() as td:
+                      base = Path(td)
+                      missing_status, missing = _discover_power_supplies(base / "missing")
+                      empty = base / "empty"
+                      empty.mkdir()
+                      empty_status, empty_items = _discover_power_supplies(empty)
+                      populated = base / "populated"
+                      populated.mkdir()
+                      make_supply(populated, "ADP1", type="Mains", online="9")
+                      make_supply(populated, "BAT0", type="Battery", status="Full", capacity="101")
+                      make_supply(populated, "hidpp_battery_0", type="Battery", scope="Device", status="Full")
+                      _, supplies = _discover_power_supplies(populated, ("hidpp_battery",))
+                      self.assertEqual(missing_status, ReadStatus.MISSING)
+                      self.assertEqual(missing, ())
+                      self.assertEqual(empty_status, ReadStatus.AVAILABLE)
+                      self.assertEqual(empty_items, ())
+                      self.assertEqual([s.supply_id for s in supplies], ["ADP1", "BAT0"])
+                      self.assertEqual(supplies[0].online.status, ReadStatus.INVALID)
+                      self.assertEqual(supplies[1].capacity.status, ReadStatus.INVALID)
 
 
           if __name__ == "__main__":
               unittest.main()
           PY
+
           set +e
-          PYTHONPATH="$PWD" python /tmp/auto-cpufreq-power-context-tests/test_sysfs_refactor.py > /tmp/task1-red.log 2>&1
+          PYTHONPATH="$PWD" python /tmp/auto-cpufreq-power-context-tests/test_power_supply_context.py > /tmp/task2-red.log 2>&1
           status=$?
           set -e
-          cat /tmp/task1-red.log
+          cat /tmp/task2-red.log
           if [ "$status" -eq 0 ]; then
             echo "RED gate failed: test unexpectedly passed before implementation"
             exit 1
           fi
-          grep -q "auto_cpufreq.modules.sysfs" /tmp/task1-red.log
+          grep -q "auto_cpufreq.modules.power_context" /tmp/task2-red.log
 
-      - name: GREEN - add shared readers and mechanically route Intel readers
+      - name: GREEN - implement factual power supply discovery and aggregation
         shell: bash
         run: |
           set -euo pipefail
-          cat > auto_cpufreq/modules/sysfs.py <<'PY'
+          cat > auto_cpufreq/modules/power_context.py <<'PY'
           from dataclasses import dataclass
           from enum import Enum
           from pathlib import Path
-          from typing import Generic, Optional, TypeVar
+
+          from auto_cpufreq.modules.sysfs import ReadResult, ReadStatus, read_int, read_text
 
 
-          T = TypeVar("T")
+          class ExternalPower(str, Enum):
+              ONLINE = "online"
+              OFFLINE = "offline"
+              UNKNOWN = "unknown"
 
 
-          class ReadStatus(str, Enum):
-              AVAILABLE = "available"
-              MISSING = "missing"
-              UNREADABLE = "unreadable"
-              INVALID = "invalid"
+          class BatteryFlow(str, Enum):
+              CHARGING = "charging"
+              DISCHARGING = "discharging"
+              NOT_CHARGING = "not_charging"
+              FULL = "full"
+              MIXED = "mixed"
+              UNKNOWN = "unknown"
 
 
           @dataclass(frozen=True)
-          class ReadResult(Generic[T]):
-              status: ReadStatus
-              value: Optional[T] = None
+          class PowerSupplySnapshot:
+              supply_id: str
+              sysfs_path: Path
+              type: ReadResult[str]
+              scope: ReadResult[str]
+              online: ReadResult[bool]
+              status: ReadResult[str]
+              usb_type: ReadResult[str]
+              voltage_now: ReadResult[int]
+              current_now: ReadResult[int]
+              power_now: ReadResult[int]
+              input_current_limit: ReadResult[int]
+              input_voltage_limit: ReadResult[int]
+              input_power_limit: ReadResult[int]
+              capacity: ReadResult[int]
+              capacity_level: ReadResult[str]
 
 
-          def read_text(path: Path) -> ReadResult[str]:
+          def _read_online(path: Path) -> ReadResult[bool]:
+              result = read_text(path)
+              if result.status is not ReadStatus.AVAILABLE:
+                  return ReadResult(result.status)
+              if result.value == "0":
+                  return ReadResult(ReadStatus.AVAILABLE, False)
+              if result.value in ("1", "2"):
+                  return ReadResult(ReadStatus.AVAILABLE, True)
+              return ReadResult(ReadStatus.INVALID)
+
+
+          def _active_enum(result: ReadResult[str]) -> ReadResult[str]:
+              if result.status is not ReadStatus.AVAILABLE:
+                  return result
+              value = result.value or ""
+              if "[" not in value and "]" not in value:
+                  return result
+              if value.count("[") != 1 or value.count("]") != 1:
+                  return ReadResult(ReadStatus.INVALID)
+              start = value.index("[") + 1
+              end = value.index("]")
+              if end <= start:
+                  return ReadResult(ReadStatus.INVALID)
+              return ReadResult(ReadStatus.AVAILABLE, value[start:end])
+
+
+          def _read_capacity(path: Path) -> ReadResult[int]:
+              result = read_int(path)
+              if result.status is not ReadStatus.AVAILABLE:
+                  return result
+              if result.value is None or result.value < 0 or result.value > 100:
+                  return ReadResult(ReadStatus.INVALID)
+              return result
+
+
+          def _discover_power_supplies(
+              root: Path,
+              ignored_supply_substrings: tuple[str, ...] = (),
+          ) -> tuple[ReadStatus, tuple[PowerSupplySnapshot, ...]]:
+              root = Path(root)
               try:
-                  return ReadResult(ReadStatus.AVAILABLE, Path(path).read_text().strip())
+                  entries = sorted(root.iterdir(), key=lambda item: item.name)
               except FileNotFoundError:
-                  return ReadResult(ReadStatus.MISSING)
+                  return ReadStatus.MISSING, ()
               except OSError:
-                  return ReadResult(ReadStatus.UNREADABLE)
+                  return ReadStatus.UNREADABLE, ()
+
+              snapshots = []
+              for path in entries:
+                  if any(token in path.name for token in ignored_supply_substrings):
+                      continue
+                  snapshots.append(
+                      PowerSupplySnapshot(
+                          supply_id=path.name,
+                          sysfs_path=path,
+                          type=read_text(path / "type"),
+                          scope=read_text(path / "scope"),
+                          online=_read_online(path / "online"),
+                          status=read_text(path / "status"),
+                          usb_type=_active_enum(read_text(path / "usb_type")),
+                          voltage_now=read_int(path / "voltage_now"),
+                          current_now=read_int(path / "current_now"),
+                          power_now=read_int(path / "power_now"),
+                          input_current_limit=read_int(path / "input_current_limit"),
+                          input_voltage_limit=read_int(path / "input_voltage_limit"),
+                          input_power_limit=read_int(path / "input_power_limit"),
+                          capacity=_read_capacity(path / "capacity"),
+                          capacity_level=read_text(path / "capacity_level"),
+                      )
+                  )
+              return ReadStatus.AVAILABLE, tuple(snapshots)
 
 
-          def read_int(path: Path) -> ReadResult[int]:
-              result = read_text(path)
-              if result.status is not ReadStatus.AVAILABLE:
-                  return ReadResult(result.status)
-              try:
-                  return ReadResult(ReadStatus.AVAILABLE, int(result.value))
-              except (TypeError, ValueError):
-                  return ReadResult(ReadStatus.INVALID)
+          def _is_device_scope(supply: PowerSupplySnapshot) -> bool:
+              return (
+                  supply.scope.status is ReadStatus.AVAILABLE
+                  and (supply.scope.value or "").strip().casefold() == "device"
+              )
 
 
-          def read_bool01(path: Path, invert: bool = False) -> ReadResult[bool]:
-              result = read_text(path)
-              if result.status is not ReadStatus.AVAILABLE:
-                  return ReadResult(result.status)
-              if result.value not in ("0", "1"):
-                  return ReadResult(ReadStatus.INVALID)
-              value = result.value == "1"
-              return ReadResult(ReadStatus.AVAILABLE, not value if invert else value)
+          def _system_batteries(
+              supplies: tuple[PowerSupplySnapshot, ...],
+          ) -> tuple[PowerSupplySnapshot, ...]:
+              batteries = []
+              for supply in supplies:
+                  if supply.type.status is not ReadStatus.AVAILABLE:
+                      continue
+                  if (supply.type.value or "").strip().casefold() != "battery":
+                      continue
+                  if _is_device_scope(supply):
+                      continue
+                  batteries.append(supply)
+              return tuple(batteries)
+
+
+          def _aggregate_external_power(
+              supplies: tuple[PowerSupplySnapshot, ...],
+          ) -> ExternalPower:
+              known_source = False
+              unresolved = False
+
+              for supply in supplies:
+                  if _is_device_scope(supply):
+                      continue
+
+                  if supply.type.status is not ReadStatus.AVAILABLE:
+                      unresolved = True
+                      continue
+
+                  if (supply.type.value or "").strip().casefold() == "battery":
+                      continue
+
+                  known_source = True
+                  if supply.online.status is not ReadStatus.AVAILABLE:
+                      unresolved = True
+                      continue
+                  if supply.online.value is True:
+                      return ExternalPower.ONLINE
+
+              if unresolved:
+                  return ExternalPower.UNKNOWN
+              if known_source:
+                  return ExternalPower.OFFLINE
+              return ExternalPower.UNKNOWN
+
+
+          _BATTERY_FLOW_BY_STATUS = {
+              "charging": BatteryFlow.CHARGING,
+              "discharging": BatteryFlow.DISCHARGING,
+              "not charging": BatteryFlow.NOT_CHARGING,
+              "full": BatteryFlow.FULL,
+          }
+
+
+          def _aggregate_battery_flow(
+              batteries: tuple[PowerSupplySnapshot, ...],
+          ) -> BatteryFlow:
+              if not batteries:
+                  return BatteryFlow.UNKNOWN
+
+              flows = []
+              for battery in batteries:
+                  if battery.status.status is not ReadStatus.AVAILABLE:
+                      return BatteryFlow.UNKNOWN
+                  status = " ".join((battery.status.value or "").split()).casefold()
+                  flow = _BATTERY_FLOW_BY_STATUS.get(status)
+                  if flow is None:
+                      return BatteryFlow.UNKNOWN
+                  flows.append(flow)
+
+              first = flows[0]
+              if all(flow is first for flow in flows[1:]):
+                  return first
+              return BatteryFlow.MIXED
           PY
 
-          python - <<'PY'
-          from pathlib import Path
-
-          path = Path("auto_cpufreq/modules/intel_power.py")
-          text = path.read_text()
-
-          old_head_start = '''from dataclasses import dataclass\nfrom enum import Enum\nfrom pathlib import Path\nimport time\nfrom typing import Generic, Optional, TypeVar\n\n\nT = TypeVar("T")\n\n\nclass ReadStatus(str, Enum):\n    AVAILABLE = "available"\n    MISSING = "missing"\n    UNREADABLE = "unreadable"\n    INVALID = "invalid"\n\n\n@dataclass(frozen=True)\nclass ReadResult(Generic[T]):\n    status: ReadStatus\n    value: Optional[T] = None\n\n\n'''
-          new_head_start = '''from dataclasses import dataclass\nfrom pathlib import Path\nimport time\nfrom typing import Optional\n\nfrom auto_cpufreq.modules.sysfs import (\n    ReadResult,\n    ReadStatus,\n    read_bool01 as _read_bool01,\n    read_int as _read_int,\n    read_text as _read_text,\n)\n\n\n'''
-          if old_head_start not in text:
-              raise SystemExit("expected Intel reader/type header not found")
-          text = text.replace(old_head_start, new_head_start, 1)
-
-          start = text.index("def _read_text(path: Path) -> ReadResult[str]:")
-          end = text.index("def _parse_cpu_list(value: str) -> tuple[int, ...]:")
-          text = text[:start] + text[end:]
-
-          start = text.index("def _read_bool01(path: Path, invert: bool = False) -> ReadResult[bool]:")
-          end = text.index("def _numeric_suffix(path: Path, prefix: str) -> tuple[int, str]:")
-          text = text[:start] + text[end:]
-
-          path.write_text(text)
-          PY
-
-      - name: Verify GREEN, baseline equivalence, compile, and focused diff
+      - name: Verify GREEN and focused production diff
         shell: bash
         run: |
           set -euo pipefail
-          PYTHONPATH="$PWD" python /tmp/auto-cpufreq-power-context-tests/test_sysfs_refactor.py
-          PYTHONPATH="$PWD" python /tmp/auto-cpufreq-power-context-tests/capture_intel_reader_baseline.py > /tmp/intel-reader-after.json
-          diff -u /tmp/intel-reader-before.json /tmp/intel-reader-after.json
-          python -m compileall -q auto_cpufreq/modules/sysfs.py auto_cpufreq/modules/intel_power.py
+          PYTHONPATH="$PWD" python /tmp/auto-cpufreq-power-context-tests/test_power_supply_context.py
+          python -m compileall -q auto_cpufreq/modules/power_context.py
+          PYTHONPATH="$PWD" python - <<'PY'
+          from auto_cpufreq.modules import intel_power
+          from auto_cpufreq.modules.sysfs import ReadStatus
+          assert intel_power.ReadStatus is ReadStatus
+          PY
           git diff --check
-          git diff -- auto_cpufreq/modules/sysfs.py auto_cpufreq/modules/intel_power.py
+          git diff -- auto_cpufreq/modules/power_context.py
 
-      - name: Commit Task 1 production files to implementation branch
+      - name: Commit Task 2 production file to implementation branch
         shell: bash
         run: |
           set -euo pipefail
           git config user.name "Lucas"
           git config user.email "122493239+lucasleocs@users.noreply.github.com"
-          git add auto_cpufreq/modules/sysfs.py auto_cpufreq/modules/intel_power.py
-          git commit -m "refactor: share generic sysfs readers"
+          git add auto_cpufreq/modules/power_context.py
+          git commit -m "feat: discover system power context"
           git push origin HEAD:usb-c-power-context
