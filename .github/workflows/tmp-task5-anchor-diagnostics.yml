@@ -1,0 +1,88 @@
+name: Temporary Task 5 Patch Anchor Diagnostics
+
+on:
+  push:
+    branches:
+      - tmp/usb-c-power-context-tdd
+
+jobs:
+  anchors:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: usb-c-power-context
+
+      - name: Anchor 1 - system_info import
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          text = Path('auto_cpufreq/modules/system_info.py').read_text()
+          assert '''from auto_cpufreq.modules.intel_power import (\n    IntelPowerSnapshot,\n    ReadStatus,\n    intel_power,\n)\n''' in text
+          PY
+
+      - name: Anchor 2 - SystemReport tail
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          text = Path('auto_cpufreq/modules/system_info.py').read_text()
+          assert '''    platform_profile: PlatformProfileSnapshot = PlatformProfileSnapshot()\n    intel_power: IntelPowerSnapshot | None = None\n''' in text
+          PY
+
+      - name: Anchor 3 - report signature
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          text = Path('auto_cpufreq/modules/system_info.py').read_text()
+          assert '''    def generate_system_report(\n        self,\n        include_intel_power: bool = False,\n        sample_intel_energy: bool = False,\n    ) -> SystemReport:\n''' in text
+          PY
+
+      - name: Anchor 4 - snapshot collection
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          text = Path('auto_cpufreq/modules/system_info.py').read_text()
+          assert '''        intel_snapshot = (\n            intel_power.snapshot(sample_energy=sample_intel_energy)\n            if include_intel_power\n            else None\n        )\n\n        return SystemReport(\n''' in text
+          PY
+
+      - name: Anchor 5 - report construction tail
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          text = Path('auto_cpufreq/modules/system_info.py').read_text()
+          assert '''            platform_profile=platform_profile.snapshot(),\n            intel_power=intel_snapshot,\n        )\n\n\nsystem_info = SystemInfo()\n''' in text
+          PY
+
+      - name: Anchor 6 - formatter marker
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          text = Path('auto_cpufreq/modules/system_info.py').read_text()
+          assert '''def format_system_report(\n    report: SystemReport,\n    include_distro: bool = True,\n    include_config: bool = True,\n) -> str:\n''' in text
+          PY
+
+      - name: Anchor 7 - formatter tail
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          text = Path('auto_cpufreq/modules/system_info.py').read_text()
+          assert '''    if report.intel_power is not None:\n        lines.extend(\n            [\n                "",\n                "-" * 25 + " Intel Power Diagnostics " + "-" * 25,\n                "",\n            ]\n        )\n        lines.extend(format_intel_power_summary(report.intel_power))\n\n    return "\\n".join(lines)\n''' in text
+          PY
+
+      - name: Anchor 8 - monitor imports and STATS
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          text = Path('auto_cpufreq/modules/system_monitor.py').read_text()
+          assert '''    format_intel_power_summary,\n    format_platform_profile_summary,\n    system_info,\n)\n''' in text
+          assert '''                report = system_info.generate_system_report(\n                    include_intel_power=True,\n                    sample_intel_energy=True,\n                )\n''' in text
+          assert '''        # System Statistics\n        self.right_content.extend(\n''' in text
+          PY
+
+      - name: Anchor 9 - CLI debug
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          text = Path('auto_cpufreq/bin/auto_cpufreq.py').read_text()
+          assert '''            report = system_info.generate_system_report(\n                include_intel_power=True,\n                sample_intel_energy=False,\n            )\n''' in text
+          PY
