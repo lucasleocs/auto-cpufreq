@@ -75,6 +75,54 @@ class PowerSupplyUeventSource:
         self._sock.close()
 
 
+class WakeupSource:
+    """Coalesce cross-thread wakeups into a selector-compatible file descriptor."""
+
+    def __init__(self, reader: socket.socket, writer: socket.socket) -> None:
+        self._reader = reader
+        self._writer = writer
+
+    @classmethod
+    def open(cls) -> "WakeupSource":
+        reader, writer = socket.socketpair(socket.AF_UNIX, socket.SOCK_DGRAM)
+        try:
+            reader.setblocking(False)
+            writer.setblocking(False)
+        except Exception:
+            reader.close()
+            writer.close()
+            raise
+        return cls(reader, writer)
+
+    def fileno(self) -> int:
+        return self._reader.fileno()
+
+    def notify(self) -> bool:
+        try:
+            self._writer.send(b"1")
+        except BlockingIOError:
+            # A pending datagram already guarantees that the selector will wake.
+            return True
+        except OSError:
+            return False
+        return True
+
+    def drain_relevant_events(self) -> bool:
+        triggered = False
+        while True:
+            try:
+                payload = self._reader.recv(4096)
+            except BlockingIOError:
+                break
+            if payload:
+                triggered = True
+        return triggered
+
+    def close(self) -> None:
+        self._reader.close()
+        self._writer.close()
+
+
 def _systemd_notify(message: str, environment: Mapping[str, str]) -> bool:
     notify_socket = environment.get("NOTIFY_SOCKET")
     if not notify_socket:
@@ -180,23 +228,32 @@ class DaemonScheduler:
         backend,
         *,
         event_source=None,
+        config_source=None,
         selector=None,
         watchdog: Optional[SystemdWatchdog] = None,
         monotonic: Callable[[], float] = time.monotonic,
         periodic_interval: float = 2.0,
+        force_periodic_fallback: bool = False,
+        event_source_error: Optional[str] = None,
+        config_source_error: Optional[str] = None,
     ) -> None:
         self._backend = backend
         self._event_source = event_source
+        self._config_source = config_source
         self._selector = selector or selectors.DefaultSelector()
         self._watchdog = watchdog or SystemdWatchdog.from_environment(
             monotonic=monotonic
         )
         self._monotonic = monotonic
         self._periodic_interval = periodic_interval
+        self.event_source_error = event_source_error
+        self.config_source_error = config_source_error
 
         self.using_event_source = event_source is not None
+        self.using_config_source = config_source is not None
         self.using_periodic_fallback = (
-            not backend.requires_periodic_tick and event_source is None
+            not backend.requires_periodic_tick
+            and (event_source is None or force_periodic_fallback)
         )
         self._periodic = (
             backend.requires_periodic_tick or self.using_periodic_fallback
@@ -205,12 +262,13 @@ class DaemonScheduler:
             monotonic() + periodic_interval if self._periodic else None
         )
 
-        if event_source is not None:
-            self._selector.register(
-                event_source,
-                selectors.EVENT_READ,
-                data=event_source,
-            )
+        for source in (event_source, config_source):
+            if source is not None:
+                self._selector.register(
+                    source,
+                    selectors.EVENT_READ,
+                    data=source,
+                )
 
     def _timeout(self, now: float) -> Optional[float]:
         deadlines = []
@@ -231,6 +289,11 @@ class DaemonScheduler:
             return
         while self._next_periodic <= now:
             self._next_periodic += self._periodic_interval
+
+    def notify_config_change(self) -> bool:
+        if self._config_source is None:
+            return False
+        return self._config_source.notify()
 
     def wait_for_policy_trigger(self) -> bool:
         while True:
@@ -259,3 +322,46 @@ class DaemonScheduler:
         finally:
             if self._event_source is not None:
                 self._event_source.close()
+            if self._config_source is not None:
+                self._config_source.close()
+
+
+def create_daemon_scheduler(
+    backend,
+    *,
+    event_source_factory=PowerSupplyUeventSource.open,
+    config_source_factory=WakeupSource.open,
+    watchdog: Optional[SystemdWatchdog] = None,
+    periodic_interval: float = 2.0,
+) -> DaemonScheduler:
+    """Create the scheduler while preserving safe periodic fallbacks."""
+
+    event_source = None
+    event_source_error = None
+    if not backend.requires_periodic_tick:
+        try:
+            event_source = event_source_factory()
+        except OSError as exc:
+            event_source_error = str(exc)
+
+    config_source = None
+    config_source_error = None
+    try:
+        config_source = config_source_factory()
+    except OSError as exc:
+        config_source_error = str(exc)
+
+    force_periodic_fallback = (
+        not backend.requires_periodic_tick and config_source is None
+    )
+
+    return DaemonScheduler(
+        backend,
+        event_source=event_source,
+        config_source=config_source,
+        watchdog=watchdog,
+        periodic_interval=periodic_interval,
+        force_periodic_fallback=force_periodic_fallback,
+        event_source_error=event_source_error,
+        config_source_error=config_source_error,
+    )
