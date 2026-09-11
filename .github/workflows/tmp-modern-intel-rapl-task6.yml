@@ -13,7 +13,11 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      - name: Compile focused restore helper
+        run: python -m compileall -q auto_cpufreq/bin/auto_cpufreq_restore_rapl.py
       - name: Install project dependencies
         run: python -m pip install .
+      - name: Verify installed restore entry point
+        run: command -v auto-cpufreq-restore-rapl
       - name: Run Intel RAPL restore helper contract
         run: PYTHONPATH=. python tmp/test_intel_rapl_restore_helper.py
