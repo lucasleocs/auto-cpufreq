@@ -1,0 +1,28 @@
+name: Temporary Intel Power Task 4 Rebase
+
+on:
+  push:
+    branches:
+      - tmp/intel-power-rebase-task4
+
+permissions:
+  contents: write
+
+jobs:
+  cherry-pick:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Apply Task 4 diff on upstream base
+        run: |
+          if [ "$(git log -1 --format=%s)" != "test: bootstrap Task 4 rebase" ]; then
+            echo "Task 4 diff already applied"
+            exit 0
+          fi
+          git config user.name "Lucas"
+          git config user.email "122493239+lucasleocs@users.noreply.github.com"
+          git fetch origin 397435d3228318f65a66f10ef7741f33a8984ee6
+          git cherry-pick 397435d3228318f65a66f10ef7741f33a8984ee6
+          git push origin HEAD:tmp/intel-power-rebase-task4
