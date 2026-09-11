@@ -5,8 +5,12 @@ on:
     branches:
       - tmp/intel-power-stage1-task5
 
+permissions:
+  contents: write
+
 jobs:
   verify:
+    if: "${{ !contains(github.event.head_commit.message, 'temp-task5-production') }}"
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -15,5 +19,16 @@ jobs:
           python-version: '3.12'
       - name: Install project dependencies
         run: python -m pip install .
+      - name: Apply production patch
+        run: PYTHONPATH=. python tmp/apply_intel_power_task5.py
+      - name: Compile changed production file
+        run: python -m compileall -q auto_cpufreq/modules/system_monitor.py
       - name: Run stats-only Intel telemetry check
         run: PYTHONPATH=. python tmp/test_intel_power_task5.py
+      - name: Commit tested production file
+        run: |
+          git config user.name "Lucas"
+          git config user.email "122493239+lucasleocs@users.noreply.github.com"
+          git add auto_cpufreq/modules/system_monitor.py
+          git commit -m "temp-task5-production"
+          git push origin HEAD:tmp/intel-power-stage1-task5
