@@ -1,0 +1,37 @@
+name: Temporary Intel Power Final Verification 2
+
+on:
+  push:
+    branches:
+      - tmp/intel-power-final-verification-2
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install project dependencies
+        run: python -m pip install .
+      - name: Compile Stage 1 production files
+        run: >-
+          python -m compileall -q
+          auto_cpufreq/modules/intel_power.py
+          auto_cpufreq/modules/system_info.py
+          auto_cpufreq/modules/system_monitor.py
+          auto_cpufreq/bin/auto_cpufreq.py
+      - name: Run all temporary Stage 1 checks
+        run: |
+          for test_file in \
+            tmp/test_intel_power_task1.py \
+            tmp/test_intel_power_task2.py \
+            tmp/test_intel_power_task3.py \
+            tmp/test_intel_power_task4.py \
+            tmp/test_intel_power_task5.py \
+            tmp/test_intel_power_unnamed_constraint.py
+          do
+            echo "Running ${test_file}"
+            PYTHONPATH=. python "${test_file}"
+          done
