@@ -72,6 +72,38 @@ def test_modern_netlink_failure_falls_back():
         scheduler.close()
 
 
+def test_modern_config_wakeup_failure_falls_back():
+    modern = ModernIntelHwpPolicy(policy_actions())
+
+    class FakeEventSource:
+        def fileno(self):
+            return 42
+
+        def drain_relevant_events(self):
+            return False
+
+        def close(self):
+            pass
+
+    def fail_config_open():
+        raise OSError("config wakeup unavailable")
+
+    scheduler = create_daemon_scheduler(
+        modern,
+        event_source_factory=FakeEventSource,
+        config_source_factory=fail_config_open,
+        watchdog=SystemdWatchdog.from_environment({}),
+    )
+    try:
+        assert scheduler.using_event_source is True
+        assert scheduler.using_config_source is False
+        assert scheduler.using_periodic_fallback is True
+        assert scheduler.config_source_error is not None
+        assert "config wakeup unavailable" in scheduler.config_source_error
+    finally:
+        scheduler.close()
+
+
 def test_daemon_cli_uses_scheduler():
     import auto_cpufreq.bin.auto_cpufreq as cli
 
@@ -90,6 +122,7 @@ def test_daemon_cli_uses_scheduler():
     class FakeScheduler:
         using_periodic_fallback = False
         event_source_error = None
+        config_source_error = None
 
         def notify_config_change(self):
             events.append("config-wakeup")
@@ -158,6 +191,7 @@ def main():
     test_config_callback()
     test_config_wakeup_source()
     test_modern_netlink_failure_falls_back()
+    test_modern_config_wakeup_failure_falls_back()
     test_daemon_cli_uses_scheduler()
     print("daemon event integration checks passed")
 
