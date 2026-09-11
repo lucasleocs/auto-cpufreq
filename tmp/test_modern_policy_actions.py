@@ -72,7 +72,8 @@ def main():
         modern_actions=modern_actions,
     )
     assert isinstance(modern, ModernIntelHwpPolicy)
-    assert modern.requires_periodic_tick is True
+    # Stage 4 intentionally made the Modern backend event-driven.
+    assert modern.requires_periodic_tick is False
     modern.apply(PowerSource.CHARGER)
     modern.apply(PowerSource.BATTERY)
     modern.monitor(PowerSource.CHARGER)
@@ -92,6 +93,7 @@ def main():
     )
     assert isinstance(legacy, LegacyPolicy)
     assert not isinstance(legacy, ModernIntelHwpPolicy)
+    assert legacy.requires_periodic_tick is True
     legacy.apply(PowerSource.CHARGER)
     legacy.monitor(PowerSource.BATTERY)
     assert legacy_calls == ["apply-charger", "monitor-battery"]
@@ -99,6 +101,7 @@ def main():
     # Keeping modern_actions optional preserves the Stage-2 safe fallback.
     fallback = select_policy_backend(modern_snapshot(), legacy_actions)
     assert isinstance(fallback, ModernIntelHwpPolicy)
+    assert fallback.requires_periodic_tick is False
     fallback.apply(PowerSource.CHARGER)
     fallback.monitor(PowerSource.BATTERY)
     assert legacy_calls[-2:] == ["apply-charger", "monitor-battery"]
