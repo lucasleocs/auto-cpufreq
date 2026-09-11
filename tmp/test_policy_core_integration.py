@@ -64,6 +64,8 @@ def main():
     original_mon_powersave = core.mon_powersave
     original_charging = core.charging
     original_backend = core._policy_backend
+    original_get_policy_backend = core.get_policy_backend
+    original_governors = core.AVAILABLE_GOVERNORS_SORTED
 
     try:
         legacy_calls = []
@@ -72,6 +74,7 @@ def main():
         core.set_powersave = lambda: legacy_calls.append("set-powersave")
         core.mon_performance = lambda: legacy_calls.append("mon-performance")
         core.mon_powersave = lambda: legacy_calls.append("mon-powersave")
+        core.AVAILABLE_GOVERNORS_SORTED = ("performance", "powersave")
         core._policy_backend = None
         FakeDiscovery.calls = 0
 
@@ -112,6 +115,7 @@ def main():
         with redirect_stdout(StringIO()) as output:
             core.mon_autofreq()
         assert "Battery is: charging" in output.getvalue()
+        assert 'Suggesting use of "performance" governor' in output.getvalue()
         assert fake.calls == [("monitor", PowerSource.CHARGER)]
 
         fake.calls.clear()
@@ -119,6 +123,7 @@ def main():
         with redirect_stdout(StringIO()) as output:
             core.mon_autofreq()
         assert "Battery is: discharging" in output.getvalue()
+        assert 'Suggesting use of "powersave" governor' in output.getvalue()
         assert fake.calls == [("monitor", PowerSource.BATTERY)]
     finally:
         core.IntelPowerDiscovery = original_discovery
@@ -128,6 +133,8 @@ def main():
         core.mon_powersave = original_mon_powersave
         core.charging = original_charging
         core._policy_backend = original_backend
+        core.get_policy_backend = original_get_policy_backend
+        core.AVAILABLE_GOVERNORS_SORTED = original_governors
 
     print("policy dispatcher integration checks passed")
 
