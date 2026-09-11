@@ -43,6 +43,7 @@ class _Config:
     def __init__(self) -> None:
         self.path: str = ""
         self._config: ConfigParser = ConfigParser()
+        self._change_callback = None
         self.watch_manager: pyinotify.WatchManager = pyinotify.WatchManager()
         self.config_handler = ConfigEventHandler(self)
 
@@ -55,6 +56,9 @@ class _Config:
         self.watch_manager.add_watch(os.path.dirname(path), mask=mask)
         if os.path.isfile(path): self.update_config()
 
+    def set_change_callback(self, callback) -> None:
+        self._change_callback = callback
+
     def has_config(self) -> bool: return os.path.isfile(self.path)
     
     def get_config(self) -> ConfigParser: return self._config
@@ -64,5 +68,8 @@ class _Config:
         self._config = ConfigParser()
         try: self._config.read(self.path)
         except ParsingError as e: print(f"The following error occured while parsing the config file: \n{repr(e)}")
+
+        if self._change_callback is not None:
+            self._change_callback()
 
 config = _Config()
