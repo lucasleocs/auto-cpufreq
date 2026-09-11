@@ -20,6 +20,8 @@ jobs:
         run: python -m pip install .
       - name: Apply Modern Intel HWP core patch
         run: PYTHONPATH=. python tmp/apply_modern_hwp_core_patch.py
+      - name: Apply Modern Intel dispatcher patch
+        run: PYTHONPATH=. python tmp/apply_modern_hwp_dispatch_patch.py
       - name: Compile production files
         run: python -m compileall -q auto_cpufreq/core.py auto_cpufreq/modules/policy.py
       - name: Run Modern Intel action routing checks
@@ -28,3 +30,14 @@ jobs:
         run: PYTHONPATH=. python tmp/test_modern_hwp_core.py
       - name: Run Modern Intel dispatcher behavior checks
         run: PYTHONPATH=. python tmp/test_modern_hwp_dispatch.py
+      - name: Commit tested production patch
+        run: |
+          if git diff --quiet -- auto_cpufreq/core.py; then
+            echo "Production patch already committed"
+            exit 0
+          fi
+          git config user.name "Lucas"
+          git config user.email "122493239+lucasleocs@users.noreply.github.com"
+          git add auto_cpufreq/core.py
+          git commit -m "temp-modern-hwp-dispatch-production"
+          git push origin HEAD:tmp/modern-intel-hwp-stage3
