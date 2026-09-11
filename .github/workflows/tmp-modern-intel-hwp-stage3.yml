@@ -17,3 +17,5 @@ jobs:
         run: python -m pip install .
       - name: Run Modern Intel action routing checks
         run: PYTHONPATH=. python tmp/test_modern_policy_actions.py
+      - name: Run Modern Intel HWP core behavior checks
+        run: PYTHONPATH=. python tmp/test_modern_hwp_core.py
