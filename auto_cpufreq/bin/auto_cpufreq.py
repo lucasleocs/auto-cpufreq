@@ -111,7 +111,9 @@ def _daemon_policy_cycle(source=None):
     gov_check()
     cpufreqctl()
     print_system_report()
-    return set_autofreq(source)
+    source = set_autofreq(source)
+    get_policy_backend().apply_power_envelope(source)
+    return source
 
 
 def _run_daemon_policy_loop(scheduler):

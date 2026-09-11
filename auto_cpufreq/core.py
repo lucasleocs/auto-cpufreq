@@ -18,6 +18,12 @@ from auto_cpufreq.globals import (
     ALL_GOVERNORS, AVAILABLE_GOVERNORS, AVAILABLE_GOVERNORS_SORTED, GITHUB, IS_INSTALLED_WITH_AUR, IS_INSTALLED_WITH_SNAP, POWER_SUPPLY_DIR, SNAP_DAEMON_CHECK
 )
 from auto_cpufreq.modules.intel_power import IntelPowerDiscovery
+from auto_cpufreq.modules.intel_rapl import (
+    IntelRaplController,
+    RaplConfigError,
+    RaplStateError,
+    parse_rapl_policy_config,
+)
 from auto_cpufreq.modules.platform_profile import platform_profile
 from auto_cpufreq.modules.policy import (
     ModernIntelActions,
@@ -1853,6 +1859,43 @@ def mon_performance():
             get_turbo()
     footer()
 
+def apply_modern_intel_rapl(source):
+    """Apply optional package RAPL envelopes only in a failsafe daemon."""
+    conf = config.get_config()
+    try:
+        policy = parse_rapl_policy_config(conf, source.value)
+    except RaplConfigError as exc:
+        print(f"Warning: Intel RAPL configuration ignored: {exc}")
+        return
+
+    failsafe_available = os.environ.get("AUTO_CPUFREQ_RAPL_FAILSAFE") == "1"
+
+    if not policy.enabled:
+        if not failsafe_available:
+            return
+        try:
+            results = IntelRaplController().restore_owned()
+        except RaplStateError as exc:
+            print(f"Warning: Intel RAPL ownership state unavailable: {exc}")
+            return
+    else:
+        if not failsafe_available:
+            print(
+                "Warning: Intel RAPL envelopes are enabled, but the daemon "
+                "failsafe is unavailable; RAPL writes were skipped."
+            )
+            return
+        try:
+            results = IntelRaplController().apply(policy.targets)
+        except RaplStateError as exc:
+            print(f"Warning: Intel RAPL ownership state unavailable: {exc}")
+            return
+
+    for result in results:
+        if result.message:
+            print(result.message)
+
+
 def get_policy_backend():
     global _policy_backend
     if _policy_backend is None:
@@ -1867,6 +1910,7 @@ def get_policy_backend():
             modern_actions=ModernIntelActions(
                 apply=set_modern_intel_hwp,
                 monitor=mon_modern_intel_hwp,
+                apply_power_envelope=apply_modern_intel_rapl,
             ),
         )
     return _policy_backend
