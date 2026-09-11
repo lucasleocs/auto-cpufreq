@@ -148,22 +148,75 @@ effective=28.000 W
 
 Final snapshot matched the initial snapshot exactly, and the ownership state file was removed after successful restoration.
 
+## Controlled hardware write gate 3: MMIO PL2
+
+Authorized test scope:
+- Control type: `intel-rapl-mmio`
+- Zone: `package-0`
+- Constraint: `short_term`
+- Initial value: 41.000 W
+- Requested value: 40.500 W
+- `long_term`: omitted
+- `intel-rapl`: hidden from the test controller and never targeted
+
+Apply result:
+
+```text
+action=acquired
+before=41.000 W
+requested=40.500 W
+effective=40.500 W
+```
+
+Persisted ownership state contained exactly one record:
+
+```text
+control_type=intel-rapl-mmio
+zone=package-0
+constraint=short_term
+original_power_limit_uw=41000000
+last_written_power_limit_uw=40500000
+```
+
+Snapshot while owned:
+
+```text
+intel-rapl       package-0 long_term   28.000 W
+intel-rapl       package-0 short_term  41.000 W
+intel-rapl-mmio  package-0 long_term   15.000 W
+intel-rapl-mmio  package-0 short_term  40.500 W
+```
+
+Result: changing MMIO PL2 did not alter either PL1 constraint or `intel-rapl` PL2.
+
+Restore result:
+
+```text
+action=restored
+before=40.500 W
+requested=41.000 W
+effective=41.000 W
+```
+
+Final snapshot matched the initial snapshot exactly, and the ownership state file was removed after successful restoration.
+
 ## Gate conclusions so far
 
-Hardware gates 1 and 2 passed:
+Hardware gates 1 through 3 passed:
 - real Powercap discovery: PASS
 - conservative lowering: PASS
 - exact readback verification: PASS
 - ownership persistence: PASS
 - MMIO PL1 write leaves `intel-rapl` unchanged: PASS
 - `intel-rapl` PL1 write leaves MMIO unchanged: PASS
+- MMIO PL2 write leaves all other observed constraints unchanged: PASS
 - accepted-current-above-reported-max handling: PASS
 - restoration to external baseline: PASS
 - ownership retirement after restore: PASS
 - final state equals initial state after each gate: PASS
 
-No unexpected firmware quantization or cross-interface change was observed in either PL1 write test.
+No unexpected firmware quantization or cross-interface change has been observed in the three isolated hardware writes.
 
 ## Next hardware gate
 
-Test `short_term` independently, beginning with `intel-rapl-mmio` `package-0` `short_term` using a minimal reduction from 41.000 W to 40.500 W. Both long-term constraints and `intel-rapl` short-term must remain untargeted and be checked for unintended changes. Restoration must return MMIO PL2 to 41.000 W and retire ownership before testing the `intel-rapl` PL2 path separately.
+Test `intel-rapl` `package-0` `short_term` independently using a minimal reduction from 41.000 W to 40.500 W. Both long-term constraints and MMIO short-term must remain untargeted and be checked for unintended changes. Restoration must return `intel-rapl` PL2 to 41.000 W and retire ownership. After that isolated constraint gate, move to ownership-drift behavior and then the real systemd daemon/failsafe lifecycle.
