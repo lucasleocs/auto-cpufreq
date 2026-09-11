@@ -1,3 +1,6 @@
+import json
+import os
+import tempfile
 from configparser import ConfigParser
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
@@ -14,10 +17,16 @@ LONG_TERM_OPTION = "rapl_package_long_term_w"
 SHORT_TERM_OPTION = "rapl_package_short_term_w"
 SUPPORTED_CONTROL_TYPES = frozenset({"intel-rapl", "intel-rapl-mmio"})
 SUPPORTED_PACKAGE_CONSTRAINTS = frozenset({"long_term", "short_term"})
+RAPL_STATE_VERSION = 1
+DEFAULT_RAPL_STATE_PATH = Path("/run/auto-cpufreq/power-state.json")
 
 
 class RaplConfigError(ValueError):
     """Raised when opt-in Intel RAPL configuration is invalid."""
+
+
+class RaplStateError(RuntimeError):
+    """Raised when RAPL ownership state cannot be trusted or persisted."""
 
 
 @dataclass(frozen=True)
@@ -42,6 +51,22 @@ class RaplConstraintRef:
     power_limit_path: Path
     min_power_path: Path
     max_power_path: Path
+
+
+@dataclass(frozen=True)
+class RaplConstraintIdentity:
+    control_type: str
+    zone_id: str
+    zone_name: str
+    constraint_index: int
+    constraint_name: str
+
+
+@dataclass(frozen=True)
+class RaplOwnershipRecord:
+    identity: RaplConstraintIdentity
+    original_power_limit_uw: int
+    last_written_power_limit_uw: int
 
 
 def _watts_to_microwatts(raw: str, option: str) -> int:
@@ -116,6 +141,218 @@ def _read_text(path: Path) -> Optional[str]:
         return path.read_text(encoding="utf-8").strip()
     except (OSError, UnicodeError):
         return None
+
+
+def _require_nonempty_string(value, field: str) -> str:
+    if not isinstance(value, str) or not value:
+        raise RaplStateError(f"Invalid RAPL state field '{field}'")
+    return value
+
+
+def _require_int(value, field: str, *, minimum: int) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value < minimum:
+        raise RaplStateError(f"Invalid RAPL state field '{field}'")
+    return value
+
+
+def _identity_from_json(raw) -> RaplConstraintIdentity:
+    if not isinstance(raw, dict):
+        raise RaplStateError("Invalid RAPL constraint identity")
+
+    expected = {
+        "control_type",
+        "zone_id",
+        "zone_name",
+        "constraint_index",
+        "constraint_name",
+    }
+    if set(raw) != expected:
+        raise RaplStateError("Unexpected fields in RAPL constraint identity")
+
+    return RaplConstraintIdentity(
+        control_type=_require_nonempty_string(raw["control_type"], "control_type"),
+        zone_id=_require_nonempty_string(raw["zone_id"], "zone_id"),
+        zone_name=_require_nonempty_string(raw["zone_name"], "zone_name"),
+        constraint_index=_require_int(
+            raw["constraint_index"],
+            "constraint_index",
+            minimum=0,
+        ),
+        constraint_name=_require_nonempty_string(
+            raw["constraint_name"],
+            "constraint_name",
+        ),
+    )
+
+
+def _record_from_json(raw) -> RaplOwnershipRecord:
+    if not isinstance(raw, dict):
+        raise RaplStateError("Invalid RAPL ownership record")
+
+    expected = {
+        "identity",
+        "original_power_limit_uw",
+        "last_written_power_limit_uw",
+    }
+    if set(raw) != expected:
+        raise RaplStateError("Unexpected fields in RAPL ownership record")
+
+    return RaplOwnershipRecord(
+        identity=_identity_from_json(raw["identity"]),
+        original_power_limit_uw=_require_int(
+            raw["original_power_limit_uw"],
+            "original_power_limit_uw",
+            minimum=1,
+        ),
+        last_written_power_limit_uw=_require_int(
+            raw["last_written_power_limit_uw"],
+            "last_written_power_limit_uw",
+            minimum=1,
+        ),
+    )
+
+
+def _record_to_json(record: RaplOwnershipRecord) -> dict:
+    if not isinstance(record, RaplOwnershipRecord):
+        raise RaplStateError("Invalid RAPL ownership record")
+
+    # Reuse the load validators so programmatically-created state receives the
+    # same strict validation as state read back from disk.
+    return {
+        "identity": {
+            "control_type": _require_nonempty_string(
+                record.identity.control_type,
+                "control_type",
+            ),
+            "zone_id": _require_nonempty_string(record.identity.zone_id, "zone_id"),
+            "zone_name": _require_nonempty_string(
+                record.identity.zone_name,
+                "zone_name",
+            ),
+            "constraint_index": _require_int(
+                record.identity.constraint_index,
+                "constraint_index",
+                minimum=0,
+            ),
+            "constraint_name": _require_nonempty_string(
+                record.identity.constraint_name,
+                "constraint_name",
+            ),
+        },
+        "original_power_limit_uw": _require_int(
+            record.original_power_limit_uw,
+            "original_power_limit_uw",
+            minimum=1,
+        ),
+        "last_written_power_limit_uw": _require_int(
+            record.last_written_power_limit_uw,
+            "last_written_power_limit_uw",
+            minimum=1,
+        ),
+    }
+
+
+class RaplStateStore:
+    """Persist RAPL ownership state atomically under a root-only runtime path."""
+
+    def __init__(self, path: Path = DEFAULT_RAPL_STATE_PATH) -> None:
+        self.path = Path(path)
+
+    def load(self) -> tuple[RaplOwnershipRecord, ...]:
+        try:
+            with self.path.open("r", encoding="utf-8") as handle:
+                payload = json.load(handle)
+        except FileNotFoundError:
+            return ()
+        except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+            raise RaplStateError(
+                f"Unable to read trusted RAPL ownership state: {exc}"
+            ) from exc
+
+        if not isinstance(payload, dict) or set(payload) != {"version", "records"}:
+            raise RaplStateError("Invalid RAPL ownership state document")
+        if payload["version"] != RAPL_STATE_VERSION:
+            raise RaplStateError(
+                f"Unsupported RAPL state version: {payload['version']!r}"
+            )
+        if not isinstance(payload["records"], list):
+            raise RaplStateError("Invalid RAPL ownership record list")
+
+        records = tuple(_record_from_json(raw) for raw in payload["records"])
+        identities = [record.identity for record in records]
+        if len(set(identities)) != len(identities):
+            raise RaplStateError("Duplicate RAPL ownership identities")
+        return records
+
+    def save(self, records: tuple[RaplOwnershipRecord, ...]) -> None:
+        records = tuple(records)
+        if not records:
+            self.clear()
+            return
+
+        identities = [record.identity for record in records]
+        if len(set(identities)) != len(identities):
+            raise RaplStateError("Duplicate RAPL ownership identities")
+
+        payload = {
+            "version": RAPL_STATE_VERSION,
+            "records": [_record_to_json(record) for record in records],
+        }
+
+        parent = self.path.parent
+        temp_path: Optional[Path] = None
+        try:
+            parent.mkdir(parents=True, mode=0o700, exist_ok=True)
+            os.chmod(parent, 0o700)
+            fd, temp_name = tempfile.mkstemp(
+                prefix=f".{self.path.name}.",
+                dir=str(parent),
+            )
+            temp_path = Path(temp_name)
+            os.fchmod(fd, 0o600)
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                json.dump(payload, handle, sort_keys=True, separators=(",", ":"))
+                handle.write("\n")
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temp_path, self.path)
+            temp_path = None
+            self._fsync_parent()
+        except (OSError, TypeError, ValueError) as exc:
+            raise RaplStateError(f"Unable to persist RAPL ownership state: {exc}") from exc
+        finally:
+            if temp_path is not None:
+                try:
+                    temp_path.unlink()
+                except FileNotFoundError:
+                    pass
+                except OSError:
+                    pass
+
+    def clear(self) -> None:
+        try:
+            self.path.unlink()
+        except FileNotFoundError:
+            return
+        except OSError as exc:
+            raise RaplStateError(f"Unable to clear RAPL ownership state: {exc}") from exc
+        self._fsync_parent()
+
+    def _fsync_parent(self) -> None:
+        try:
+            fd = os.open(self.path.parent, os.O_RDONLY)
+        except OSError as exc:
+            raise RaplStateError(
+                f"Unable to open RAPL state directory for sync: {exc}"
+            ) from exc
+        try:
+            os.fsync(fd)
+        except OSError as exc:
+            raise RaplStateError(
+                f"Unable to sync RAPL state directory: {exc}"
+            ) from exc
+        finally:
+            os.close(fd)
 
 
 class IntelRaplController:
