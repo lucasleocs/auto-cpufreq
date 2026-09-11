@@ -1,7 +1,10 @@
 from configparser import ConfigParser
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
+from pathlib import Path
 from typing import Optional
+
+from auto_cpufreq.modules.intel_power import IntelPowerDiscovery
 
 
 MICROWATTS_PER_WATT = Decimal("1000000")
@@ -9,6 +12,8 @@ INTEL_POWER_SECTION = "intel_power"
 ENABLE_RAPL_OPTION = "enable_rapl_envelopes"
 LONG_TERM_OPTION = "rapl_package_long_term_w"
 SHORT_TERM_OPTION = "rapl_package_short_term_w"
+SUPPORTED_CONTROL_TYPES = frozenset({"intel-rapl", "intel-rapl-mmio"})
+SUPPORTED_PACKAGE_CONSTRAINTS = frozenset({"long_term", "short_term"})
 
 
 class RaplConfigError(ValueError):
@@ -25,6 +30,18 @@ class RaplEnvelopeTargets:
 class RaplPolicyConfig:
     enabled: bool
     targets: RaplEnvelopeTargets
+
+
+@dataclass(frozen=True)
+class RaplConstraintRef:
+    control_type: str
+    zone_id: str
+    zone_name: str
+    constraint_index: int
+    constraint_name: str
+    power_limit_path: Path
+    min_power_path: Path
+    max_power_path: Path
 
 
 def _watts_to_microwatts(raw: str, option: str) -> int:
@@ -92,3 +109,85 @@ def parse_rapl_policy_config(
             short_term_uw=_optional_target(conf, profile, SHORT_TERM_OPTION),
         ),
     )
+
+
+def _read_text(path: Path) -> Optional[str]:
+    try:
+        return path.read_text(encoding="utf-8").strip()
+    except (OSError, UnicodeError):
+        return None
+
+
+class IntelRaplController:
+    """Discover package RAPL controls without changing hardware state."""
+
+    def __init__(self, discovery: Optional[IntelPowerDiscovery] = None) -> None:
+        self.discovery = discovery or IntelPowerDiscovery()
+
+    def discover_package_constraints(self) -> tuple[RaplConstraintRef, ...]:
+        refs: list[RaplConstraintRef] = []
+
+        for zone_path, control_type in self.discovery.powercap_zone_paths():
+            if control_type not in SUPPORTED_CONTROL_TYPES:
+                continue
+
+            zone_name = _read_text(zone_path / "name")
+            if zone_name is None or not zone_name.startswith("package-"):
+                continue
+
+            try:
+                zone_id = str(zone_path.relative_to(self.discovery.powercap_root))
+            except ValueError:
+                continue
+
+            try:
+                name_paths = sorted(
+                    zone_path.glob("constraint_*_name"),
+                    key=lambda path: path.name,
+                )
+            except OSError:
+                continue
+
+            for name_path in name_paths:
+                suffix = name_path.name.removeprefix("constraint_").removesuffix(
+                    "_name"
+                )
+                if not suffix.isdigit():
+                    continue
+
+                constraint_name = _read_text(name_path)
+                if constraint_name not in SUPPORTED_PACKAGE_CONSTRAINTS:
+                    continue
+
+                index = int(suffix)
+                power_limit_path = zone_path / f"constraint_{index}_power_limit_uw"
+                try:
+                    has_power_limit = power_limit_path.is_file()
+                except OSError:
+                    has_power_limit = False
+                if not has_power_limit:
+                    continue
+
+                refs.append(
+                    RaplConstraintRef(
+                        control_type=control_type,
+                        zone_id=zone_id,
+                        zone_name=zone_name,
+                        constraint_index=index,
+                        constraint_name=constraint_name,
+                        power_limit_path=power_limit_path,
+                        min_power_path=zone_path / f"constraint_{index}_min_power_uw",
+                        max_power_path=zone_path / f"constraint_{index}_max_power_uw",
+                    )
+                )
+
+        return tuple(
+            sorted(
+                refs,
+                key=lambda ref: (
+                    ref.control_type,
+                    ref.zone_id,
+                    ref.constraint_index,
+                ),
+            )
+        )

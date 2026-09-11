@@ -342,6 +342,10 @@ class IntelPowerDiscovery:
                 zones.append(child)
         return tuple(zones)
 
+    def powercap_zone_paths(self) -> tuple[tuple[Path, Optional[str]], ...]:
+        """Return canonical Powercap zones using existing safety rules."""
+        return self._powercap_zone_paths()
+
     def _powercap_zone_paths(self) -> tuple[tuple[Path, Optional[str]], ...]:
         try:
             root_children = sorted(
