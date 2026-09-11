@@ -75,22 +75,12 @@ def test_modern_netlink_failure_falls_back():
 def test_modern_config_wakeup_failure_falls_back():
     modern = ModernIntelHwpPolicy(policy_actions())
 
-    class FakeEventSource:
-        def fileno(self):
-            return 42
-
-        def drain_relevant_events(self):
-            return False
-
-        def close(self):
-            pass
-
     def fail_config_open():
         raise OSError("config wakeup unavailable")
 
     scheduler = create_daemon_scheduler(
         modern,
-        event_source_factory=FakeEventSource,
+        event_source_factory=WakeupSource.open,
         config_source_factory=fail_config_open,
         watchdog=SystemdWatchdog.from_environment({}),
     )
