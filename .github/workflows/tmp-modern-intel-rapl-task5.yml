@@ -5,15 +5,40 @@ on:
     branches:
       - tmp/modern-intel-rapl-task5
 
+permissions:
+  contents: write
+
 jobs:
   verify:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      - name: Apply production patch when needed
+        run: |
+          if grep -q 'apply_power_envelope=apply_modern_intel_rapl' auto_cpufreq/core.py; then
+            echo 'Task 5 production patch already present'
+          else
+            PYTHONPATH=. python tmp/apply_intel_rapl_task5.py
+          fi
+      - name: Compile production integration
+        run: python -m compileall -q auto_cpufreq/modules/policy.py auto_cpufreq/core.py auto_cpufreq/bin/auto_cpufreq.py
       - name: Install project dependencies
         run: python -m pip install .
       - name: Run Intel RAPL daemon integration contract
         run: PYTHONPATH=. python tmp/test_intel_rapl_policy_integration.py
+      - name: Commit tested production files
+        run: |
+          if git diff --quiet -- auto_cpufreq/modules/policy.py auto_cpufreq/core.py auto_cpufreq/bin/auto_cpufreq.py; then
+            echo 'No production changes to commit'
+            exit 0
+          fi
+          git config user.name 'Lucas'
+          git config user.email '122493239+lucasleocs@users.noreply.github.com'
+          git add auto_cpufreq/modules/policy.py auto_cpufreq/core.py auto_cpufreq/bin/auto_cpufreq.py
+          git commit -m 'feat: apply RAPL envelopes in Modern Intel daemon'
+          git push origin HEAD:tmp/modern-intel-rapl-task5
