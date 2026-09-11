@@ -53,6 +53,7 @@ class ModernIntelHwpPolicy(LegacyPolicy):
     """Route eligible HWP systems to Modern Intel actions when available."""
 
     name = "modern-intel-hwp"
+    requires_periodic_tick = False
 
     def __init__(
         self,
