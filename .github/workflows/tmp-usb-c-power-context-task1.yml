@@ -18,6 +18,9 @@ jobs:
           ref: usb-c-power-context
           fetch-depth: 0
 
+      - name: Prepare project Python environment
+        run: python -m pip install -e .
+
       - name: RED - reporting tests must fail before implementation
         shell: bash
         run: |
@@ -103,7 +106,7 @@ jobs:
             echo "RED gate failed: reporting tests unexpectedly passed before implementation"
             exit 1
           fi
-          grep -Eq "format_power_context_debug|format_power_context_summary|ImportError" /tmp/task5-red.log
+          grep -Eq "format_power_context_debug|format_power_context_summary|cannot import name" /tmp/task5-red.log
 
       - name: GREEN - integrate PowerContext into reporting only
         shell: bash
@@ -331,10 +334,7 @@ jobs:
               )
               for port in snapshot.typec_ports:
                   lines.append(f"  {port.port_id}")
-                  lines.append(
-                      "    Power role: "
-                      + _format_power_read(port.power_role)
-                  )
+                  lines.append("    Power role: " + _format_power_read(port.power_role))
                   lines.append(
                       "    Power operation mode: "
                       + _format_power_read(port.power_operation_mode)
@@ -345,10 +345,7 @@ jobs:
                   )
                   lines.append(
                       "    Partner USB-PD capable: "
-                      + _format_power_read(
-                          port.partner_usb_pd_capable,
-                          _format_yes_no,
-                      )
+                      + _format_power_read(port.partner_usb_pd_capable, _format_yes_no)
                   )
           
               lines.append(
@@ -368,19 +365,13 @@ jobs:
                           lines.append("      None exposed")
                           continue
                       for capability in capabilities:
-                          position = (
-                              str(capability.position)
-                              if capability.position is not None
-                              else "?"
-                          )
+                          position = str(capability.position) if capability.position is not None else "?"
                           lines.append(
                               f"      PDO {position}: {capability.kind.value} "
                               f"({capability.sysfs_name})"
                           )
                           for attribute in capability.attributes:
-                              lines.append(
-                                  "        " + _format_usb_pd_attribute(attribute)
-                              )
+                              lines.append("        " + _format_usb_pd_attribute(attribute))
           
               return lines
           
@@ -395,17 +386,9 @@ jobs:
                   f"External power: {_format_external_power(snapshot.external_power)}",
                   f"Battery flow: {_format_battery_flow(snapshot.battery_flow)}",
                   "Type-C: "
-                  + counted_status(
-                      snapshot.typec_status,
-                      len(snapshot.typec_ports),
-                      "ports",
-                  ),
+                  + counted_status(snapshot.typec_status, len(snapshot.typec_ports), "ports"),
                   "USB-PD: "
-                  + counted_status(
-                      snapshot.usb_pd_status,
-                      len(snapshot.usb_pd_objects),
-                      "objects",
-                  ),
+                  + counted_status(snapshot.usb_pd_status, len(snapshot.usb_pd_objects), "objects"),
               ]
           
           
@@ -525,11 +508,7 @@ jobs:
           PYTHONPATH="$PWD" python - <<'PY'
           from pathlib import Path
           from tempfile import TemporaryDirectory
-
-          from auto_cpufreq.modules.power_context import (
-              ExternalPower,
-              PowerContextDiscovery,
-          )
+          from auto_cpufreq.modules.power_context import ExternalPower, PowerContextDiscovery
 
           with TemporaryDirectory() as td:
               root = Path(td)
@@ -549,11 +528,9 @@ jobs:
           python -m compileall -q auto_cpufreq
           git diff --check
           test -z "$(git diff --name-only -- auto_cpufreq/modules/policy.py auto_cpufreq/modules/daemon_scheduler.py auto_cpufreq/modules/intel_rapl.py auto_cpufreq/power_helper.py)"
-
           grep -q 'include_power_context=True' auto_cpufreq/bin/auto_cpufreq.py
           grep -q 'include_power_context=True' auto_cpufreq/modules/system_monitor.py
           grep -q 'format_power_context_summary' auto_cpufreq/modules/system_monitor.py
-
           git diff -- auto_cpufreq/modules/system_info.py auto_cpufreq/modules/system_monitor.py auto_cpufreq/bin/auto_cpufreq.py
 
       - name: Commit Task 5 production change to implementation branch
