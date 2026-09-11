@@ -2,12 +2,40 @@ import os
 import selectors
 import socket
 import time
+from enum import Enum
 from typing import Callable, Mapping, Optional
 
 
 NETLINK_KOBJECT_UEVENT = getattr(socket, "NETLINK_KOBJECT_UEVENT", 15)
 UEVENT_GROUP = 1
 UEVENT_BUFFER_SIZE = 64 * 1024
+
+
+class PolicyTrigger(str, Enum):
+    POWER_SUPPLY = "power_supply"
+    CONFIG = "config"
+    PERIODIC = "periodic"
+
+
+def should_reapply_policy(
+    triggers: frozenset[PolicyTrigger],
+    previous_source,
+    current_source,
+) -> bool:
+    """Return whether a wakeup requires policy application.
+
+    Configuration changes and periodic ticks always request a refresh. A
+    power-supply uevent is only an invalidation signal: reapply policy only
+    when the authoritative power-source context actually changed.
+    """
+
+    if PolicyTrigger.CONFIG in triggers or PolicyTrigger.PERIODIC in triggers:
+        return True
+
+    return (
+        PolicyTrigger.POWER_SUPPLY in triggers
+        and current_source != previous_source
+    )
 
 
 def parse_uevent(data: bytes) -> dict[str, str]:
@@ -262,13 +290,19 @@ class DaemonScheduler:
             monotonic() + periodic_interval if self._periodic else None
         )
 
-        for source in (event_source, config_source):
-            if source is not None:
-                self._selector.register(
-                    source,
-                    selectors.EVENT_READ,
-                    data=source,
-                )
+        if event_source is not None:
+            self._selector.register(
+                event_source,
+                selectors.EVENT_READ,
+                data=(event_source, PolicyTrigger.POWER_SUPPLY),
+            )
+
+        if config_source is not None:
+            self._selector.register(
+                config_source,
+                selectors.EVENT_READ,
+                data=(config_source, PolicyTrigger.CONFIG),
+            )
 
     def _timeout(self, now: float) -> Optional[float]:
         deadlines = []
@@ -295,26 +329,26 @@ class DaemonScheduler:
             return False
         return self._config_source.notify()
 
-    def wait_for_policy_trigger(self) -> bool:
+    def wait_for_policy_trigger(self) -> frozenset[PolicyTrigger]:
         while True:
             now = self._monotonic()
             events = self._selector.select(self._timeout(now))
 
-            event_triggered = False
+            triggers: set[PolicyTrigger] = set()
             for key, _mask in events:
-                source = key.data
+                source, trigger = key.data
                 if source.drain_relevant_events():
-                    event_triggered = True
+                    triggers.add(trigger)
 
             now = self._monotonic()
             self._watchdog.ping_if_due(now)
 
-            if event_triggered:
-                return True
-
             if self._next_periodic is not None and now >= self._next_periodic:
                 self._advance_periodic_deadline(now)
-                return True
+                triggers.add(PolicyTrigger.PERIODIC)
+
+            if triggers:
+                return frozenset(triggers)
 
     def close(self) -> None:
         try:

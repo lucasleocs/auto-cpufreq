@@ -1872,21 +1872,27 @@ def get_policy_backend():
     return _policy_backend
 
 
-def set_autofreq():
+def get_power_source():
+    return PowerSource.CHARGER if charging() else PowerSource.BATTERY
+
+
+def set_autofreq(source=None):
     """
     set cpufreq governor based if device is charging
     """
     print("\n" + "-" * 28 + " CPU frequency scaling " + "-" * 28 + "\n")
 
     # determine which power profile should be used
-    if charging():
+    if source is None:
+        source = get_power_source()
+
+    if source is PowerSource.CHARGER:
         print("Battery is: charging\n")
-        source = PowerSource.CHARGER
     else:
         print("Battery is: discharging\n")
-        source = PowerSource.BATTERY
 
     get_policy_backend().apply(source)
+    return source
 
 
 def mon_autofreq():
