@@ -22,22 +22,81 @@ def main() -> None:
         cpu_root.mkdir()
         powercap_root.mkdir()
 
-        write(powercap_root, "intel-rapl:0/name", "package-0\n")
-        write(powercap_root, "intel-rapl:0/energy_uj", "90000000\n")
-        write(powercap_root, "intel-rapl:0/max_energy_range_uj", "100000000\n")
-        write(powercap_root, "intel-rapl:0/constraint_0_name", "long_term\n")
-        write(powercap_root, "intel-rapl:0/constraint_0_power_limit_uw", "15000000\n")
-        write(powercap_root, "intel-rapl:0/constraint_0_time_window_us", "28000000\n")
-        write(powercap_root, "intel-rapl:0/constraint_1_name", "short_term\n")
-        write(powercap_root, "intel-rapl:0/constraint_1_power_limit_uw", "35000000\n")
+        write(powercap_root, "intel-rapl/enabled", "1\n")
+        write(powercap_root, "intel-rapl/intel-rapl:0/name", "package-0\n")
+        write(powercap_root, "intel-rapl/intel-rapl:0/energy_uj", "90000000\n")
+        write(
+            powercap_root,
+            "intel-rapl/intel-rapl:0/max_energy_range_uj",
+            "100000000\n",
+        )
+        write(
+            powercap_root,
+            "intel-rapl/intel-rapl:0/constraint_0_name",
+            "long_term\n",
+        )
+        write(
+            powercap_root,
+            "intel-rapl/intel-rapl:0/constraint_0_power_limit_uw",
+            "15000000\n",
+        )
+        write(
+            powercap_root,
+            "intel-rapl/intel-rapl:0/constraint_0_time_window_us",
+            "28000000\n",
+        )
+        write(
+            powercap_root,
+            "intel-rapl/intel-rapl:0/constraint_1_name",
+            "short_term\n",
+        )
+        write(
+            powercap_root,
+            "intel-rapl/intel-rapl:0/constraint_1_power_limit_uw",
+            "35000000\n",
+        )
 
-        write(powercap_root, "intel-rapl:0/intel-rapl:0:0/name", "core\n")
-        write(powercap_root, "intel-rapl:0/intel-rapl:0:0/energy_uj", "45000000\n")
-        write(powercap_root, "intel-rapl:0/intel-rapl:0:0/max_energy_range_uj", "100000000\n")
+        write(
+            powercap_root,
+            "intel-rapl/intel-rapl:0/intel-rapl:0:0/name",
+            "core\n",
+        )
+        write(
+            powercap_root,
+            "intel-rapl/intel-rapl:0/intel-rapl:0:0/energy_uj",
+            "45000000\n",
+        )
+        write(
+            powercap_root,
+            "intel-rapl/intel-rapl:0/intel-rapl:0:0/max_energy_range_uj",
+            "100000000\n",
+        )
 
-        write(powercap_root, "intel-rapl-mmio:0/name", "package-0\n")
-        write(powercap_root, "intel-rapl-mmio:0/constraint_0_name", "long_term\n")
-        write(powercap_root, "intel-rapl-mmio:0/constraint_0_power_limit_uw", "12000000\n")
+        write(powercap_root, "intel-rapl-mmio/enabled", "1\n")
+        write(
+            powercap_root,
+            "intel-rapl-mmio/intel-rapl-mmio:0/name",
+            "package-0\n",
+        )
+        write(
+            powercap_root,
+            "intel-rapl-mmio/intel-rapl-mmio:0/constraint_0_name",
+            "long_term\n",
+        )
+        write(
+            powercap_root,
+            "intel-rapl-mmio/intel-rapl-mmio:0/constraint_0_power_limit_uw",
+            "12000000\n",
+        )
+
+        # Powercap zones expose non-zone symlinks such as `device`. Discovery
+        # must never leave the Powercap tree by recursively following them.
+        escape = root / "outside-powercap"
+        write(escape, "name", "not-a-powercap-zone\n")
+        (powercap_root / "intel-rapl/intel-rapl:0/device").symlink_to(
+            escape,
+            target_is_directory=True,
+        )
 
         snapshot = IntelPowerDiscovery(
             cpu_root=cpu_root,
@@ -51,16 +110,19 @@ def main() -> None:
         msr_pkg = next(
             zone
             for zone in snapshot.powercap_zones
-            if zone.zone_id == "intel-rapl:0"
+            if zone.zone_id == "intel-rapl/intel-rapl:0"
         )
         mmio_pkg = next(
             zone
             for zone in snapshot.powercap_zones
-            if zone.zone_id == "intel-rapl-mmio:0"
+            if zone.zone_id == "intel-rapl-mmio/intel-rapl-mmio:0"
         )
+        assert msr_pkg.control_type == "intel-rapl"
+        assert mmio_pkg.control_type == "intel-rapl-mmio"
         assert msr_pkg.name.value == "package-0"
         assert mmio_pkg.name.value == "package-0"
         assert msr_pkg.zone_id != mmio_pkg.zone_id
+        assert all(zone.name.value != "not-a-powercap-zone" for zone in snapshot.powercap_zones)
         assert [item.name.value for item in msr_pkg.constraints] == [
             "long_term",
             "short_term",
