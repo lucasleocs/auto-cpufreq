@@ -273,10 +273,11 @@ class IntelPowerDiscovery:
     def _constraint_indexes(zone_path: Path) -> tuple[int, ...]:
         indexes: set[int] = set()
         try:
-            for path in zone_path.glob("constraint_*_name"):
-                suffix = path.name.removeprefix("constraint_").removesuffix("_name")
-                if suffix.isdigit():
-                    indexes.add(int(suffix))
+            for path in zone_path.glob("constraint_*_*"):
+                suffix = path.name.removeprefix("constraint_")
+                index_text, separator, _attribute = suffix.partition("_")
+                if separator and index_text.isdigit():
+                    indexes.add(int(index_text))
         except OSError:
             return ()
         return tuple(sorted(indexes))
