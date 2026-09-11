@@ -1,0 +1,23 @@
+name: Temporary Modern Intel Event Loop Final
+
+on:
+  push:
+    branches:
+      - tmp/modern-intel-event-loop-final-regression
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install project dependencies
+        run: python -m pip install .
+      - name: Compile production files
+        run: python -m compileall -q auto_cpufreq/core.py auto_cpufreq/bin/auto_cpufreq.py auto_cpufreq/modules/daemon_scheduler.py auto_cpufreq/modules/policy.py auto_cpufreq/config/config.py
+      - name: Verify systemd watchdog configuration
+        run: grep -Fx 'WatchdogSec=30s' scripts/auto-cpufreq.service
+      - name: Run final event-loop regression
+        run: PYTHONPATH=. python tmp/test_event_loop_final.py
