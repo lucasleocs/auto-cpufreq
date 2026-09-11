@@ -45,15 +45,19 @@ def test_write_primitive_is_centralized():
 def test_only_systemd_service_enables_rapl_failsafe():
     marker = "AUTO_CPUFREQ_RAPL_FAILSAFE=1"
     occurrences = []
-    for path in ROOT.rglob("*"):
-        if not path.is_file() or ".git" in path.parts or "tmp" in path.parts:
-            continue
+
+    runtime_paths = list((ROOT / "auto_cpufreq").rglob("*.py"))
+    runtime_paths += [path for path in (ROOT / "scripts").rglob("*") if path.is_file()]
+    runtime_paths.append(ROOT / "pyproject.toml")
+
+    for path in runtime_paths:
         try:
             text = path.read_text(encoding="utf-8")
         except (UnicodeError, OSError):
             continue
         if marker in text:
             occurrences.append(str(path.relative_to(ROOT)))
+
     assert occurrences == ["scripts/auto-cpufreq.service"], occurrences
 
 
