@@ -12,6 +12,7 @@ from shutil import rmtree
 from auto_cpufreq.battery_scripts.battery import *
 from auto_cpufreq.config.config import config as conf, find_config_file
 from auto_cpufreq.core import *
+from auto_cpufreq.modules.daemon_scheduler import create_daemon_scheduler
 from auto_cpufreq.globals import GITHUB, IS_INSTALLED_WITH_AUR, IS_INSTALLED_WITH_SNAP
 from auto_cpufreq.modules.platform_profile import platform_profile
 from auto_cpufreq.modules.system_info import (
@@ -235,17 +236,40 @@ def main(monitor, live, daemon, install, update, remove, force, turbo, config, s
                 gnome_power_detect()
                 tlp_service_detect()
             start_battery_daemon()
+            scheduler = create_daemon_scheduler(get_policy_backend())
+            conf.set_change_callback(scheduler.notify_config_change)
             conf.notifier.start()
-            while True:
-                try:
+
+            if scheduler.event_source_error is not None:
+                print(
+                    "Warning: power_supply event monitoring is unavailable: "
+                    f"{scheduler.event_source_error}"
+                )
+            if scheduler.config_source_error is not None:
+                print(
+                    "Warning: config event wakeup is unavailable: "
+                    f"{scheduler.config_source_error}"
+                )
+            if scheduler.using_periodic_fallback:
+                print(
+                    "Warning: using periodic policy fallback because an "
+                    "event-driven wakeup source is unavailable."
+                )
+
+            try:
+                while True:
                     footer()
                     gov_check()
                     cpufreqctl()
                     print_system_report()
                     set_autofreq()
-                    countdown(2)
-                except KeyboardInterrupt: break
-            conf.notifier.stop()
+                    scheduler.wait_for_policy_trigger()
+            except KeyboardInterrupt:
+                pass
+            finally:
+                conf.set_change_callback(None)
+                scheduler.close()
+                conf.notifier.stop()
         elif install:
             if IS_INSTALLED_WITH_SNAP:
                 daemon_running_msg()
