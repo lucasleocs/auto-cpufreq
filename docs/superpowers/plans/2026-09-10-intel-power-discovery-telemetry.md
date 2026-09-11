@@ -2,11 +2,11 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Add a read-only Intel power discovery and telemetry layer that reports modern `intel_pstate`/HWP, CPUFreq policy, Powercap/RAPL, energy, and thermal-throttle state without changing hardware policy.
+**Goal:** Add a read-only Intel power discovery and telemetry layer that reports modern `intel_pstate`/HWP evidence, CPUFreq policy, documented CPU topology, turbo permission, Powercap/RAPL, energy, and thermal-throttle state without changing hardware policy.
 
 **Architecture:** Create `auto_cpufreq/modules/intel_power.py` as a dependency-light, read-only sysfs boundary. Existing reporting code consumes a normalized Intel snapshot only when `--debug` or `--stats` explicitly requests it; ordinary daemon, Monitor, and Live paths keep their current collection cost and behavior. Differential energy sampling is stateful inside the Intel module so repeated Stats refreshes can calculate average package/subdomain power without making one-shot debug calls block.
 
-**Tech Stack:** Python standard library (`dataclasses`, `enum`, `pathlib`, `time`, `typing`), Linux CPUFreq/sysfs, Linux Powercap/RAPL ABI, existing `SystemInfo` and `SystemMonitor` reporting infrastructure.
+**Tech Stack:** Python standard library (`dataclasses`, `enum`, `pathlib`, `time`, `typing`), documented Linux CPU topology/CPUFreq sysfs, Linux Powercap/RAPL ABI, existing `SystemInfo`, `PlatformProfile`, and `SystemMonitor` reporting infrastructure.
 
 **Spec:** `docs/superpowers/specs/2026-09-10-modern-intel-power-policy-design.md`
 
@@ -16,6 +16,8 @@
 - No new runtime dependency, pytest suite, CI job, service change, config option, or active power-policy change.
 - Temporary standard-library fixtures/scripts may be used locally but must not remain in the final diff.
 - Discover CPUFreq policies from policy directories and Powercap meanings from ABI contents such as `name` and `constraint_X_name`; never infer fixed meanings from numeric suffixes.
+- Use only documented kernel sysfs topology attributes in this stage. Do not infer P-core/E-core labels from CPU model numbers or undocumented files. If a stable userspace ABI does not expose core type, report that classification as unavailable rather than guessing.
+- Existing Platform Profile discovery/reporting remains owned by `auto_cpufreq.modules.platform_profile`; do not duplicate it in `intel_power.py`.
 - Missing, unreadable, and malformed values remain distinguishable. Unknown topology or package identity must never become fabricated CPU/package `0`.
 - Energy sampling uses `time.monotonic_ns()` and the zone's actual `max_energy_range_uj`.
 - Differential power supports at most one energy-counter wrap between consecutive samples.
@@ -29,7 +31,7 @@
 
 **Create**
 
-- `auto_cpufreq/modules/intel_power.py` — safe sysfs reads, CPUFreq/Intel discovery, Powercap discovery, energy sampling, thermal-throttle discovery, normalized dataclasses.
+- `auto_cpufreq/modules/intel_power.py` — safe sysfs reads, CPUFreq/Intel discovery, documented topology, turbo permission, Powercap discovery, energy sampling, thermal-throttle discovery, normalized dataclasses.
 
 **Modify**
 
@@ -50,14 +52,14 @@ If implementation appears to require any file in the do-not-modify set, stop and
 
 ---
 
-### Task 1: Safe Sysfs Reads and CPUFreq/Intel Capability Discovery
+### Task 1: Safe Sysfs Reads, Documented Topology, and CPUFreq/Intel Discovery
 
 **Files:**
 - Create: `auto_cpufreq/modules/intel_power.py`
 - Temporary verification: standard-library script only; do not commit it
 
 **Interfaces:**
-- Produces: `ReadStatus`, `ReadResult`, `CpuFreqPolicySnapshot`, `IntelPowerSnapshot`, `IntelPowerDiscovery.snapshot()`.
+- Produces: `ReadStatus`, `ReadResult`, `CpuTopologySnapshot`, `CpuFreqPolicySnapshot`, `IntelPowerSnapshot`, `IntelPowerDiscovery.snapshot()`.
 - Consumes: standard-library filesystem APIs only.
 
 - [ ] **Step 1: Write the temporary failing synthetic-sysfs check**
@@ -66,7 +68,14 @@ Create a temporary script outside the final diff. It must create a `tempfile.Tem
 
 ```text
 intel_pstate/status -> active
+intel_pstate/no_turbo -> 0
 intel_pstate/hwp_dynamic_boost -> 1
+cpu0/topology/physical_package_id -> 0
+cpu0/topology/core_id -> 0
+cpu0/topology/thread_siblings_list -> 0,4
+cpu1/topology/physical_package_id -> 0
+cpu1/topology/core_id -> 1
+cpu1/topology/thread_siblings_list -> 1
 cpufreq/policy0/scaling_driver -> intel_pstate
 cpufreq/policy0/scaling_governor -> powersave
 cpufreq/policy0/related_cpus -> 0 2
@@ -79,7 +88,7 @@ cpufreq/policy0/energy_performance_available_preferences -> default performance 
 cpufreq/policy1/related_cpus -> 1 3
 ```
 
-Import `IntelPowerDiscovery`, call `snapshot()`, and assert that two policies are returned, status is `active`, Dynamic Boost is `True`, and the two related-CPU sets remain distinct. The first run must fail because the module does not yet exist.
+Import `IntelPowerDiscovery`, call `snapshot()`, and assert that two policies are returned, status is `active`, turbo is reported as allowed, Dynamic Boost is `True`, CPU0/CPU1 topology remains distinct, and the two policy related-CPU sets remain distinct. The first run must fail because the module does not yet exist.
 
 - [ ] **Step 2: Add the read-state types and exact safe-read helpers**
 
@@ -143,11 +152,19 @@ def _parse_cpu_list(value: str) -> tuple[int, ...]:
 
 Add a helper that wraps `_parse_cpu_list()` and returns `ReadStatus.INVALID` instead of propagating malformed kernel/userspace content.
 
-- [ ] **Step 3: Add the normalized CPUFreq snapshot types**
+- [ ] **Step 3: Add normalized topology and CPUFreq types**
 
-Implement these fields exactly:
+Implement:
 
 ```python
+@dataclass(frozen=True)
+class CpuTopologySnapshot:
+    cpu: int
+    physical_package_id: ReadResult[int]
+    core_id: ReadResult[int]
+    thread_siblings: ReadResult[tuple[int, ...]]
+
+
 @dataclass(frozen=True)
 class CpuFreqPolicySnapshot:
     policy: str
@@ -165,15 +182,17 @@ class CpuFreqPolicySnapshot:
 @dataclass(frozen=True)
 class IntelPowerSnapshot:
     intel_pstate_status: ReadResult[str]
+    turbo_allowed: ReadResult[bool]
     hwp_dynamic_boost: ReadResult[bool]
+    cpu_topology: tuple[CpuTopologySnapshot, ...]
     cpufreq_policies: tuple[CpuFreqPolicySnapshot, ...]
     powercap_zones: tuple = ()
     thermal_packages: tuple = ()
 ```
 
-Stage 1 deliberately does not expose a behavior-changing `modern_hwp_eligible` decision. It reports evidence only; policy selection belongs to Stage 2.
+Stage 1 deliberately does not expose a behavior-changing `modern_hwp_eligible` decision and does not classify a CPU as P-core/E-core from model knowledge. It reports documented topology plus HWP-related evidence; policy selection belongs to Stage 2.
 
-- [ ] **Step 4: Implement CPUFreq policy discovery**
+- [ ] **Step 4: Implement topology, turbo, and CPUFreq discovery**
 
 `IntelPowerDiscovery.__init__` must accept:
 
@@ -182,7 +201,24 @@ cpu_root: Path = Path("/sys/devices/system/cpu")
 powercap_root: Path = Path("/sys/class/powercap")
 ```
 
-`IntelPowerDiscovery.snapshot(sample_energy: bool = False)` must enumerate `<cpu_root>/cpufreq/policy*`, sort numeric policy suffixes numerically, and read each field defined above. It must not derive processor-wide state from `cpu0/cpufreq` symlinks.
+`IntelPowerDiscovery.snapshot(sample_energy: bool = False)` must:
+
+1. enumerate numeric `cpu[0-9]*` directories and read only documented `topology/physical_package_id`, `topology/core_id`, and `topology/thread_siblings_list`;
+2. enumerate `<cpu_root>/cpufreq/policy*`, sorting numeric policy suffixes numerically;
+3. read each CPUFreq field defined above;
+4. read `intel_pstate/status` without rewriting unknown strings;
+5. read `intel_pstate/no_turbo` and expose **turbo permission** with inverse semantics;
+6. read Dynamic Boost separately.
+
+Turbo conversion is exact:
+
+```text
+no_turbo "0" -> turbo_allowed available True
+no_turbo "1" -> turbo_allowed available False
+missing no_turbo -> MISSING
+other contents -> INVALID
+read error -> UNREADABLE
+```
 
 Dynamic Boost conversion is exact:
 
@@ -194,7 +230,7 @@ other contents -> INVALID
 read error -> UNREADABLE
 ```
 
-Keep `intel_pstate/status` as the raw kernel string; do not guess a replacement mode for unknown contents.
+Do not derive processor-wide state from `cpu0/cpufreq` symlinks.
 
 - [ ] **Step 5: Extend the temporary fixture with negative cases**
 
@@ -203,10 +239,13 @@ Assert all of the following without uncaught exceptions:
 - no `intel_pstate` directory;
 - no CPUFreq policy directory;
 - malformed `related_cpus` such as `4-2`;
+- malformed `thread_siblings_list`;
 - missing EPP file;
-- unreadable attribute simulated by using a directory where a text attribute is expected.
+- missing topology attributes;
+- unreadable attribute simulated by using a directory where a text attribute is expected;
+- unknown P/E classification is not fabricated.
 
-Expected results must use the matching `ReadStatus`; they must not silently become zero, CPU0, or an empty value described as valid.
+Expected results must use the matching `ReadStatus`; they must not silently become zero, CPU0, package0, or a valid-looking core type.
 
 - [ ] **Step 6: Compile and commit**
 
@@ -302,7 +341,7 @@ Use an explicit directory queue starting at `powercap_root`. For every directory
 
 A directory is a zone candidate when it exposes at least one zone ABI indicator: `name`, `energy_uj`, `max_energy_range_uj`, or a `constraint_*_name` file. Record `zone_id` as the lexical path relative to `powercap_root`; keep the kernel-visible entry name in `sysfs_name`.
 
-Constraint enumeration must scan the actual filenames matching `constraint_*_name`, parse the numeric `X`, sort indexes numerically, and read only matching `constraint_X_*` files. Never map index `0`/`1` to PL1/PL2 unless the corresponding name file says `long_term`/`short_term`.
+Constraint enumeration must scan actual filenames matching `constraint_*_name`, parse the numeric `X`, sort indexes numerically, and read only matching `constraint_X_*` files. Never map index `0`/`1` to PL1/PL2 unless the corresponding name file says `long_term`/`short_term`.
 
 Do not use `os.access(..., os.W_OK)` as evidence of future writability; Stage 1 only observes.
 
@@ -364,7 +403,7 @@ Also assert that a backwards counter with no usable max range returns `None`, no
 
 - [ ] **Step 6: Wire sampling into snapshots only when requested**
 
-`IntelPowerDiscovery` owns one `EnergySampler`. `snapshot(sample_energy=True)` samples zones with valid energy counters. `snapshot(sample_energy=False)` reads static capability/energy values but does **not** advance sampler baselines.
+`IntelPowerDiscovery` owns one `EnergySampler`. `snapshot(sample_energy=True)` samples zones with valid energy counters. `snapshot(sample_energy=False)` reads static capability/energy values but does not advance sampler baselines.
 
 - [ ] **Step 7: Compile and commit**
 
@@ -391,6 +430,7 @@ git commit -m "feat: report Intel RAPL telemetry"
 **Interfaces:**
 - Produces: `ThermalThrottleSnapshot`.
 - Extends: `IntelPowerSnapshot.thermal_packages`.
+- Reuses: `CpuTopologySnapshot.physical_package_id` rather than performing a contradictory topology fallback.
 
 - [ ] **Step 1: Build a failing synthetic two-package topology**
 
@@ -425,7 +465,7 @@ Update `IntelPowerSnapshot.thermal_packages` to `tuple[ThermalThrottleSnapshot, 
 
 - [ ] **Step 3: Implement known-topology-only deduplication**
 
-Enumerate `cpu[0-9]*` numerically, read `topology/physical_package_id`, and group only CPUs with a valid integer package ID. For each known package, choose the lowest-numbered CPU that actually exposes package thermal-throttle attributes and read from that CPU only.
+Group only CPUs whose `physical_package_id` is `AVAILABLE` and contains an integer. For each known package, choose the lowest-numbered CPU that actually exposes package thermal-throttle attributes and read from that CPU only.
 
 Do not fabricate package 0 when topology is missing. If a package has no representative CPU exposing the thermal ABI, omit it. Missing optional total/max-time files remain `MISSING`; they never become zero.
 
@@ -452,6 +492,7 @@ Delete the temporary fixture before committing.
 **Interfaces:**
 - Consumes: `IntelPowerSnapshot`, module singleton `intel_power = IntelPowerDiscovery()`.
 - Produces: optional `SystemReport.intel_power` and `format_intel_power_summary()`.
+- Reuses: existing `platform_profile` reporting instead of duplicating platform-profile discovery.
 
 - [ ] **Step 1: Write a failing opt-in collection check**
 
@@ -481,16 +522,18 @@ def generate_system_report(
 ) -> SystemReport:
 ```
 
-When `include_intel_power` is false, do not call the Intel module at all. When true, set the field from `intel_power.snapshot(sample_energy=sample_intel_energy)`.
+When `include_intel_power` is false, do not call the Intel module. When true, set the field from `intel_power.snapshot(sample_energy=sample_intel_energy)`.
 
 - [ ] **Step 3: Add one shared formatter with explicit missing/unknown semantics**
 
 Implement `format_intel_power_summary(snapshot: IntelPowerSnapshot) -> list[str]` in `system_info.py`. It must format:
 
-- `intel_pstate` status and Dynamic Boost state;
-- CPUFreq policies and related CPUs;
+- `intel_pstate` status, turbo permission, and Dynamic Boost state;
+- documented CPU topology summary and CPUFreq policies;
 - each distinct Powercap zone, raw energy, optional sampled average power, and named constraints;
 - package thermal metrics.
+
+If no stable kernel ABI identifies a P/E core type, print no fabricated P/E labels; policy membership and documented package/core/thread topology are sufficient Stage 1 evidence.
 
 Use these display rules:
 
@@ -507,7 +550,7 @@ Do not claim a backend is MSR/MMIO/TPMI unless that identity is directly reflect
 
 - [ ] **Step 4: Make `--debug` explicitly request the enhanced report**
 
-Extend the existing import from `auto_cpufreq.modules.system_info` so it imports `system_info` in addition to the existing formatting/printing functions. In the `debug` branch, replace the implicit report collection with:
+Extend the existing import from `auto_cpufreq.modules.system_info` so it imports `system_info` in addition to the existing formatting/printing functions. In the `debug` branch, use:
 
 ```python
 report = system_info.generate_system_report(
@@ -531,7 +574,7 @@ Run the opt-in mock check plus:
 python -m compileall -q auto_cpufreq/modules/system_info.py auto_cpufreq/bin/auto_cpufreq.py
 ```
 
-If an Intel and a no-Powercap environment are available, run `sudo auto-cpufreq --debug` in both. Missing optional interfaces must not raise.
+If Intel and no-Powercap environments are available, run `sudo auto-cpufreq --debug` in both. Missing optional interfaces must not raise.
 
 Commit:
 
@@ -685,6 +728,7 @@ Also confirm:
 - workflows unchanged;
 - no committed fixture/test file;
 - no fabricated package 0;
+- no fabricated P/E core classification;
 - no numeric RAPL index interpreted as a fixed semantic name;
 - no policy eligibility decision used to alter behavior.
 
@@ -708,8 +752,9 @@ Small fixes found during notebook validation should be folded into the commit th
 
 ## Stage 1 Exit Criteria
 
-- Intel P-state/HWP evidence is discoverable without CPU-model allowlists.
+- Intel P-state/HWP evidence, turbo permission, and documented topology are discoverable without CPU-model allowlists.
 - CPUFreq policies are enumerated independently rather than using CPU0 as processor-wide truth.
+- Existing Platform Profile reporting remains the single source for platform-profile information.
 - Powercap zones remain distinct and constraints are interpreted by ABI names.
 - Average power uses monotonic elapsed time, kernel-reported energy range, and one-wrap handling.
 - Package thermal counters are deduplicated only when physical package topology is known.
