@@ -5,6 +5,9 @@ on:
     branches:
       - tmp/modern-intel-rapl-task2
 
+permissions:
+  contents: write
+
 jobs:
   verify:
     runs-on: ubuntu-latest
@@ -15,5 +18,16 @@ jobs:
           python-version: '3.12'
       - name: Install project dependencies
         run: python -m pip install .
+      - name: Apply public Powercap zone API patch
+        run: python tmp/apply_intel_power_public_zone_api.py
+      - name: Compile production files
+        run: python -m compileall -q auto_cpufreq/modules/intel_power.py auto_cpufreq/modules/intel_rapl.py
       - name: Run controllable RAPL discovery contract
         run: PYTHONPATH=. python tmp/test_intel_rapl_discovery.py
+      - name: Commit tested Intel power production patch
+        run: |
+          git config user.name "Lucas"
+          git config user.email "122493239+lucasleocs@users.noreply.github.com"
+          git add auto_cpufreq/modules/intel_power.py
+          git commit -m "temp-task2-intel-power-production"
+          git push origin HEAD:tmp/modern-intel-rapl-task2
