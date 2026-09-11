@@ -3,6 +3,7 @@ import os
 from configparser import ConfigParser
 from contextlib import redirect_stdout
 from io import StringIO
+from pathlib import Path
 
 import auto_cpufreq.core as core
 from auto_cpufreq.bin import auto_cpufreq as cli
@@ -195,8 +196,8 @@ def test_daemon_only_ordering():
     # Monitor and --live continue through existing policy functions only.
     assert "apply_power_envelope" not in inspect.getsource(core.set_autofreq)
     assert "apply_power_envelope" not in inspect.getsource(core.mon_autofreq)
-    main_source = inspect.getsource(cli.main)
-    live_block = main_source.split("elif live:", 1)[1].split("elif daemon:", 1)[0]
+    cli_source = Path(cli.__file__).read_text(encoding="utf-8")
+    live_block = cli_source.split("elif live:", 1)[1].split("elif daemon:", 1)[0]
     assert "apply_power_envelope" not in live_block
 
 
