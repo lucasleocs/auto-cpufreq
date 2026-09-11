@@ -114,128 +114,134 @@ jobs:
           set -euo pipefail
           python - <<'PY'
           from pathlib import Path
+          from textwrap import dedent
 
-          path = Path("auto_cpufreq/modules/system_info.py")
-          text = path.read_text()
 
-          old = '''from auto_cpufreq.modules.intel_power import (
-              IntelPowerSnapshot,
-              ReadStatus,
-              intel_power,
+          def block(*lines: str) -> str:
+              return "\n".join(lines) + "\n"
+
+
+          def replace_once(text: str, old: str, new: str, label: str) -> str:
+              if text.count(old) != 1:
+                  raise SystemExit(f"{label}: expected exactly one match, got {text.count(old)}")
+              return text.replace(old, new, 1)
+
+
+          system_info_path = Path("auto_cpufreq/modules/system_info.py")
+          text = system_info_path.read_text()
+
+          old = block(
+              "from auto_cpufreq.modules.intel_power import (",
+              "    IntelPowerSnapshot,",
+              "    ReadStatus,",
+              "    intel_power,",
+              ")",
           )
-          '''
-          new = '''from auto_cpufreq.modules.intel_power import (
-              IntelPowerSnapshot,
-              intel_power,
+          new = old + block(
+              "from auto_cpufreq.modules.power_context import (",
+              "    BatteryFlow,",
+              "    ExternalPower,",
+              "    PowerContextDiscovery,",
+              "    PowerContextSnapshot,",
+              ")",
           )
-          from auto_cpufreq.modules.power_context import (
-              BatteryFlow,
-              ExternalPower,
-              PowerContextDiscovery,
-              PowerContextSnapshot,
+          text = replace_once(text, old, new, "system_info imports")
+
+          old = block(
+              "    platform_profile: PlatformProfileSnapshot = PlatformProfileSnapshot()",
+              "    intel_power: IntelPowerSnapshot | None = None",
           )
-          from auto_cpufreq.modules.sysfs import ReadStatus
-          '''
-          if old not in text:
-              raise SystemExit("expected intel_power import block not found")
-          text = text.replace(old, new, 1)
+          new = block(
+              "    platform_profile: PlatformProfileSnapshot = PlatformProfileSnapshot()",
+              "    intel_power: IntelPowerSnapshot | None = None",
+              "    power_context: Optional[PowerContextSnapshot] = None",
+          )
+          text = replace_once(text, old, new, "SystemReport power_context field")
 
-          old = '''    platform_profile: PlatformProfileSnapshot = PlatformProfileSnapshot()
-              intel_power: IntelPowerSnapshot | None = None
-          '''
-          new = '''    platform_profile: PlatformProfileSnapshot = PlatformProfileSnapshot()
-              intel_power: IntelPowerSnapshot | None = None
-              power_context: Optional[PowerContextSnapshot] = None
-          '''
-          if old not in text:
-              raise SystemExit("expected SystemReport tail not found")
-          text = text.replace(old, new, 1)
+          old = block(
+              "    def generate_system_report(",
+              "        self,",
+              "        include_intel_power: bool = False,",
+              "        sample_intel_energy: bool = False,",
+              "    ) -> SystemReport:",
+          )
+          new = block(
+              "    def generate_system_report(",
+              "        self,",
+              "        include_intel_power: bool = False,",
+              "        sample_intel_energy: bool = False,",
+              "        include_power_context: bool = False,",
+              "    ) -> SystemReport:",
+          )
+          text = replace_once(text, old, new, "generate_system_report signature")
 
-          old = '''    def generate_system_report(
-                  self,
-                  include_intel_power: bool = False,
-                  sample_intel_energy: bool = False,
-              ) -> SystemReport:
-          '''
-          new = '''    def generate_system_report(
-                  self,
-                  include_intel_power: bool = False,
-                  sample_intel_energy: bool = False,
-                  include_power_context: bool = False,
-              ) -> SystemReport:
-          '''
-          if old not in text:
-              raise SystemExit("expected generate_system_report signature not found")
-          text = text.replace(old, new, 1)
+          old = block(
+              "        intel_snapshot = (",
+              "            intel_power.snapshot(sample_energy=sample_intel_energy)",
+              "            if include_intel_power",
+              "            else None",
+              "        )",
+              "",
+              "        return SystemReport(",
+          )
+          new = block(
+              "        intel_snapshot = (",
+              "            intel_power.snapshot(sample_energy=sample_intel_energy)",
+              "            if include_intel_power",
+              "            else None",
+              "        )",
+              "        power_context_snapshot = (",
+              "            power_context_discovery().discover()",
+              "            if include_power_context",
+              "            else None",
+              "        )",
+              "",
+              "        return SystemReport(",
+          )
+          text = replace_once(text, old, new, "power context collection")
 
-          old = '''        intel_snapshot = (
-                  intel_power.snapshot(sample_energy=sample_intel_energy)
-                  if include_intel_power
-                  else None
-              )
-          
-              return SystemReport(
-          '''
-          new = '''        intel_snapshot = (
-                  intel_power.snapshot(sample_energy=sample_intel_energy)
-                  if include_intel_power
-                  else None
-              )
-              power_context_snapshot = (
-                  power_context_discovery().discover()
-                  if include_power_context
-                  else None
-              )
-          
-              return SystemReport(
-          '''
-          if old not in text:
-              raise SystemExit("expected Intel snapshot block not found")
-          text = text.replace(old, new, 1)
+          old = block(
+              "            platform_profile=platform_profile.snapshot(),",
+              "            intel_power=intel_snapshot,",
+              "        )",
+              "",
+              "",
+              "system_info = SystemInfo()",
+          )
+          new = block(
+              "            platform_profile=platform_profile.snapshot(),",
+              "            intel_power=intel_snapshot,",
+              "            power_context=power_context_snapshot,",
+              "        )",
+              "",
+              "",
+              "def power_context_discovery() -> PowerContextDiscovery:",
+              "    sys_root = (",
+              "        Path(SNAP_HOST_ROOT) / \"sys\"",
+              "        if IS_INSTALLED_WITH_SNAP",
+              "        else Path(\"/sys\")",
+              "    )",
+              "    return PowerContextDiscovery(",
+              "        power_supply_root=sys_root / \"class/power_supply\"",
+              "        typec_root=sys_root / \"class/typec\"",
+              "        usb_pd_root=sys_root / \"class/usb_power_delivery\"",
+              "        ignored_supply_substrings=tuple(get_power_supply_ignore_list()),",
+              "    )",
+              "",
+              "",
+              "system_info = SystemInfo()",
+          )
+          text = replace_once(text, old, new, "power context discovery factory")
 
-          old = '''            platform_profile=platform_profile.snapshot(),
-                  intel_power=intel_snapshot,
-              )
-          
-          
-          system_info = SystemInfo()
-          '''
-          new = '''            platform_profile=platform_profile.snapshot(),
-                  intel_power=intel_snapshot,
-                  power_context=power_context_snapshot,
-              )
-          
-          
-          def power_context_discovery() -> PowerContextDiscovery:
-              sys_root = (
-                  Path(SNAP_HOST_ROOT) / "sys"
-                  if IS_INSTALLED_WITH_SNAP
-                  else Path("/sys")
-              )
-              return PowerContextDiscovery(
-                  power_supply_root=sys_root / "class/power_supply",
-                  typec_root=sys_root / "class/typec",
-                  usb_pd_root=sys_root / "class/usb_power_delivery",
-                  ignored_supply_substrings=tuple(get_power_supply_ignore_list()),
-              )
-          
-          
-          system_info = SystemInfo()
-          '''
-          if old not in text:
-              raise SystemExit("expected SystemReport construction tail not found")
-          text = text.replace(old, new, 1)
-
-          marker = '''def format_system_report(
-              report: SystemReport,
-              include_distro: bool = True,
-              include_config: bool = True,
-          ) -> str:
-          '''
-          if marker not in text:
-              raise SystemExit("format_system_report marker not found")
-
-          formatting = '''def _format_power_read(result, formatter=str) -> str:
+          marker = block(
+              "def format_system_report(",
+              "    report: SystemReport,",
+              "    include_distro: bool = True,",
+              "    include_config: bool = True,",
+              ") -> str:",
+          )
+          formatting = dedent('''\
+          def _format_power_read(result, formatter=str) -> str:
               if result.status is ReadStatus.MISSING:
                   return "Unavailable"
               if result.status is ReadStatus.UNREADABLE:
@@ -245,8 +251,8 @@ jobs:
               if result.value is None:
                   return "Unknown"
               return formatter(result.value)
-          
-          
+
+
           def _format_power_subsystem_status(status: ReadStatus) -> str:
               return {
                   ReadStatus.AVAILABLE: "Available",
@@ -254,16 +260,16 @@ jobs:
                   ReadStatus.UNREADABLE: "Unreadable",
                   ReadStatus.INVALID: "Invalid",
               }.get(status, "Unknown")
-          
-          
+
+
           def _format_external_power(value: ExternalPower) -> str:
               return {
                   ExternalPower.ONLINE: "Online",
                   ExternalPower.OFFLINE: "Offline",
                   ExternalPower.UNKNOWN: "Unknown",
               }[value]
-          
-          
+
+
           def _format_battery_flow(value: BatteryFlow) -> str:
               return {
                   BatteryFlow.CHARGING: "Charging",
@@ -273,16 +279,16 @@ jobs:
                   BatteryFlow.MIXED: "Mixed",
                   BatteryFlow.UNKNOWN: "Unknown",
               }[value]
-          
-          
+
+
           def _format_micro_unit(value: int, unit: str) -> str:
               return f"{value / 1_000_000:.3f} {unit}"
-          
-          
+
+
           def _format_yes_no(value: bool) -> str:
               return "Yes" if value else "No"
-          
-          
+
+
           def _format_usb_pd_attribute(attribute) -> str:
               if attribute.unit is None:
                   value = _format_power_read(
@@ -298,8 +304,8 @@ jobs:
                   )
               label = attribute.name.replace("_", " ").capitalize()
               return f"{label}: {value}"
-          
-          
+
+
           def format_power_context_debug(snapshot: PowerContextSnapshot) -> list[str]:
               lines = [
                   f"External power: {_format_external_power(snapshot.external_power)}",
@@ -307,7 +313,7 @@ jobs:
                   "Power Supply subsystem: "
                   + _format_power_subsystem_status(snapshot.power_supply_status),
               ]
-          
+
               for supply in snapshot.power_supplies:
                   lines.append(f"  {supply.supply_id}")
                   fields = (
@@ -316,25 +322,53 @@ jobs:
                       ("Online", supply.online, _format_yes_no),
                       ("Status", supply.status, str),
                       ("USB type", supply.usb_type, str),
-                      ("Voltage now", supply.voltage_now, lambda value: _format_micro_unit(value, "V")),
-                      ("Current now", supply.current_now, lambda value: _format_micro_unit(value, "A")),
-                      ("Power now", supply.power_now, lambda value: _format_micro_unit(value, "W")),
-                      ("Input current limit", supply.input_current_limit, lambda value: _format_micro_unit(value, "A")),
-                      ("Input voltage limit", supply.input_voltage_limit, lambda value: _format_micro_unit(value, "V")),
-                      ("Input power limit", supply.input_power_limit, lambda value: _format_micro_unit(value, "W")),
+                      (
+                          "Voltage now",
+                          supply.voltage_now,
+                          lambda value: _format_micro_unit(value, "V"),
+                      ),
+                      (
+                          "Current now",
+                          supply.current_now,
+                          lambda value: _format_micro_unit(value, "A"),
+                      ),
+                      (
+                          "Power now",
+                          supply.power_now,
+                          lambda value: _format_micro_unit(value, "W"),
+                      ),
+                      (
+                          "Input current limit",
+                          supply.input_current_limit,
+                          lambda value: _format_micro_unit(value, "A"),
+                      ),
+                      (
+                          "Input voltage limit",
+                          supply.input_voltage_limit,
+                          lambda value: _format_micro_unit(value, "V"),
+                      ),
+                      (
+                          "Input power limit",
+                          supply.input_power_limit,
+                          lambda value: _format_micro_unit(value, "W"),
+                      ),
                       ("Capacity", supply.capacity, lambda value: f"{value}%"),
                       ("Capacity level", supply.capacity_level, str),
                   )
                   for label, result, formatter in fields:
-                      lines.append(f"    {label}: {_format_power_read(result, formatter)}")
-          
+                      lines.append(
+                          f"    {label}: {_format_power_read(result, formatter)}"
+                      )
+
               lines.append(
                   "Type-C subsystem: "
                   + _format_power_subsystem_status(snapshot.typec_status)
               )
               for port in snapshot.typec_ports:
                   lines.append(f"  {port.port_id}")
-                  lines.append("    Power role: " + _format_power_read(port.power_role))
+                  lines.append(
+                      "    Power role: " + _format_power_read(port.power_role)
+                  )
                   lines.append(
                       "    Power operation mode: "
                       + _format_power_read(port.power_operation_mode)
@@ -345,9 +379,12 @@ jobs:
                   )
                   lines.append(
                       "    Partner USB-PD capable: "
-                      + _format_power_read(port.partner_usb_pd_capable, _format_yes_no)
+                      + _format_power_read(
+                          port.partner_usb_pd_capable,
+                          _format_yes_no,
+                      )
                   )
-          
+
               lines.append(
                   "USB Power Delivery subsystem: "
                   + _format_power_subsystem_status(snapshot.usb_pd_status)
@@ -365,138 +402,163 @@ jobs:
                           lines.append("      None exposed")
                           continue
                       for capability in capabilities:
-                          position = str(capability.position) if capability.position is not None else "?"
+                          position = (
+                              str(capability.position)
+                              if capability.position is not None
+                              else "?"
+                          )
                           lines.append(
                               f"      PDO {position}: {capability.kind.value} "
                               f"({capability.sysfs_name})"
                           )
                           for attribute in capability.attributes:
-                              lines.append("        " + _format_usb_pd_attribute(attribute))
-          
+                              lines.append(
+                                  "        " + _format_usb_pd_attribute(attribute)
+                              )
+
               return lines
-          
-          
+
+
           def format_power_context_summary(snapshot: PowerContextSnapshot) -> list[str]:
               def counted_status(status: ReadStatus, count: int, noun: str) -> str:
                   if status is ReadStatus.AVAILABLE:
                       return f"Available ({count} {noun})"
                   return _format_power_subsystem_status(status)
-          
+
               return [
                   f"External power: {_format_external_power(snapshot.external_power)}",
                   f"Battery flow: {_format_battery_flow(snapshot.battery_flow)}",
                   "Type-C: "
-                  + counted_status(snapshot.typec_status, len(snapshot.typec_ports), "ports"),
+                  + counted_status(
+                      snapshot.typec_status,
+                      len(snapshot.typec_ports),
+                      "ports",
+                  ),
                   "USB-PD: "
-                  + counted_status(snapshot.usb_pd_status, len(snapshot.usb_pd_objects), "objects"),
+                  + counted_status(
+                      snapshot.usb_pd_status,
+                      len(snapshot.usb_pd_objects),
+                      "objects",
+                  ),
               ]
-          
-          
-          '''
+
+
+          ''')
+          if text.count(marker) != 1:
+              raise SystemExit(
+                  f"format_system_report marker: expected exactly one match, got {text.count(marker)}"
+              )
           text = text.replace(marker, formatting + marker, 1)
 
-          old = '''    if report.intel_power is not None:
-                  lines.extend(
-                      [
-                          "",
-                          "-" * 25 + " Intel Power Diagnostics " + "-" * 25,
-                          "",
-                      ]
-                  )
-                  lines.extend(format_intel_power_summary(report.intel_power))
-          
-              return "\\n".join(lines)
-          '''
-          new = '''    if report.intel_power is not None:
-                  lines.extend(
-                      [
-                          "",
-                          "-" * 25 + " Intel Power Diagnostics " + "-" * 25,
-                          "",
-                      ]
-                  )
-                  lines.extend(format_intel_power_summary(report.intel_power))
-          
-              if report.power_context is not None:
-                  lines.extend(
-                      [
-                          "",
-                          "-" * 24 + " Power Context Diagnostics " + "-" * 24,
-                          "",
-                      ]
-                  )
-                  lines.extend(format_power_context_debug(report.power_context))
-          
-              return "\\n".join(lines)
-          '''
-          if old not in text:
-              raise SystemExit("expected format_system_report tail not found")
-          path.write_text(text.replace(old, new, 1))
-
-          path = Path("auto_cpufreq/modules/system_monitor.py")
-          text = path.read_text()
-          old = '''    format_intel_power_summary,
-              format_platform_profile_summary,
-              system_info,
+          old = block(
+              "    if report.intel_power is not None:",
+              "        lines.extend(",
+              "            [",
+              "                \"\",",
+              "                \"-\" * 25 + \" Intel Power Diagnostics \" + \"-\" * 25,",
+              "                \"\",",
+              "            ]",
+              "        )",
+              "        lines.extend(format_intel_power_summary(report.intel_power))",
+              "",
+              "    return \"\\n\".join(lines)",
           )
-          '''
-          new = '''    format_intel_power_summary,
-              format_platform_profile_summary,
-              format_power_context_summary,
-              system_info,
+          new = block(
+              "    if report.intel_power is not None:",
+              "        lines.extend(",
+              "            [",
+              "                \"\",",
+              "                \"-\" * 25 + \" Intel Power Diagnostics \" + \"-\" * 25,",
+              "                \"\",",
+              "            ]",
+              "        )",
+              "        lines.extend(format_intel_power_summary(report.intel_power))",
+              "",
+              "    if report.power_context is not None:",
+              "        lines.extend(",
+              "            [",
+              "                \"\",",
+              "                \"-\" * 24 + \" Power Context Diagnostics \" + \"-\" * 24,",
+              "                \"\",",
+              "            ]",
+              "        )",
+              "        lines.extend(format_power_context_debug(report.power_context))",
+              "",
+              "    return \"\\n\".join(lines)",
           )
-          '''
-          if old not in text:
-              raise SystemExit("expected system_monitor import block not found")
-          text = text.replace(old, new, 1)
+          text = replace_once(text, old, new, "format_system_report diagnostics")
+          system_info_path.write_text(text)
 
-          old = '''                report = system_info.generate_system_report(
-                          include_intel_power=True,
-                          sample_intel_energy=True,
-                      )
-          '''
-          new = '''                report = system_info.generate_system_report(
-                          include_intel_power=True,
-                          sample_intel_energy=True,
-                          include_power_context=True,
-                      )
-          '''
-          if old not in text:
-              raise SystemExit("expected STATS collection call not found")
-          text = text.replace(old, new, 1)
+          monitor_path = Path("auto_cpufreq/modules/system_monitor.py")
+          text = monitor_path.read_text()
+          old = block(
+              "    format_intel_power_summary,",
+              "    format_platform_profile_summary,",
+              "    system_info,",
+              ")",
+          )
+          new = block(
+              "    format_intel_power_summary,",
+              "    format_platform_profile_summary,",
+              "    format_power_context_summary,",
+              "    system_info,",
+              ")",
+          )
+          text = replace_once(text, old, new, "system_monitor imports")
 
-          marker = '''        # System Statistics
-              self.right_content.extend(
-          '''
-          block = '''        if self.type == ViewType.STATS and report.power_context is not None:
-                  self.right_content.append(
-                      urwid.AttrMap(aligned_text("Power Context"), "header")
-                  )
-                  for line in format_power_context_summary(report.power_context):
-                      self.right_content.append(aligned_text(line))
-                  self.right_content.append(aligned_text(""))
-          
-          '''
-          if marker not in text:
-              raise SystemExit("expected System Statistics marker not found")
-          path.write_text(text.replace(marker, block + marker, 1))
+          old = block(
+              "                report = system_info.generate_system_report(",
+              "                    include_intel_power=True,",
+              "                    sample_intel_energy=True,",
+              "                )",
+          )
+          new = block(
+              "                report = system_info.generate_system_report(",
+              "                    include_intel_power=True,",
+              "                    sample_intel_energy=True,",
+              "                    include_power_context=True,",
+              "                )",
+          )
+          text = replace_once(text, old, new, "STATS collection")
 
-          path = Path("auto_cpufreq/bin/auto_cpufreq.py")
-          text = path.read_text()
-          old = '''            report = system_info.generate_system_report(
-                          include_intel_power=True,
-                          sample_intel_energy=False,
-                      )
-          '''
-          new = '''            report = system_info.generate_system_report(
-                          include_intel_power=True,
-                          sample_intel_energy=False,
-                          include_power_context=True,
-                      )
-          '''
-          if old not in text:
-              raise SystemExit("expected debug collection call not found")
-          path.write_text(text.replace(old, new, 1))
+          marker = block(
+              "        # System Statistics",
+              "        self.right_content.extend(",
+          )
+          block_text = block(
+              "        if self.type == ViewType.STATS and report.power_context is not None:",
+              "            self.right_content.append(",
+              "                urwid.AttrMap(aligned_text(\"Power Context\"), \"header\")",
+              "            )",
+              "            for line in format_power_context_summary(report.power_context):",
+              "                self.right_content.append(aligned_text(line))",
+              "            self.right_content.append(aligned_text(\"\"))",
+              "",
+          )
+          if text.count(marker) != 1:
+              raise SystemExit(
+                  f"System Statistics marker: expected exactly one match, got {text.count(marker)}"
+              )
+          text = text.replace(marker, block_text + marker, 1)
+          monitor_path.write_text(text)
+
+          cli_path = Path("auto_cpufreq/bin/auto_cpufreq.py")
+          text = cli_path.read_text()
+          old = block(
+              "            report = system_info.generate_system_report(",
+              "                include_intel_power=True,",
+              "                sample_intel_energy=False,",
+              "            )",
+          )
+          new = block(
+              "            report = system_info.generate_system_report(",
+              "                include_intel_power=True,",
+              "                sample_intel_energy=False,",
+              "                include_power_context=True,",
+              "            )",
+          )
+          text = replace_once(text, old, new, "--debug collection")
+          cli_path.write_text(text)
           PY
 
       - name: Verify GREEN and control-path isolation
@@ -508,6 +570,7 @@ jobs:
           PYTHONPATH="$PWD" python - <<'PY'
           from pathlib import Path
           from tempfile import TemporaryDirectory
+
           from auto_cpufreq.modules.power_context import ExternalPower, PowerContextDiscovery
 
           with TemporaryDirectory() as td:
@@ -515,7 +578,9 @@ jobs:
               ps = root / "power_supply"
               tc = root / "typec"
               pd = root / "usb_power_delivery"
-              ps.mkdir(); tc.mkdir(); pd.mkdir()
+              ps.mkdir()
+              tc.mkdir()
+              pd.mkdir()
               source = ps / "ADP1"
               source.mkdir()
               (source / "type").write_text("Mains\n")
@@ -527,10 +592,26 @@ jobs:
 
           python -m compileall -q auto_cpufreq
           git diff --check
-          test -z "$(git diff --name-only -- auto_cpufreq/modules/policy.py auto_cpufreq/modules/daemon_scheduler.py auto_cpufreq/modules/intel_rapl.py auto_cpufreq/power_helper.py)"
-          grep -q 'include_power_context=True' auto_cpufreq/bin/auto_cpufreq.py
-          grep -q 'include_power_context=True' auto_cpufreq/modules/system_monitor.py
+
+          changed="$(git diff --name-only | sort)"
+          expected="$(printf '%s\n' \
+            auto_cpufreq/bin/auto_cpufreq.py \
+            auto_cpufreq/modules/system_info.py \
+            auto_cpufreq/modules/system_monitor.py | sort)"
+          test "$changed" = "$expected"
+
+          test -z "$(git diff --name-only -- \
+            auto_cpufreq/modules/policy.py \
+            auto_cpufreq/modules/daemon_scheduler.py \
+            auto_cpufreq/modules/intel_rapl.py \
+            auto_cpufreq/power_helper.py)"
+
+          test "$(grep -c 'include_power_context=True' auto_cpufreq/modules/system_monitor.py)" -eq 1
+          test "$(grep -c 'include_power_context=True' auto_cpufreq/bin/auto_cpufreq.py)" -eq 1
           grep -q 'format_power_context_summary' auto_cpufreq/modules/system_monitor.py
+          grep -q 'Power Context Diagnostics' auto_cpufreq/modules/system_info.py
+
+          git diff --stat
           git diff -- auto_cpufreq/modules/system_info.py auto_cpufreq/modules/system_monitor.py auto_cpufreq/bin/auto_cpufreq.py
 
       - name: Commit Task 5 production change to implementation branch
@@ -539,6 +620,9 @@ jobs:
           set -euo pipefail
           git config user.name "Lucas"
           git config user.email "122493239+lucasleocs@users.noreply.github.com"
-          git add auto_cpufreq/modules/system_info.py auto_cpufreq/modules/system_monitor.py auto_cpufreq/bin/auto_cpufreq.py
+          git add \
+            auto_cpufreq/modules/system_info.py \
+            auto_cpufreq/modules/system_monitor.py \
+            auto_cpufreq/bin/auto_cpufreq.py
           git commit -m "feat: report power context diagnostics"
           git push origin HEAD:usb-c-power-context
