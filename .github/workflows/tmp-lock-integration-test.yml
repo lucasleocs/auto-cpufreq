@@ -83,6 +83,58 @@ jobs:
 
           sudo rm -f /var/lib/auto-cpufreq/power-state.json /tmp/not-auto-cpufreq-operation.lock
 
+  inherited-lock-success:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Accept a held inherited lock without releasing the parent lock
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo mkdir -p /run/lock /var/lib/auto-cpufreq
+          sudo rm -f /run/lock/auto-cpufreq.lock
+          sudo touch /var/lib/auto-cpufreq/power-state.json
+
+          sudo python3 - <<'PY'
+          import fcntl
+          import os
+          import subprocess
+
+          lock_path = "/run/lock/auto-cpufreq.lock"
+          fd = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o600)
+          fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+          env = os.environ.copy()
+          env["AUTO_CPUFREQ_OPERATION_LOCK_FD"] = str(fd)
+
+          result = subprocess.run(
+              ["bash", "./auto-cpufreq-installer", "--install"],
+              env=env,
+              pass_fds=(fd,),
+              capture_output=True,
+              text=True,
+          )
+          output = result.stdout + result.stderr
+          assert result.returncode != 0, output
+          assert "daemon installation or recovery snapshot is still present" in output, output
+          assert "operation lock" not in output.lower(), output
+
+          probe = subprocess.run(
+              [
+                  "python3",
+                  "-c",
+                  "import fcntl, os, sys; "
+                  "fd=os.open('/run/lock/auto-cpufreq.lock', os.O_RDWR); "
+                  "\ntry: fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)\n"
+                  "except BlockingIOError: sys.exit(0)\n"
+                  "sys.exit(1)",
+              ]
+          )
+          assert probe.returncode == 0, "child installer released the parent operation lock"
+          os.close(fd)
+          PY
+
+          sudo rm -f /var/lib/auto-cpufreq/power-state.json /run/lock/auto-cpufreq.lock
+
   updater-lock-propagation:
     runs-on: ubuntu-latest
     steps:
