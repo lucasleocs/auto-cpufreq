@@ -254,3 +254,177 @@ def collect_diagnostics(
             capture_state,
         ),
     )
+
+
+def _available(value: object | None) -> str:
+    return str(value) if value is not None else "Unavailable"
+
+
+def _enabled_state(value: bool | None) -> str:
+    if value is True:
+        return "Enabled"
+    if value is False:
+        return "Disabled"
+    return "Unavailable"
+
+
+def _battery_status(battery_info) -> str:
+    if battery_info.is_charging is True:
+        return "Charging"
+    if battery_info.is_ac_plugged is False:
+        return "Discharging"
+    if battery_info.is_ac_plugged is None:
+        return "Unknown"
+    return "Not charging"
+
+
+def _ac_state(is_ac_plugged: bool | None) -> str:
+    if is_ac_plugged is True:
+        return "Connected"
+    if is_ac_plugged is False:
+        return "Disconnected"
+    return "Unknown"
+
+
+def _profile_selection(is_ac_plugged: bool | None) -> str:
+    if is_ac_plugged is False:
+        return "battery"
+    if is_ac_plugged is None:
+        return "charger (AC state unknown)"
+    return "charger"
+
+
+def _turbo_state(state: tuple[bool | None, bool | None]) -> str:
+    enabled, driver_managed = state
+    if enabled is True:
+        return "Enabled"
+    if enabled is False:
+        return "Disabled"
+    if driver_managed is True:
+        return "Driver managed"
+    return "Unavailable"
+
+
+def _override_state(value: str | None, *, default_label: str | None = None) -> str:
+    if value is None:
+        return "Unavailable"
+    if value == "default" and default_label is not None:
+        return default_label
+    return value
+
+
+def _threshold(value: int | None) -> str:
+    return f"{value}%" if value is not None else "Unavailable"
+
+
+def _format_service(status: ServiceStatus) -> str:
+    if status.installed is False:
+        return "Not installed"
+    if status.installed is None:
+        return "Unavailable"
+
+    details = tuple(
+        value
+        for value in (status.active_state, status.unit_file_state)
+        if value
+    )
+    return ", ".join(details) if details else "Installed"
+
+
+def format_diagnostics_report(system_report, diagnostics: DiagnosticsReport) -> str:
+    """Format already-collected debug state without performing new I/O."""
+    battery = system_report.battery_info
+    config_value = diagnostics.config_path or "defaults (no config file)"
+
+    lines = [
+        "Configuration",
+        f"Configuration: {config_value}",
+        "",
+        "Power Source",
+        f"AC power: {_ac_state(battery.is_ac_plugged)}",
+        f"Battery status: {_battery_status(battery)}",
+        f"Battery level: {_threshold(battery.battery_level)}",
+        "Auto-cpufreq profile selection: "
+        f"{_profile_selection(battery.is_ac_plugged)}",
+    ]
+
+    if battery.power_consumption is not None:
+        lines.append(f"Battery power: {battery.power_consumption:g} W")
+
+    threshold_info = diagnostics.battery_thresholds
+    if threshold_info.batteries or threshold_info.conservation_mode is not None:
+        lines.extend(["", "Battery Thresholds"])
+        for item in threshold_info.batteries:
+            lines.append(
+                f"{item.name}: start {_threshold(item.start_threshold)}, "
+                f"stop {_threshold(item.stop_threshold)}"
+            )
+        if threshold_info.conservation_mode is not None:
+            lines.append(
+                "Ideapad conservation mode: "
+                f"{_enabled_state(threshold_info.conservation_mode)}"
+            )
+
+    lines.extend(
+        [
+            "",
+            "CPU Power State",
+            f"Governor: {_available(system_report.current_gov)}",
+            "Governor override: "
+            f"{_override_state(diagnostics.governor_override, default_label='none (profile-controlled)')}",
+            f"EPP: {_available(system_report.current_epp)}",
+            f"EPB: {_available(system_report.current_epb)}",
+            "HWP Dynamic Boost: "
+            f"{_enabled_state(system_report.current_hwp_dynamic_boost)}",
+            f"Turbo Boost: {_turbo_state(system_report.is_turbo_on)}",
+            f"Turbo override: {_override_state(diagnostics.turbo_override)}",
+        ]
+    )
+
+    intel = diagnostics.intel_pstate
+    if any(
+        value is not None
+        for value in (intel.mode, intel.min_perf_pct, intel.max_perf_pct)
+    ):
+        lines.append(f"Intel P-State mode: {_available(intel.mode)}")
+        lines.append(
+            "Intel P-State min performance: "
+            f"{_threshold(intel.min_perf_pct)}"
+        )
+        lines.append(
+            "Intel P-State max performance: "
+            f"{_threshold(intel.max_perf_pct)}"
+        )
+
+    temperature = (
+        f"{system_report.cpu_avg_temp:g} °C"
+        if system_report.cpu_avg_temp is not None
+        else "Unavailable"
+    )
+    lines.extend(
+        [
+            "",
+            "System Load",
+            f"Total CPU usage: {system_report.cpu_usage:g}%",
+            f"Total system load: {system_report.load:.2f}",
+            f"Average temp. of all cores: {temperature}",
+            "",
+            "Power Management Services",
+        ]
+    )
+
+    services = diagnostics.power_services
+    if services.init_system != "systemd":
+        lines.append(
+            "Service status: Unavailable (PID 1: "
+            f"{services.init_system or 'unknown'})"
+        )
+    elif not services.services:
+        lines.append("Service status: Unavailable")
+    else:
+        lines.extend(
+            f"{service.name}: {_format_service(service)}"
+            for service in services.services
+        )
+
+    return "\n".join(lines)
