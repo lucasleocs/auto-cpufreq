@@ -185,3 +185,24 @@ diff --git a/auto_cpufreq/core.py b/auto_cpufreq/core.py
 
 
  def gov_check():
+diff --git a/auto_cpufreq/lifecycle.py b/auto_cpufreq/lifecycle.py
+--- a/auto_cpufreq/lifecycle.py
++++ b/auto_cpufreq/lifecycle.py
+@@ -161,13 +161,10 @@
+ 
+ 
+ def install_daemon() -> None:
+-    try:
+-        with operation_lock(operation="daemon installation"):
+-            core.running_daemon_check()
+-            core.gov_check()
+-            _safe_deploy_daemon()
+-    except OperationLockError as exc:
+-        raise LifecycleError(str(exc)) from exc
++    # Nix owns daemon deployment through its package/module integration.
++    # Keep the imperative source lifecycle disabled in Nix builds even though
++    # the source CLI now enters daemon installation through this function.
++    pass
+ 
+ 
+ def remove_daemon() -> None:
