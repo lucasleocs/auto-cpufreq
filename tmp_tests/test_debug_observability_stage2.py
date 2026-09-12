@@ -1,5 +1,6 @@
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from types import SimpleNamespace
 import unittest
 
 from auto_cpufreq.modules.diagnostics import (
@@ -7,6 +8,7 @@ from auto_cpufreq.modules.diagnostics import (
     CpuFreqPolicyInfo,
     read_amd_pstate_info,
     read_cpufreq_policy_info,
+    read_power_services_info,
 )
 
 
@@ -125,6 +127,126 @@ class AmdPstateCollectorTests(unittest.TestCase):
             read_amd_pstate_info(Path("/does/not/exist")),
             AmdPstateInfo(),
         )
+
+
+class PowerServiceCollectorTests(unittest.TestCase):
+    def test_systemd_host_includes_tuned_ppd(self):
+        with TemporaryDirectory() as tmp:
+            init_comm = Path(tmp) / "comm"
+            init_comm.write_text("systemd\n")
+            calls = []
+
+            def capture_state(unit):
+                calls.append(unit)
+                return {
+                    "load_state": "loaded",
+                    "active_state": "inactive",
+                    "unit_file_state": "disabled",
+                }
+
+            result = read_power_services_info(
+                init_comm=init_comm,
+                capture_state=capture_state,
+            )
+
+            self.assertEqual(
+                calls,
+                [
+                    "auto-cpufreq.service",
+                    "power-profiles-daemon.service",
+                    "tuned.service",
+                    "tuned-ppd.service",
+                    "tlp.service",
+                ],
+            )
+            self.assertEqual(
+                [service.name for service in result.services],
+                ["auto-cpufreq", "power-profiles-daemon", "tuned", "tuned-ppd", "TLP"],
+            )
+
+    def test_snap_queries_only_its_own_daemon(self):
+        with TemporaryDirectory() as tmp:
+            init_comm = Path(tmp) / "comm"
+            init_comm.write_text("systemd\n")
+            snap_calls = []
+            host_calls = []
+
+            def snap_runner(args, **kwargs):
+                snap_calls.append((args, kwargs))
+                return SimpleNamespace(
+                    returncode=0,
+                    stdout=(
+                        "Service               Startup  Current  Notes\n"
+                        "auto-cpufreq.service  enabled  active   -\n"
+                    ),
+                )
+
+            result = read_power_services_info(
+                init_comm=init_comm,
+                capture_state=lambda unit: host_calls.append(unit),
+                is_snap=True,
+                snap_runner=snap_runner,
+            )
+
+            self.assertEqual(host_calls, [])
+            self.assertEqual(
+                snap_calls[0][0],
+                ["snapctl", "services", "auto-cpufreq.service"],
+            )
+            self.assertTrue(snap_calls[0][1]["capture_output"])
+            self.assertTrue(snap_calls[0][1]["text"])
+            self.assertFalse(snap_calls[0][1]["check"])
+
+            by_name = {service.name: service for service in result.services}
+            daemon = by_name["auto-cpufreq"]
+            self.assertIs(daemon.installed, True)
+            self.assertEqual(daemon.active_state, "active")
+            self.assertEqual(daemon.unit_file_state, "enabled")
+
+            for name in ("power-profiles-daemon", "tuned", "tuned-ppd", "TLP"):
+                self.assertIsNone(by_name[name].installed)
+                self.assertEqual(
+                    by_name[name].detail,
+                    "Unavailable (Snap confinement)",
+                )
+
+    def test_snap_query_failure_is_fail_soft(self):
+        with TemporaryDirectory() as tmp:
+            init_comm = Path(tmp) / "comm"
+            init_comm.write_text("systemd\n")
+
+            result = read_power_services_info(
+                init_comm=init_comm,
+                capture_state=lambda unit: self.fail("host systemctl must not be queried"),
+                is_snap=True,
+                snap_runner=lambda *args, **kwargs: SimpleNamespace(
+                    returncode=1,
+                    stdout="",
+                ),
+            )
+
+            by_name = {service.name: service for service in result.services}
+            self.assertIsNone(by_name["auto-cpufreq"].installed)
+            self.assertEqual(by_name["auto-cpufreq"].detail, "Unavailable")
+            self.assertEqual(
+                by_name["power-profiles-daemon"].detail,
+                "Unavailable (Snap confinement)",
+            )
+
+    def test_non_systemd_non_snap_host_does_not_query_systemctl(self):
+        with TemporaryDirectory() as tmp:
+            init_comm = Path(tmp) / "comm"
+            init_comm.write_text("openrc-init\n")
+            calls = []
+
+            result = read_power_services_info(
+                init_comm=init_comm,
+                capture_state=lambda unit: calls.append(unit),
+            )
+
+            self.assertEqual(calls, [])
+            self.assertEqual(result.init_system, "openrc-init")
+            self.assertEqual(result.services, ())
 
 
 if __name__ == "__main__":
