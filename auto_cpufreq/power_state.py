@@ -17,9 +17,12 @@ DEFAULT_STATE_DIR = Path("/var/lib/auto-cpufreq")
 DEFAULT_BLUETOOTH_CONFIG = Path("/etc/bluetooth/main.conf")
 DEFAULT_INIT_COMM = Path("/proc/1/comm")
 STATE_FILE_NAME = "power-state.json"
+# Restore TuneD before tuned-ppd because the compatibility daemon requires
+# tuned.service. Snapshot capture uses the same stable service list.
 POWER_SERVICES = (
     "power-profiles-daemon.service",
     "tuned.service",
+    "tuned-ppd.service",
 )
 
 _ACTIVE_STATES = {"active", "activating", "reloading"}
@@ -169,6 +172,14 @@ def _capture_power_profiles_profile(powerprofilesctl: str):
         return None
     profile = result.stdout.strip()
     return profile or None
+
+
+def _service_active(services, unit: str) -> bool:
+    state = services.get(unit)
+    return (
+        state is not None
+        and state.get("active_state") in _ACTIVE_STATES
+    )
 
 
 def _state_path(state_dir: Path):
@@ -403,16 +414,29 @@ def save_power_state(
                 return False
             services[unit] = state
 
-        ppd_state = services.get("power-profiles-daemon.service")
-        if (
-            ppd_state is not None
-            and ppd_state.get("active_state") in _ACTIVE_STATES
-        ):
+        ppd_active = _service_active(
+            services,
+            "power-profiles-daemon.service",
+        )
+        tuned_ppd_active = _service_active(
+            services,
+            "tuned-ppd.service",
+        )
+
+        if ppd_active:
             power_profiles_profile = _capture_power_profiles_profile(
                 powerprofilesctl
             )
             if power_profiles_profile is None:
                 return False
+        elif tuned_ppd_active and _command_exists(powerprofilesctl):
+            # tuned-ppd exposes the PPD API but does not itself provide the
+            # powerprofilesctl client. Capture the API profile when a compatible
+            # client is present; TuneD's own persisted profile remains the
+            # recovery source when it is not.
+            power_profiles_profile = _capture_power_profiles_profile(
+                powerprofilesctl
+            )
 
     bluetooth_state = _capture_bluetooth_state(bluetooth_config)
     if bluetooth_state is None:
@@ -483,7 +507,12 @@ def restore_power_state(
         if not _command_exists(systemctl):
             success = False
         else:
-            for unit, state in services.items():
+            # Do not rely on JSON key order: tuned-ppd requires tuned.service,
+            # so the backend must be restored before its PPD compatibility API.
+            for unit in POWER_SERVICES:
+                state = services.get(unit)
+                if state is None:
+                    continue
                 if not restore_service_state(unit, state, systemctl=systemctl):
                     success = False
 

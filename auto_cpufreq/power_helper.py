@@ -444,6 +444,14 @@ def disable_power_profiles_daemon() -> bool:
     )
 
 
+def disable_tuned_ppd_daemon() -> bool:
+    print("\n* Disabling TuneD PPD compatibility daemon")
+    return _disable_systemd_power_service(
+        "tuned-ppd",
+        "TuneD PPD compatibility daemon",
+    )
+
+
 def disable_tuned_daemon() -> bool:
     print("\n* Disabling TuneD daemon")
     return _disable_systemd_power_service("tuned", "TuneD daemon")
@@ -455,6 +463,8 @@ def gnome_power_svc_disable() -> bool:
     if getoutput("ps h -o comm 1").strip() != "systemd":
         return True
 
+    # Reset traditional PPD to balanced before shutdown so a power-saver
+    # policy does not remain applied after its provider is disabled.
     if gnome_power_status == 0 and powerprofilesctl_exists:
         print("\nUsing profile: balanced")
         if not _run_required_power_command(
@@ -471,6 +481,11 @@ def tuned_svc_disable() -> bool:
         return True
     if getoutput("ps h -o comm 1").strip() != "systemd":
         return True
+
+    # tuned-ppd requires tuned.service. Disable the compatibility provider
+    # first so it cannot keep or reactivate the TuneD backend during takeover.
+    if not disable_tuned_ppd_daemon():
+        return False
     return disable_tuned_daemon()
 
 # cli
