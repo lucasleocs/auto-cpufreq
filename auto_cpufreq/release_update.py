@@ -2,8 +2,8 @@ from pathlib import Path
 from re import fullmatch
 from shutil import rmtree
 from subprocess import DEVNULL, run
+from tempfile import mkdtemp
 from typing import NamedTuple, Optional
-from uuid import uuid4
 
 
 class ReleaseUpdateDecision(NamedTuple):
@@ -51,6 +51,20 @@ def version_matches_commit(installed_version: str, expected_commit: str) -> bool
     return (
         expected_commit.startswith(installed_commit)
         or installed_commit.startswith(expected_commit)
+    )
+
+
+def version_matches_exact_commit(
+    installed_version: str, expected_commit: str
+) -> bool:
+    installed_commit = extract_git_commit(installed_version)
+    expected_commit = expected_commit.strip().lower()
+
+    return (
+        installed_commit is not None
+        and fullmatch(r"[0-9a-f]{40}", installed_commit) is not None
+        and fullmatch(r"[0-9a-f]{40}", expected_commit) is not None
+        and installed_commit == expected_commit
     )
 
 
@@ -111,11 +125,10 @@ def decide_release_update(
 
 def new_staging_destination(parent: Path) -> Path:
     parent = Path(parent)
-
-    while True:
-        destination = parent / f"auto-cpufreq-update-{uuid4().hex}"
-        if not destination.exists() and not destination.is_symlink():
-            return destination
+    parent.mkdir(parents=True, exist_ok=True)
+    return Path(
+        mkdtemp(prefix="auto-cpufreq-update-", dir=str(parent))
+    )
 
 
 def _remove_destination(destination: Path) -> None:
@@ -133,18 +146,31 @@ def _try_remove_destination(destination: Path) -> bool:
     return True
 
 
+def cleanup_staging_workspace(staged_source: Path) -> bool:
+    staged_source = Path(staged_source)
+    workspace = (
+        staged_source.parent
+        if staged_source.name == "source"
+        else staged_source
+    )
+    if not workspace.name.startswith("auto-cpufreq-update-"):
+        return False
+    return _try_remove_destination(workspace)
+
+
 def stage_release(
     repository: str,
     release_tag: str,
     destination: Path,
 ) -> Optional[Path]:
-    destination = Path(destination)
+    workspace = Path(destination)
 
-    # Never remove or replace a path that existed before this staging attempt.
-    # Callers should allocate a fresh destination for each update.
-    if destination.exists() or destination.is_symlink():
+    # new_staging_destination() creates a private workspace atomically. Clone
+    # into a child path so cleanup only ever targets that owned workspace.
+    if not workspace.is_dir() or any(workspace.iterdir()):
         return None
 
+    source_dir = workspace / "source"
     try:
         result = run(
             [
@@ -156,17 +182,17 @@ def stage_release(
                 "--depth",
                 "1",
                 repository,
-                str(destination),
+                str(source_dir),
             ],
             stdout=DEVNULL,
             stderr=DEVNULL,
         )
     except OSError:
-        _try_remove_destination(destination)
+        cleanup_staging_workspace(workspace)
         return None
 
     if result.returncode != 0:
-        _try_remove_destination(destination)
+        cleanup_staging_workspace(workspace)
         return None
 
-    return destination
+    return source_dir
