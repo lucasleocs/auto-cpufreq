@@ -118,9 +118,9 @@ function manual_install {
   fi
 
   echo "This Linux distribution is not handled automatically by the source installer."; echo
-  echo "auto-cpufreq requires Python 3.10 or newer."
+  echo "auto-cpufreq requires Python 3.9 or newer."
   echo "Install your distro's equivalents of these source-build requirements:"
-  echo "Python 3.10+ with venv, pip and development headers; setuptools; dmidecode;"
+  echo "Python 3.9+ with venv, pip and development headers; setuptools; dmidecode;"
   echo "gcc; git; pkg-config; util-linux (flock); gobject-introspection; Cairo development files;"
   echo "PyGObject/GTK3 runtime or development files; and GTK3 development files."; echo
   echo "Then create an isolated virtual environment in a root-owned location,"
@@ -174,7 +174,7 @@ function enterprise_linux_major {
 function verify_python_version {
   "$1" - <<'PYVERSION'
 import sys
-raise SystemExit(0 if sys.version_info >= (3, 10) else 1)
+raise SystemExit(0 if sys.version_info >= (3, 9) else 1)
 PYVERSION
 }
 
@@ -223,7 +223,7 @@ function install_el_pygobject {
   elif printf '%s\n%s\n' "2.56" "$glib_version" | sort -V -C; then
     pygobject_spec='PyGObject>=3.44.2,<3.46'
   else
-    echo "Error: GLib $glib_version is too old for the supported Python 3.12 PyGObject path."
+    echo "Error: GLib $glib_version is too old for the supported PyGObject compatibility path."
     return 1
   fi
 
@@ -270,7 +270,7 @@ function tool_install {
     [ -r /etc/debian_version ] && VERSION="$(cat /etc/debian_version)"
 
     if [ ! -x "$PYTHON_BIN" ] || ! verify_python_version "$PYTHON_BIN"; then
-      echo "Error: auto-cpufreq requires Python 3.10 or newer from the distribution."
+      echo "Error: auto-cpufreq requires Python 3.9 or newer from the distribution."
       return 1
     fi
 
@@ -309,12 +309,11 @@ function tool_install {
     if is_enterprise_linux; then
       EL_MAJOR="$(enterprise_linux_major)"
       case "$EL_MAJOR" in
-        8|9)
-          PYTHON_BIN="/usr/bin/python3.12"
-          RPM_PYTHON_PACKAGES=(python3.12 python3.12-devel python3.12-pip)
+        8)
+          PYTHON_BIN="/usr/bin/python3.9"
+          RPM_PYTHON_PACKAGES=(python39 python39-devel python39-pip)
           ;;
-        10)
-          # RHEL 10 uses Python 3.12 as the default /usr/bin/python3.
+        9|10)
           PYTHON_BIN="/usr/bin/python3"
           RPM_PYTHON_PACKAGES=(python3 python3-devel python3-pip)
           ;;
@@ -401,7 +400,7 @@ function tool_install {
     return 1
   fi
   if ! verify_python_version "$PYTHON_BIN"; then
-    echo "Error: auto-cpufreq requires Python 3.10 or newer."
+    echo "Error: auto-cpufreq requires Python 3.9 or newer."
     return 1
   fi
 
