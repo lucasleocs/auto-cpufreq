@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+import shlex
 import subprocess
 from typing import Callable, Iterable
 
@@ -30,6 +31,18 @@ SNAP_HOST_SERVICE_NAMES = (
     "tuned",
     "tuned-ppd",
     "TLP",
+)
+PPD_DBUS_ENDPOINTS = (
+    (
+        "org.freedesktop.UPower.PowerProfiles",
+        "/org/freedesktop/UPower/PowerProfiles",
+        "org.freedesktop.UPower.PowerProfiles",
+    ),
+    (
+        "net.hadess.PowerProfiles",
+        "/net/hadess/PowerProfiles",
+        "net.hadess.PowerProfiles",
+    ),
 )
 
 
@@ -90,6 +103,20 @@ class PowerServicesInfo:
 
 
 @dataclass(frozen=True)
+class PpdProfileHold:
+    application_id: str | None = None
+    profile: str | None = None
+    reason: str | None = None
+
+
+@dataclass(frozen=True)
+class PpdDiagnostics:
+    active_profile: str | None = None
+    performance_degraded: str | None = None
+    active_profile_holds: tuple[PpdProfileHold, ...] | None = None
+
+
+@dataclass(frozen=True)
 class DiagnosticsReport:
     config_path: str | None
     governor_override: str | None
@@ -99,6 +126,7 @@ class DiagnosticsReport:
     cpufreq_policies: tuple[CpuFreqPolicyInfo, ...]
     battery_thresholds: BatteryThresholdDiagnostics
     power_services: PowerServicesInfo
+    ppd: PpdDiagnostics = PpdDiagnostics()
 
 
 def _read_text(path: Path) -> str | None:
@@ -414,6 +442,131 @@ def read_power_services_info(
     )
 
 
+def _read_busctl_property(endpoint, property_name: str, runner) -> str | None:
+    service, object_path, interface = endpoint
+    try:
+        result = runner(
+            [
+                "busctl",
+                "--system",
+                "get-property",
+                service,
+                object_path,
+                interface,
+                property_name,
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError:
+        return None
+
+    if result.returncode != 0:
+        return None
+    return result.stdout.strip()
+
+
+def _parse_busctl_string(output: str | None) -> str | None:
+    if output is None:
+        return None
+    try:
+        tokens = shlex.split(output)
+    except ValueError:
+        return None
+    if len(tokens) != 2 or tokens[0] != "s":
+        return None
+    return tokens[1]
+
+
+def _parse_busctl_profile_holds(
+    output: str | None,
+) -> tuple[PpdProfileHold, ...] | None:
+    if output is None:
+        return None
+    try:
+        tokens = shlex.split(output)
+    except ValueError:
+        return None
+
+    if len(tokens) < 2 or tokens[0] != "aa{sv}":
+        return None
+
+    try:
+        hold_count = int(tokens[1])
+    except ValueError:
+        return None
+    if hold_count < 0:
+        return None
+
+    index = 2
+    holds = []
+    try:
+        for _ in range(hold_count):
+            field_count = int(tokens[index])
+            index += 1
+            if field_count < 0:
+                return None
+
+            fields = {}
+            for _ in range(field_count):
+                key = tokens[index]
+                signature = tokens[index + 1]
+                value = tokens[index + 2]
+                index += 3
+                if signature != "s":
+                    return None
+                fields[key] = value
+
+            holds.append(
+                PpdProfileHold(
+                    application_id=fields.get("ApplicationId"),
+                    profile=fields.get("Profile"),
+                    reason=fields.get("Reason"),
+                )
+            )
+    except (IndexError, ValueError):
+        return None
+
+    if index != len(tokens):
+        return None
+    return tuple(holds)
+
+
+def read_power_profiles_daemon_info(
+    runner=subprocess.run,
+) -> PpdDiagnostics:
+    """Read selected PPD properties without changing profile state."""
+    for endpoint in PPD_DBUS_ENDPOINTS:
+        active_profile = _parse_busctl_string(
+            _read_busctl_property(endpoint, "ActiveProfile", runner)
+        )
+        if active_profile is None:
+            continue
+
+        performance_degraded = _parse_busctl_string(
+            _read_busctl_property(endpoint, "PerformanceDegraded", runner)
+        )
+        active_profile_holds = _parse_busctl_profile_holds(
+            _read_busctl_property(endpoint, "ActiveProfileHolds", runner)
+        )
+        return PpdDiagnostics(
+            active_profile=active_profile,
+            performance_degraded=performance_degraded,
+            active_profile_holds=active_profile_holds,
+        )
+
+    return PpdDiagnostics()
+
+
+def _ppd_provider_active(info: PowerServicesInfo) -> bool:
+    return any(
+        service.name in {"power-profiles-daemon", "tuned-ppd"}
+        and service.active_state == "active"
+        for service in info.services
+    )
+
+
 def collect_diagnostics(
     _system_report,
     *,
@@ -429,6 +582,7 @@ def collect_diagnostics(
     capture_state=capture_service_state,
     is_snap: bool = False,
     snap_runner=subprocess.run,
+    ppd_runner=subprocess.run,
 ) -> DiagnosticsReport:
     """Collect deep diagnostics beside one already-collected fast snapshot.
 
@@ -436,6 +590,18 @@ def collect_diagnostics(
     attached to one point-in-time SystemReport rather than recollecting shared
     telemetry through legacy helpers.
     """
+    power_services = read_power_services_info(
+        Path(init_comm),
+        capture_state,
+        is_snap=is_snap,
+        snap_runner=snap_runner,
+    )
+    ppd = (
+        read_power_profiles_daemon_info(ppd_runner)
+        if not is_snap and _ppd_provider_active(power_services)
+        else PpdDiagnostics()
+    )
+
     return DiagnosticsReport(
         config_path=config_path,
         governor_override=read_debug_override(
@@ -453,12 +619,8 @@ def collect_diagnostics(
             Path(power_supply_root),
             ideapad_roots,
         ),
-        power_services=read_power_services_info(
-            Path(init_comm),
-            capture_state,
-            is_snap=is_snap,
-            snap_runner=snap_runner,
-        ),
+        power_services=power_services,
+        ppd=ppd,
     )
 
 
@@ -767,5 +929,37 @@ def format_diagnostics_report(system_report, diagnostics: DiagnosticsReport) -> 
             f"{service.name}: {_format_service(service)}"
             for service in services.services
         )
+
+    if _ppd_provider_active(services):
+        ppd = diagnostics.ppd
+        lines.extend(
+            [
+                "",
+                "Power Profiles Daemon",
+                f"Active profile: {_available(ppd.active_profile)}",
+            ]
+        )
+
+        if ppd.performance_degraded is None:
+            degraded = "Unavailable"
+        elif ppd.performance_degraded == "":
+            degraded = "No"
+        else:
+            degraded = ppd.performance_degraded
+        lines.append(f"Performance degraded: {degraded}")
+
+        holds = ppd.active_profile_holds
+        if holds is None:
+            lines.append("Active profile holds: Unavailable")
+        elif not holds:
+            lines.append("Active profile holds: None")
+        else:
+            lines.append("Active profile holds:")
+            for hold in holds:
+                lines.append(
+                    f"- Profile: {_available(hold.profile)}; "
+                    f"Application: {_available(hold.application_id)}; "
+                    f"Reason: {_available(hold.reason)}"
+                )
 
     return "\n".join(lines)
