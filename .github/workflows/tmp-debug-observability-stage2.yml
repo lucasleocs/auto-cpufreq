@@ -26,3 +26,7 @@ jobs:
           tmp_tests.test_debug_observability_stage2.PowerServiceCollectorTests
       - name: Run CLI integration contract
         run: python -m unittest -v tmp_tests.test_debug_cli_stage2
+      - name: Run static checks
+        run: |
+          python -m py_compile auto_cpufreq/modules/diagnostics.py auto_cpufreq/bin/auto_cpufreq.py
+          git diff --check b00d7ae865d9211a52baffa4887387f5b35b1ce7...HEAD
