@@ -132,6 +132,7 @@ def _system_battery_paths(root: Path) -> tuple[Path, ...]:
         if supply_type is None or supply_type.lower() != "battery":
             continue
         scope = _read_text(entry / "scope")
+        # Device-scoped supplies belong to peripherals, not the system battery.
         if scope is not None and scope.lower() == "device":
             continue
         batteries.append(entry)
@@ -237,7 +238,12 @@ def collect_diagnostics(
     init_comm: Path = SYSTEMD_INIT_COMM,
     capture_state=capture_service_state,
 ) -> DiagnosticsReport:
-    """Collect one-shot debug state without recollecting fast telemetry."""
+    """Collect deep diagnostics beside one already-collected fast snapshot.
+
+    Stage 1 does not need fields from the snapshot yet; accepting it here keeps
+    the one-snapshot boundary explicit and prevents future collectors from
+    silently recollecting fast telemetry.
+    """
     return DiagnosticsReport(
         config_path=config_path,
         governor_override=read_debug_override(
@@ -299,12 +305,12 @@ def _profile_selection(is_ac_plugged: bool | None) -> str:
 
 
 def _turbo_state(state: tuple[bool | None, bool | None]) -> str:
-    enabled, driver_managed = state
+    enabled, auto_mode = state
     if enabled is True:
         return "Enabled"
     if enabled is False:
         return "Disabled"
-    if driver_managed is True:
+    if auto_mode is True:
         return "Driver managed"
     return "Unavailable"
 
