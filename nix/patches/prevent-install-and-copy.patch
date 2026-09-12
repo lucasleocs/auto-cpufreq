@@ -1,7 +1,7 @@
 diff --git a/auto_cpufreq/core.py b/auto_cpufreq/core.py
 --- a/auto_cpufreq/core.py
 +++ b/auto_cpufreq/core.py
-@@ -288,16 +288,15 @@ def cpufreqctl():
+@@ -551,16 +551,15 @@
      """
      deploy cpufreqctl.auto-cpufreq script
      """
@@ -10,7 +10,7 @@ diff --git a/auto_cpufreq/core.py b/auto_cpufreq/core.py
 -        CPUFREQCTL_PATH.chmod(0o755)
 +    # Nix installs cpufreqctl in the immutable package output.
 +    pass
- 
+
  def cpufreqctl_restore():
      """
      remove cpufreqctl.auto-cpufreq script
@@ -19,10 +19,12 @@ diff --git a/auto_cpufreq/core.py b/auto_cpufreq/core.py
 -        CPUFREQCTL_PATH.unlink(missing_ok=True)
 +    # The Nix package never creates a mutable cpufreqctl helper to remove.
 +    pass
- 
+
  def footer(l=79): print("\n" + "-" * l + "\n")
- 
-@@ -777,73 +776,4 @@ def _restore_saved_power_state() -> bool:
+
+@@ -792,77 +791,8 @@
+
+
  def deploy_daemon():
 -    print("\n" + "-" * 21 + " Deploying auto-cpufreq as a daemon " + "-" * 22 + "\n")
 -
@@ -97,8 +99,13 @@ diff --git a/auto_cpufreq/core.py b/auto_cpufreq/core.py
 -        sys.exit(1)
 +    # Daemon deployment is managed by the Nix package/module integration.
 +    pass
- 
-@@ -888,57 +819,2 @@ def remove_daemon():
+
+
+ def deploy_daemon_performance():
+@@ -896,80 +826,8 @@
+     call("/usr/local/bin/auto-cpufreq-install", shell=True)
+
+ def remove_daemon():
 -    daemon_present = DAEMON_REMOVE_HELPER.exists()
 -    saved_power_state = power_state_exists()
 -
@@ -138,23 +145,43 @@ diff --git a/auto_cpufreq/core.py b/auto_cpufreq/core.py
 -        )
 -        sys.exit(1)
 -
--    if daemon_present and not _remove_daemon_helpers():
--        print(
--            "\nDaemon lifecycle helper cleanup is incomplete. "
--            "Power-management restoration was not attempted."
--        )
--        sys.exit(1)
--
 -    if saved_power_state:
+-        if daemon_present and not _remove_daemon_helpers():
+-            print(
+-                "\nDaemon lifecycle helper cleanup is incomplete. "
+-                "Power-management restoration was not attempted."
+-            )
+-            sys.exit(1)
 -        if not _restore_saved_power_state():
 -            sys.exit(1)
 -    elif daemon_present:
 -        # Installations created before persistent snapshots used a fixed
 -        # restoration policy because their original host state was not saved.
--        bluetooth_enable()
+-        # Keep the removal helper until that legacy policy has been restored so
+-        # any service/Bluetooth failure leaves a marker that --remove can retry.
+-        legacy_restore_success = bluetooth_enable()
 -
 -        gnome_power_rm_reminder()
--        gnome_power_svc_enable()
--        tuned_svc_enable()
+-        if not gnome_power_svc_enable():
+-            legacy_restore_success = False
+-        if not tuned_svc_enable():
+-            legacy_restore_success = False
+-
+-        if not legacy_restore_success:
+-            print(
+-                "\nLegacy power-management restoration is incomplete. "
+-                "The daemon removal helper was kept so cleanup can be retried."
+-            )
+-            sys.exit(1)
+-
+-        if not _remove_daemon_helpers():
+-            print(
+-                "\nDaemon lifecycle helper cleanup is incomplete after "
+-                "legacy power-management restoration."
+-            )
+-            sys.exit(1)
 +    # Daemon removal is managed by the Nix package/module integration.
 +    pass
+
+
+ def gov_check():

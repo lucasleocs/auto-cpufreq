@@ -271,12 +271,20 @@ case "$(ps h -o comm 1)" in
         if [ "$s6_stop_status" -ne 0 ] && [ "$s6_stop_status" -ne 3 ]; then
           fail_remove "Failed to stop the legacy s6 service (status $s6_stop_status)."
         fi
+      else
+        echo -e "\n* auto-cpufreq legacy s6 definition is already absent"
+      fi
 
+      # s6-service tracks default-bundle membership separately from the service
+      # definition. Remove that membership even when a previous retry already
+      # deleted /etc/s6/sv/auto-cpufreq.
+      legacy_bundle_entry="/etc/s6/adminsv/default/contents.d/auto-cpufreq"
+      if [ -e "$legacy_bundle_entry" ]; then
         run_step "Removing auto-cpufreq service (legacy s6) from default bundle" \
           s6-service delete default auto-cpufreq \
           || exit 1
       else
-        echo -e "\n* auto-cpufreq legacy s6 definition is already absent"
+        echo -e "\n* auto-cpufreq legacy s6 default-bundle entry is already absent"
       fi
 
       echo -e "\n* Removing auto-cpufreq daemon (legacy s6) service definition"

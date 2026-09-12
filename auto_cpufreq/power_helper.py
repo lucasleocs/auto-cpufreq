@@ -140,27 +140,27 @@ def tuned_start_live():
             pass
 
 # enable gnome >= 40 power profiles (uninstall)
-def gnome_power_svc_enable():
-    if systemctl_exists:
-        try:
-            print("* Enabling GNOME power profiles\n")
-            call(["systemctl", "unmask", "power-profiles-daemon"])
-            call(["systemctl", "enable", "--now", "power-profiles-daemon"])
-        except (OSError, FileNotFoundError):
-            print("\nUnable to enable GNOME power profiles")
-            print("If this causes any problems, please submit an issue:")
-            print(GITHUB+"/issues")
+def gnome_power_svc_enable() -> bool:
+    if not systemctl_exists:
+        return True
+    if getoutput("ps h -o comm 1").strip() != "systemd":
+        return True
 
-def tuned_svc_enable():
-    if systemctl_exists and tuned_stat_exists:
-        try:
-            print("* Enabling TuneD\n")
-            call(["systemctl", "unmask", "tuned"])
-            call(["systemctl", "enable", "--now", "tuned"])
-        except (OSError, FileNotFoundError):
-            print("\nUnable to enable TuneD daemon")
-            print("If this causes any problems, please submit an issue:")
-            print(GITHUB+"/issues")
+    print("* Enabling GNOME power profiles\n")
+    return _enable_systemd_power_service(
+        "power-profiles-daemon",
+        "GNOME power profiles",
+    )
+
+
+def tuned_svc_enable() -> bool:
+    if not systemctl_exists:
+        return True
+    if getoutput("ps h -o comm 1").strip() != "systemd":
+        return True
+
+    print("* Enabling TuneD\n")
+    return _enable_systemd_power_service("tuned", "TuneD daemon")
 
 # gnome power profiles current status
 def gnome_power_svc_status():
@@ -238,13 +238,19 @@ def bluetooth_disable():
     else: print("* Turn off bluetooth on boot [skipping] (package providing bluetooth access is not present)")
 
 # enable bluetooth on boot
-def bluetooth_enable():
-    if IS_INSTALLED_WITH_SNAP: bluetooth_on_notif_snap()
-    elif bluetoothctl_exists:
+def bluetooth_enable() -> bool:
+    if IS_INSTALLED_WITH_SNAP:
+        bluetooth_on_notif_snap()
+        return True
+    if bluetoothctl_exists:
         print("* Turn on bluetooth on boot")
         if not set_bluetooth_auto_enable(True):
             print("\nERROR:\nWas unable to turn on bluetooth on boot")
-    else: print("* Turn on bluetooth on boot [skipping] (package providing bluetooth access is not present)")
+            return False
+        return True
+
+    print("* Turn on bluetooth on boot [skipping] (package providing bluetooth access is not present)")
+    return True
 
 # turn off bluetooth on snap message
 def bluetooth_notif_snap():
@@ -281,16 +287,17 @@ def valid_options():
     print("--gnome_power_enable\t\tEnable GNOME Power Profiles daemon")
     print("--gnome_power_disable\t\tDisable GNOME Power Profiles daemon\n")
 
-def _systemd_load_state(unit: str):
-    """Return a unit LoadState while distinguishing absence from failure."""
+def _systemd_unit_state(unit: str):
+    """Return (LoadState, ActiveState) while distinguishing absence/failure."""
     try:
         state = run(
             [
                 "systemctl",
                 "show",
-                "--property=LoadState",
-                "--value",
                 unit,
+                "--no-pager",
+                "--property=LoadState",
+                "--property=ActiveState",
             ],
             capture_output=True,
             text=True,
@@ -298,11 +305,20 @@ def _systemd_load_state(unit: str):
     except (OSError, FileNotFoundError, PermissionError):
         return None
 
-    load_state = state.stdout.strip()
+    properties = {}
+    for line in state.stdout.splitlines():
+        key, separator, value = line.partition("=")
+        if separator:
+            properties[key] = value
+
+    load_state = properties.get("LoadState")
+    active_state = properties.get("ActiveState")
     if load_state == "not-found":
-        return load_state
+        return "not-found", "inactive"
     if state.returncode == 0:
-        return load_state
+        if load_state is None or active_state is None:
+            return None
+        return load_state, active_state
 
     # Older systemd releases can make `show` fail for a missing unit. An empty
     # successful list-unit-files query establishes absence without accepting a
@@ -323,7 +339,7 @@ def _systemd_load_state(unit: str):
         return None
 
     if installed.returncode == 0 and not installed.stdout.strip():
-        return "not-found"
+        return "not-found", "inactive"
     return None
 
 
@@ -344,62 +360,94 @@ def _run_required_power_command(args, description: str) -> bool:
     return True
 
 
+def _enable_systemd_power_service(unit: str, description: str) -> bool:
+    state = _systemd_unit_state(unit)
+    if state is None:
+        print(f"\nUnable to inspect {description} with systemctl")
+        return False
+
+    load_state, _ = state
+    if load_state == "not-found":
+        return True
+    if load_state not in ("loaded", "masked"):
+        print(
+            f"\nUnable to safely enable {description}: "
+            f"unexpected LoadState={load_state!r}"
+        )
+        return False
+
+    if load_state == "masked" and not _run_required_power_command(
+        ["systemctl", "unmask", unit],
+        f"unmask {description}",
+    ):
+        return False
+
+    return _run_required_power_command(
+        ["systemctl", "enable", "--now", unit],
+        f"enable {description}",
+    )
+
+
+def _disable_systemd_power_service(unit: str, description: str) -> bool:
+    state = _systemd_unit_state(unit)
+    if state is None:
+        print(f"\nUnable to inspect {description} with systemctl")
+        return False
+
+    load_state, active_state = state
+    if load_state == "not-found":
+        return True
+    if load_state not in ("loaded", "masked"):
+        print(
+            f"\nUnable to safely disable {description}: "
+            f"unexpected LoadState={load_state!r}"
+        )
+        return False
+
+    if load_state == "masked":
+        if active_state in ("active", "activating", "reloading", "deactivating"):
+            return _run_required_power_command(
+                ["systemctl", "stop", unit],
+                f"stop {description}",
+            )
+        if active_state in ("inactive", "failed", ""):
+            return True
+        print(
+            f"\nUnable to safely disable {description}: "
+            f"unexpected ActiveState={active_state!r}"
+        )
+        return False
+
+    if not _run_required_power_command(
+        ["systemctl", "disable", "--now", unit],
+        f"disable {description}",
+    ):
+        return False
+
+    return _run_required_power_command(
+        ["systemctl", "mask", unit],
+        f"mask {description}",
+    )
+
+
 def disable_power_profiles_daemon() -> bool:
     print("\n* Disabling GNOME power profiles")
-    if not _run_required_power_command(
-        ["systemctl", "disable", "--now", "power-profiles-daemon"],
-        "disable GNOME power profiles",
-    ):
-        return False
-
-    if not _run_required_power_command(
-        ["systemctl", "mask", "power-profiles-daemon"],
-        "mask GNOME power profiles",
-    ):
-        return False
-
-    return True
+    return _disable_systemd_power_service(
+        "power-profiles-daemon",
+        "GNOME power profiles",
+    )
 
 
 def disable_tuned_daemon() -> bool:
     print("\n* Disabling TuneD daemon")
-    if not _run_required_power_command(
-        ["systemctl", "disable", "--now", "tuned"],
-        "disable TuneD daemon",
-    ):
-        return False
-
-    if not _run_required_power_command(
-        ["systemctl", "mask", "tuned"],
-        "mask TuneD daemon",
-    ):
-        return False
-
-    return True
+    return _disable_systemd_power_service("tuned", "TuneD daemon")
 
 # default gnome_power_svc_disable func (balanced)
 def gnome_power_svc_disable() -> bool:
     if not systemctl_exists:
         return True
-
-    if gnome_power_status != 0:
-        # On non-systemd hosts the import-time status probe is expected to fail;
-        # there is no systemd-managed PPD state to change in that case.
-        if getoutput("ps h -o comm 1").strip() != "systemd":
-            return True
-
-        load_state = _systemd_load_state("power-profiles-daemon")
-        if load_state is None:
-            print("\nUnable to inspect GNOME power profiles with systemctl")
-            return False
-        if load_state == "not-found":
-            return True
-        if load_state not in ("loaded", "masked"):
-            print(
-                "\nUnable to safely disable GNOME power profiles: "
-                f"unexpected LoadState={load_state!r}"
-            )
-            return False
+    if getoutput("ps h -o comm 1").strip() != "systemd":
+        return True
 
     if gnome_power_status == 0 and powerprofilesctl_exists:
         print("\nUsing profile: balanced")
@@ -413,7 +461,7 @@ def gnome_power_svc_disable() -> bool:
 
 
 def tuned_svc_disable() -> bool:
-    if not systemctl_exists or not tuned_stat_exists:
+    if not systemctl_exists:
         return True
     if getoutput("ps h -o comm 1").strip() != "systemd":
         return True
@@ -443,7 +491,11 @@ def main(
     if len(argv) == 1: print('Unrecognized option!\n\nRun: "' + app_name + ' --help" for list of available options.')
     else:
         if gnome_power_enable: gnome_power_svc_enable()
-        elif gnome_power_disable: gnome_power_svc_disable()
+        elif gnome_power_disable:
+            if not gnome_power_svc_disable():
+                raise click.ClickException(
+                    "Failed to disable GNOME Power Profiles daemon"
+                )
         elif gnome_power_status: gnome_power_svc_status()
         elif bluetooth_boot_off: bluetooth_disable()
         elif bluetooth_boot_on: bluetooth_enable()

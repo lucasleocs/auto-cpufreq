@@ -109,6 +109,8 @@ function tool_install {
     header "Setting up Python environment"
   }
 
+  PYTHON_BIN=python3
+
   # Prefer the standardized os-release identification data. /etc/os-release
   # takes precedence over /usr/lib/os-release as documented by os-release(5).
   if [ -r /etc/os-release ]; then
@@ -163,7 +165,15 @@ function tool_install {
       return 1
     fi
 
-    if ! verify_gtk3_runtime python3; then
+    # python3-gi is installed for the distribution interpreter. Do not let
+    # a /usr/local Python earlier in PATH create a venv that cannot see it.
+    PYTHON_BIN="/usr/bin/python3"
+    if [ ! -x "$PYTHON_BIN" ]; then
+      echo "Error: The Debian/Ubuntu system Python is unavailable at $PYTHON_BIN."
+      return 1
+    fi
+
+    if ! verify_gtk3_runtime "$PYTHON_BIN"; then
       echo "Error: The Debian/Ubuntu PyGObject GTK3 runtime could not be loaded."
       echo "Verify that python3-gi and gir1.2-gtk-3.0 are correctly installed."
       return 1
@@ -240,7 +250,7 @@ function tool_install {
 
   venv_dir=$VENV_PATH/venv
   mkdir -p "$venv_dir"
-  if ! python3 -m venv --system-site-packages "$venv_dir"; then
+  if ! "$PYTHON_BIN" -m venv --system-site-packages "$venv_dir"; then
     echo "Error: Failed to create the Python virtual environment."
     return 1
   fi

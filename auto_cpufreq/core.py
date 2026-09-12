@@ -743,6 +743,17 @@ def _rollback_failed_daemon_install(
 
 
 def _prepare_power_state_snapshot() -> bool:
+    # The removal helper is the installed-daemon marker for source installs.
+    # A stopped legacy daemon may not have a snapshot, but installing over it
+    # would capture already-modified host state as if it were the original.
+    if DAEMON_REMOVE_HELPER.exists():
+        print("\nERROR: An auto-cpufreq daemon installation is already present.")
+        print(
+            "Remove it first with `sudo auto-cpufreq --remove` before "
+            "installing the daemon again."
+        )
+        return False
+
     if power_state_exists():
         print(
             "\nERROR: A previous auto-cpufreq power-state snapshot is still pending."
@@ -924,24 +935,41 @@ def remove_daemon():
         )
         sys.exit(1)
 
-    if daemon_present and not _remove_daemon_helpers():
-        print(
-            "\nDaemon lifecycle helper cleanup is incomplete. "
-            "Power-management restoration was not attempted."
-        )
-        sys.exit(1)
-
     if saved_power_state:
+        if daemon_present and not _remove_daemon_helpers():
+            print(
+                "\nDaemon lifecycle helper cleanup is incomplete. "
+                "Power-management restoration was not attempted."
+            )
+            sys.exit(1)
         if not _restore_saved_power_state():
             sys.exit(1)
     elif daemon_present:
         # Installations created before persistent snapshots used a fixed
         # restoration policy because their original host state was not saved.
-        bluetooth_enable()
+        # Keep the removal helper until that legacy policy has been restored so
+        # any service/Bluetooth failure leaves a marker that --remove can retry.
+        legacy_restore_success = bluetooth_enable()
 
         gnome_power_rm_reminder()
-        gnome_power_svc_enable()
-        tuned_svc_enable()
+        if not gnome_power_svc_enable():
+            legacy_restore_success = False
+        if not tuned_svc_enable():
+            legacy_restore_success = False
+
+        if not legacy_restore_success:
+            print(
+                "\nLegacy power-management restoration is incomplete. "
+                "The daemon removal helper was kept so cleanup can be retried."
+            )
+            sys.exit(1)
+
+        if not _remove_daemon_helpers():
+            print(
+                "\nDaemon lifecycle helper cleanup is incomplete after "
+                "legacy power-management restoration."
+            )
+            sys.exit(1)
 
 
 def gov_check():

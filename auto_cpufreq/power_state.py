@@ -1,7 +1,9 @@
 import json
+import os
 from pathlib import Path
 from shutil import which
 from subprocess import run
+from uuid import uuid4
 
 
 DEFAULT_STATE_DIR = Path("/var/lib/auto-cpufreq")
@@ -411,6 +413,7 @@ def save_power_state(
 
     try:
         state_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+        state_dir.chmod(0o700)
     except OSError:
         return False
 
@@ -421,14 +424,20 @@ def save_power_state(
         "bluetooth": bluetooth_state,
     }
 
-    temporary = state_file.with_suffix(".tmp")
+    # Publish through a unique file in the same directory. link() creates
+    # the canonical snapshot name atomically and refuses to replace a snapshot
+    # that another installer created after the pre-check above.
+    temporary = state_dir / (
+        f".{STATE_FILE_NAME}.{os.getpid()}.{uuid4().hex}.tmp"
+    )
     try:
         temporary.write_text(json.dumps(snapshot, indent=2, sort_keys=True) + "\n")
         temporary.chmod(0o600)
-        temporary.replace(state_file)
+        os.link(temporary, state_file)
     except OSError:
-        _try_unlink(temporary)
         return False
+    finally:
+        _try_unlink(temporary)
 
     return True
 
