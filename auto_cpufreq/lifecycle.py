@@ -215,16 +215,22 @@ def _staged_commit_is_descendant(installed_version: str, staged_commit: str) -> 
         return False
 
 
-def _install_staged_source(staged_source: Path) -> bool:
+def _install_staged_source(staged_source: Path, lock_handle) -> bool:
     installer = Path(staged_source) / "auto-cpufreq-installer"
     if not installer.is_file():
         print("Error: The staged release does not contain auto-cpufreq-installer.")
         return False
 
+    fd = lock_handle.fileno()
+    env = os.environ.copy()
+    env[INHERITED_LOCK_FD_ENV] = str(fd)
+
     try:
         result = run(
             ["bash", str(installer), "--install"],
             cwd=str(staged_source),
+            env=env,
+            pass_fds=(fd,),
         )
     except OSError as exc:
         print(f"Error: Failed to start the staged installer: {exc}")
@@ -330,7 +336,7 @@ def update_source_install(custom_dir: str) -> bool:
                     if daemon_was_installed:
                         core.remove_complete_msg()
 
-                if not _install_staged_source(staged_source):
+                if not _install_staged_source(staged_source, lock_handle):
                     print("The stable release could not be installed.")
                     if daemon_was_installed:
                         print(
