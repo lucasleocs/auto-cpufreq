@@ -6,11 +6,10 @@ on:
       - tmp/975-final-hardening
 
 jobs:
-  lock-integration:
+  direct-lock:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
       - name: Reject a direct source install while another operation holds the lock
         shell: bash
         run: |
@@ -46,6 +45,10 @@ jobs:
           test "$status" -ne 0
           grep -Fq 'Another auto-cpufreq source installer operation is already in progress.' <<<"$output"
 
+  inherited-lock-validation:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
       - name: Reject a mismatched inherited lock descriptor
         shell: bash
         run: |
@@ -80,6 +83,10 @@ jobs:
 
           sudo rm -f /var/lib/auto-cpufreq/power-state.json /tmp/not-auto-cpufreq-operation.lock
 
+  updater-lock-propagation:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
       - name: Require updater to pass its held lock to the staged installer
         shell: bash
         run: |
@@ -97,4 +104,19 @@ jobs:
           assert "pass_fds=(fd,)" in function
           assert "env=env" in function
           assert "_install_staged_source(staged_source, lock_handle)" in source
+          PY
+
+  installer-child-propagation:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Require the source installer to export its lock to nested CLI cleanup
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          source = Path("auto-cpufreq-installer").read_text()
+          assert 'export AUTO_CPUFREQ_OPERATION_LOCK_FD="$OPERATION_LOCK_FD"' in source
           PY
