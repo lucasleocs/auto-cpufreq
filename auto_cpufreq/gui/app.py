@@ -10,7 +10,7 @@ from subprocess import PIPE, run
 from threading import Thread
 
 from auto_cpufreq.config.config import config
-from auto_cpufreq.core import check_for_update, daemon_is_running
+from auto_cpufreq.core import UpdateCheckError, check_for_update, daemon_is_running
 from auto_cpufreq.globals import GITHUB, IS_INSTALLED_WITH_SNAP
 from auto_cpufreq.gui.objects import BluetoothBootControl, DaemonNotRunningView, DropDownMenu, MonitorModeView, RadioButtonView, CPUTurboOverride, UpdateDialog
 from auto_cpufreq.modules.system_info import (
@@ -856,10 +856,30 @@ class ToolWindow(Gtk.Window):
         box.pack_start(button, False, False, 0)
         self.add(box)
 
+    def _show_update_error(self, message):
+        dialog = Gtk.MessageDialog(
+            self,
+            0,
+            Gtk.MessageType.ERROR,
+            Gtk.ButtonsType.OK,
+            "Error updating",
+        )
+        dialog.format_secondary_text(message)
+        dialog.run()
+        dialog.destroy()
+
     def handle_update(self):
         new_stdout = StringIO()
-        with redirect_stdout(new_stdout):
-            if not check_for_update(): return
+        try:
+            with redirect_stdout(new_stdout):
+                release_tag = check_for_update()
+        except UpdateCheckError as exc:
+            self._show_update_error(str(exc))
+            return
+
+        if not release_tag:
+            return
+
         captured_output = new_stdout.getvalue().splitlines()
         dialog = UpdateDialog(self, captured_output[1], captured_output[2])
         response = dialog.run()
@@ -909,16 +929,7 @@ class ToolWindow(Gtk.Window):
             )
 
         if message is not None:
-            dialog = Gtk.MessageDialog(
-                self,
-                0,
-                Gtk.MessageType.ERROR,
-                Gtk.ButtonsType.OK,
-                "Error updating",
-            )
-            dialog.format_secondary_text(message)
-            dialog.run()
-            dialog.destroy()
+            self._show_update_error(message)
             return False
 
         success = Gtk.MessageDialog(

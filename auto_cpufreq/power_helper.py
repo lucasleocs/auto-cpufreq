@@ -228,14 +228,20 @@ def set_bluetooth_auto_enable(value: bool) -> bool:
         return False
 
 # disable bluetooth on boot
-def bluetooth_disable():
-    if IS_INSTALLED_WITH_SNAP: bluetooth_notif_snap()
-    elif bluetoothctl_exists:
+def bluetooth_disable() -> bool:
+    if IS_INSTALLED_WITH_SNAP:
+        bluetooth_notif_snap()
+        return True
+    if bluetoothctl_exists:
         print("* Turn off Bluetooth on boot (only)!")
         print("  If you want bluetooth enabled on boot run: auto-cpufreq --bluetooth_boot_on")
         if not set_bluetooth_auto_enable(False):
             print("\nERROR:\nWas unable to turn off bluetooth on boot")
-    else: print("* Turn off bluetooth on boot [skipping] (package providing bluetooth access is not present)")
+            return False
+        return True
+
+    print("* Turn off bluetooth on boot [skipping] (package providing bluetooth access is not present)")
+    return True
 
 # enable bluetooth on boot
 def bluetooth_enable() -> bool:
@@ -501,8 +507,16 @@ def main(
                     "Failed to disable GNOME Power Profiles daemon"
                 )
         elif gnome_power_status: gnome_power_svc_status()
-        elif bluetooth_boot_off: bluetooth_disable()
-        elif bluetooth_boot_on: bluetooth_enable()
+        elif bluetooth_boot_off:
+            if not bluetooth_disable():
+                raise click.ClickException(
+                    "Failed to disable Bluetooth on boot"
+                )
+        elif bluetooth_boot_on:
+            if not bluetooth_enable():
+                raise click.ClickException(
+                    "Failed to enable Bluetooth on boot"
+                )
         helper_opts()
 
     footer()
