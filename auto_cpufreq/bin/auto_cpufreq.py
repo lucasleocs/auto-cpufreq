@@ -19,10 +19,15 @@ from auto_cpufreq.lifecycle import (
     set_bluetooth_boot_enabled,
     update_source_install,
 )
+from auto_cpufreq.modules.diagnostics import (
+    collect_diagnostics,
+    format_diagnostics_report,
+)
 from auto_cpufreq.modules.platform_profile import platform_profile
 from auto_cpufreq.modules.system_info import (
     format_platform_profile_summary,
     print_system_report,
+    system_info,
 )
 from auto_cpufreq.modules.system_monitor import ViewType, SystemMonitor
 # import everything from power_helper, including bluetooth_disable and bluetooth_enable
@@ -286,25 +291,26 @@ def main(monitor, live, daemon, install, update, remove, force, turbo, config, s
                     )
                 footer()
         elif debug:
-            # ToDo: add status of GNOME Power Profile service status
-            config_info_dialog()
             root_check()
-            battery_get_thresholds()
-            cpufreqctl()
+            report = system_info.generate_system_report()
+            diagnostics = collect_diagnostics(
+                report,
+                config_path=config_path if conf.has_config() else None,
+                governor_override_getter=get_override,
+                turbo_override_getter=get_turbo_override,
+            )
             footer()
-            print_system_report()
+            print_system_report(report, include_config=False)
             print()
             app_version()
+            print()
+            print(format_diagnostics_report(report, diagnostics))
             print()
             python_info()
             print()
             device_info()
-            print(f"Battery is: {'' if charging() else 'dis'}charging")
             print()
             app_res_use()
-            get_load()
-            get_current_gov()
-            get_turbo()
             footer()
         elif version:
             footer()
