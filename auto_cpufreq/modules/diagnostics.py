@@ -129,8 +129,12 @@ def _system_battery_paths(root: Path) -> tuple[Path, ...]:
         if not entry.is_dir():
             continue
         supply_type = _read_text(entry / "type")
-        if supply_type is not None and supply_type.lower() == "battery":
-            batteries.append(entry)
+        if supply_type is None or supply_type.lower() != "battery":
+            continue
+        scope = _read_text(entry / "scope")
+        if scope is not None and scope.lower() == "device":
+            continue
+        batteries.append(entry)
     return tuple(batteries)
 
 
