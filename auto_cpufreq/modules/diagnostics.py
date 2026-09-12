@@ -451,6 +451,72 @@ def _threshold(value: int | None) -> str:
     return f"{value}%" if value is not None else "Unavailable"
 
 
+def _format_cpu_ranges(cpus: tuple[int, ...] | None) -> str:
+    if not cpus:
+        return "unknown"
+
+    ranges = []
+    start = previous = cpus[0]
+    for cpu in cpus[1:]:
+        if cpu == previous + 1:
+            previous = cpu
+            continue
+        ranges.append(str(start) if start == previous else f"{start}-{previous}")
+        start = previous = cpu
+    ranges.append(str(start) if start == previous else f"{start}-{previous}")
+    return ",".join(ranges)
+
+
+def _policy_label(policy: CpuFreqPolicyInfo) -> str:
+    return f"{policy.name}; CPUs {_format_cpu_ranges(policy.related_cpus)}"
+
+
+def _format_words(value: tuple[str, ...] | None) -> str:
+    return " ".join(value) if value else "Unavailable"
+
+
+def _format_mhz(khz: int) -> str:
+    return f"{khz / 1000:g}"
+
+
+def _format_limits(value: tuple[int, int] | None) -> str:
+    if value is None:
+        return "Unavailable"
+    minimum, maximum = value
+    return f"{_format_mhz(minimum)}–{_format_mhz(maximum)} MHz"
+
+
+def _policy_limits(
+    policy: CpuFreqPolicyInfo,
+    minimum: str,
+    maximum: str,
+) -> tuple[int, int] | None:
+    min_value = getattr(policy, minimum)
+    max_value = getattr(policy, maximum)
+    if min_value is None or max_value is None:
+        return None
+    return min_value, max_value
+
+
+def _format_policy_groups(policies, value_getter, value_formatter) -> str:
+    if not policies:
+        return "Unavailable"
+
+    groups = {}
+    for policy in policies:
+        value = value_getter(policy)
+        groups.setdefault(value, []).append(policy)
+
+    if len(groups) == 1:
+        return value_formatter(next(iter(groups)))
+
+    details = []
+    for value, group in groups.items():
+        labels = ", ".join(_policy_label(policy) for policy in group)
+        details.append(f"{value_formatter(value)} [{labels}]")
+    return f"mixed across policies ({'; '.join(details)})"
+
+
 def _format_service(status: ServiceStatus) -> str:
     if status.installed is False:
         return "Not installed"
@@ -499,14 +565,29 @@ def format_diagnostics_report(system_report, diagnostics: DiagnosticsReport) -> 
                 f"{_enabled_state(threshold_info.conservation_mode)}"
             )
 
+    policies = diagnostics.cpufreq_policies
+    governor = _available(system_report.current_gov)
+    epp = _available(system_report.current_epp)
+    if policies:
+        governor = _format_policy_groups(
+            policies,
+            lambda policy: policy.scaling_governor,
+            _available,
+        )
+        epp = _format_policy_groups(
+            policies,
+            lambda policy: policy.energy_performance_preference,
+            _available,
+        )
+
     lines.extend(
         [
             "",
             "CPU Power State",
-            f"Governor: {_available(system_report.current_gov)}",
+            f"Governor: {governor}",
             "Governor override: "
             f"{_override_state(diagnostics.governor_override, default_label='none (profile-controlled)')}",
-            f"EPP: {_available(system_report.current_epp)}",
+            f"EPP: {epp}",
             f"EPB: {_available(system_report.current_epb)}",
             "HWP Dynamic Boost: "
             f"{_enabled_state(system_report.current_hwp_dynamic_boost)}",
@@ -514,6 +595,50 @@ def format_diagnostics_report(system_report, diagnostics: DiagnosticsReport) -> 
             f"Turbo override: {_override_state(diagnostics.turbo_override)}",
         ]
     )
+
+    if policies:
+        lines.extend(
+            [
+                "CPUFreq driver: "
+                + _format_policy_groups(
+                    policies,
+                    lambda policy: policy.scaling_driver,
+                    _available,
+                ),
+                "Available governors: "
+                + _format_policy_groups(
+                    policies,
+                    lambda policy: policy.available_governors,
+                    _format_words,
+                ),
+                "Available EPP preferences: "
+                + _format_policy_groups(
+                    policies,
+                    lambda policy: policy.available_epp_preferences,
+                    _format_words,
+                ),
+                "CPUFreq scaling limits: "
+                + _format_policy_groups(
+                    policies,
+                    lambda policy: _policy_limits(
+                        policy,
+                        "scaling_min_freq_khz",
+                        "scaling_max_freq_khz",
+                    ),
+                    _format_limits,
+                ),
+                "CPUFreq hardware limits: "
+                + _format_policy_groups(
+                    policies,
+                    lambda policy: _policy_limits(
+                        policy,
+                        "cpuinfo_min_freq_khz",
+                        "cpuinfo_max_freq_khz",
+                    ),
+                    _format_limits,
+                ),
+            ]
+        )
 
     intel = diagnostics.intel_pstate
     if any(
@@ -528,6 +653,14 @@ def format_diagnostics_report(system_report, diagnostics: DiagnosticsReport) -> 
         lines.append(
             "Intel P-State max performance: "
             f"{_threshold(intel.max_perf_pct)}"
+        )
+
+    amd = diagnostics.amd_pstate
+    if amd.mode is not None or amd.preferred_core is not None:
+        lines.append(f"AMD P-State mode: {_available(amd.mode)}")
+        lines.append(
+            "AMD P-State preferred core: "
+            f"{_available(amd.preferred_core)}"
         )
 
     temperature = (
