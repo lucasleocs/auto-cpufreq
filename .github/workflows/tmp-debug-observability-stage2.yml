@@ -24,3 +24,5 @@ jobs:
         run: >-
           python -m unittest -v
           tmp_tests.test_debug_observability_stage2.PowerServiceCollectorTests
+      - name: Run CLI integration contract
+        run: python -m unittest -v tmp_tests.test_debug_cli_stage2
