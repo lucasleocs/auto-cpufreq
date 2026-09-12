@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+import shlex
 import subprocess
 from typing import Callable, Iterable
 
@@ -30,6 +31,18 @@ SNAP_HOST_SERVICE_NAMES = (
     "tuned",
     "tuned-ppd",
     "TLP",
+)
+PPD_DBUS_ENDPOINTS = (
+    (
+        "org.freedesktop.UPower.PowerProfiles",
+        "/org/freedesktop/UPower/PowerProfiles",
+        "org.freedesktop.UPower.PowerProfiles",
+    ),
+    (
+        "net.hadess.PowerProfiles",
+        "/net/hadess/PowerProfiles",
+        "net.hadess.PowerProfiles",
+    ),
 )
 
 
@@ -87,6 +100,20 @@ class ServiceStatus:
 class PowerServicesInfo:
     init_system: str | None
     services: tuple[ServiceStatus, ...] = ()
+
+
+@dataclass(frozen=True)
+class PpdProfileHold:
+    application_id: str | None = None
+    profile: str | None = None
+    reason: str | None = None
+
+
+@dataclass(frozen=True)
+class PpdDiagnostics:
+    active_profile: str | None = None
+    performance_degraded: str | None = None
+    active_profile_holds: tuple[PpdProfileHold, ...] | None = None
 
 
 @dataclass(frozen=True)
@@ -412,6 +439,123 @@ def read_power_services_info(
         init_system=init_system,
         services=tuple(services),
     )
+
+
+def _read_busctl_property(endpoint, property_name: str, runner) -> str | None:
+    service, object_path, interface = endpoint
+    try:
+        result = runner(
+            [
+                "busctl",
+                "--system",
+                "get-property",
+                service,
+                object_path,
+                interface,
+                property_name,
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError:
+        return None
+
+    if result.returncode != 0:
+        return None
+    return result.stdout.strip()
+
+
+def _parse_busctl_string(output: str | None) -> str | None:
+    if output is None:
+        return None
+    try:
+        tokens = shlex.split(output)
+    except ValueError:
+        return None
+    if len(tokens) != 2 or tokens[0] != "s":
+        return None
+    return tokens[1]
+
+
+def _parse_busctl_profile_holds(
+    output: str | None,
+) -> tuple[PpdProfileHold, ...] | None:
+    if output is None:
+        return None
+    try:
+        tokens = shlex.split(output)
+    except ValueError:
+        return None
+
+    if len(tokens) < 2 or tokens[0] != "aa{sv}":
+        return None
+
+    try:
+        hold_count = int(tokens[1])
+    except ValueError:
+        return None
+    if hold_count < 0:
+        return None
+
+    index = 2
+    holds = []
+    try:
+        for _ in range(hold_count):
+            field_count = int(tokens[index])
+            index += 1
+            if field_count < 0:
+                return None
+
+            fields = {}
+            for _ in range(field_count):
+                key = tokens[index]
+                signature = tokens[index + 1]
+                value = tokens[index + 2]
+                index += 3
+                if signature != "s":
+                    return None
+                fields[key] = value
+
+            holds.append(
+                PpdProfileHold(
+                    application_id=fields.get("ApplicationId"),
+                    profile=fields.get("Profile"),
+                    reason=fields.get("Reason"),
+                )
+            )
+    except (IndexError, ValueError):
+        return None
+
+    if index != len(tokens):
+        return None
+    return tuple(holds)
+
+
+def read_power_profiles_daemon_info(
+    runner=subprocess.run,
+) -> PpdDiagnostics:
+    """Read selected PPD properties without changing profile state."""
+    for endpoint in PPD_DBUS_ENDPOINTS:
+        active_profile = _parse_busctl_string(
+            _read_busctl_property(endpoint, "ActiveProfile", runner)
+        )
+        if active_profile is None:
+            continue
+
+        performance_degraded = _parse_busctl_string(
+            _read_busctl_property(endpoint, "PerformanceDegraded", runner)
+        )
+        active_profile_holds = _parse_busctl_profile_holds(
+            _read_busctl_property(endpoint, "ActiveProfileHolds", runner)
+        )
+        return PpdDiagnostics(
+            active_profile=active_profile,
+            performance_degraded=performance_degraded,
+            active_profile_holds=active_profile_holds,
+        )
+
+    return PpdDiagnostics()
 
 
 def collect_diagnostics(
