@@ -10,7 +10,6 @@ permissions:
 
 jobs:
   fix:
-    if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -21,29 +20,17 @@ jobs:
         with:
           python-version: '3.9'
 
-      - name: Apply Python 3.9 compatibility changes
+      - name: Restore installer compatibility
         shell: bash
         run: |
           set -euo pipefail
           python - <<'PY'
           from pathlib import Path
 
-          lifecycle = Path('auto_cpufreq/lifecycle.py')
-          text = lifecycle.read_text()
-          old = 'from subprocess import run\n\nfrom requests'
-          new = 'from subprocess import run\nfrom typing import Optional\n\nfrom requests'
-          if old not in text:
-              raise SystemExit('lifecycle import anchor not found')
-          text = text.replace(old, new, 1)
-          old = 'def _installed_source_version() -> str | None:'
-          new = 'def _installed_source_version() -> Optional[str]:'
-          if old not in text:
-              raise SystemExit('lifecycle Python 3.10 annotation anchor not found')
-          lifecycle.write_text(text.replace(old, new, 1))
-
           installer = Path('auto-cpufreq-installer')
           text = installer.read_text()
           text = text.replace('Python 3.10 or newer', 'Python 3.9 or newer')
+          text = text.replace('Python 3.10+ with', 'Python 3.9+ with')
           text = text.replace('sys.version_info >= (3, 10)', 'sys.version_info >= (3, 9)')
           text = text.replace(
               'GLib $glib_version is too old for the supported Python 3.12 PyGObject path.',
@@ -70,18 +57,14 @@ jobs:
           RPM_PYTHON_PACKAGES=(python3 python3-devel python3-pip)
           ;;
 '''
-          if old not in text:
-              raise SystemExit('Enterprise Linux Python selector anchor not found')
-          installer.write_text(text.replace(old, new, 1))
+          if old in text:
+              text = text.replace(old, new, 1)
+          elif new not in text:
+              raise SystemExit('Enterprise Linux Python selector is not in a recognized state')
+          installer.write_text(text)
           PY
 
           bash -n auto-cpufreq-installer
-          python -m py_compile \
-            auto_cpufreq/daemon_preflight.py \
-            auto_cpufreq/installation.py \
-            auto_cpufreq/lifecycle.py \
-            auto_cpufreq/operation_lock.py \
-            auto_cpufreq/release_update.py
 
       - name: Regenerate Poetry lock file
         shell: bash
@@ -91,16 +74,16 @@ jobs:
           poetry lock
           poetry check --lock
 
-      - name: Commit compatibility changes
+      - name: Commit compatibility changes when needed
         shell: bash
         run: |
           set -euo pipefail
-          git add auto-cpufreq-installer auto_cpufreq/lifecycle.py poetry.lock
+          git add auto-cpufreq-installer poetry.lock
           if git diff --cached --quiet; then
-            echo 'No compatibility changes were needed'
+            echo 'Installer and lock file are already compatible with Python 3.9'
             exit 0
           fi
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git commit -m 'tmp: restore Python 3.9 compatibility'
+          git commit -m 'tmp: restore Python 3.9 installer compatibility'
           git push origin HEAD:tmp/975-final-hardening
