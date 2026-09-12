@@ -1,9 +1,12 @@
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 import unittest
 
 from auto_cpufreq.modules.diagnostics import (
     PpdDiagnostics,
     PpdProfileHold,
+    collect_diagnostics,
     read_power_profiles_daemon_info,
 )
 
@@ -22,6 +25,22 @@ LEGACY = (
 
 def result(stdout="", returncode=0):
     return SimpleNamespace(stdout=stdout, returncode=returncode)
+
+
+def service_state(active_state="inactive"):
+    return {
+        "load_state": "loaded",
+        "active_state": active_state,
+        "unit_file_state": "enabled",
+    }
+
+
+def missing_service_state():
+    return {
+        "load_state": "not-found",
+        "active_state": "inactive",
+        "unit_file_state": "",
+    }
 
 
 class PpdTransportTests(unittest.TestCase):
@@ -162,6 +181,122 @@ class PpdTransportTests(unittest.TestCase):
             read_power_profiles_daemon_info(runner=runner),
             PpdDiagnostics(),
         )
+
+
+class PpdIntegrationTests(unittest.TestCase):
+    @staticmethod
+    def _collect(
+        init_comm,
+        capture_state,
+        ppd_runner,
+        *,
+        is_snap=False,
+        snap_runner=None,
+    ):
+        kwargs = {}
+        if snap_runner is not None:
+            kwargs["snap_runner"] = snap_runner
+        return collect_diagnostics(
+            SimpleNamespace(),
+            config_path=None,
+            governor_override_getter=lambda: "default",
+            turbo_override_getter=lambda: "auto",
+            intel_pstate_root=Path("/does/not/exist"),
+            amd_pstate_root=Path("/does/not/exist"),
+            cpufreq_policy_root=Path("/does/not/exist"),
+            power_supply_root=Path("/does/not/exist"),
+            ideapad_roots=(),
+            init_comm=init_comm,
+            capture_state=capture_state,
+            is_snap=is_snap,
+            ppd_runner=ppd_runner,
+            **kwargs,
+        )
+
+    def test_active_ppd_provider_enables_dbus_collection(self):
+        for active_unit in (
+            "power-profiles-daemon.service",
+            "tuned-ppd.service",
+        ):
+            with self.subTest(active_unit=active_unit), TemporaryDirectory() as tmp:
+                init_comm = Path(tmp) / "comm"
+                init_comm.write_text("systemd\n")
+                ppd_calls = []
+
+                def capture_state(unit):
+                    if unit == active_unit:
+                        return service_state("active")
+                    return missing_service_state()
+
+                outputs = {
+                    "ActiveProfile": 's "balanced"\n',
+                    "PerformanceDegraded": 's ""\n',
+                    "ActiveProfileHolds": "aa{sv} 0\n",
+                }
+
+                def ppd_runner(args, **kwargs):
+                    ppd_calls.append(args)
+                    return result(outputs[args[-1]])
+
+                report = self._collect(
+                    init_comm,
+                    capture_state,
+                    ppd_runner,
+                )
+
+                self.assertEqual(report.ppd.active_profile, "balanced")
+                self.assertEqual(len(ppd_calls), 3)
+
+    def test_inactive_provider_does_not_trigger_dbus(self):
+        with TemporaryDirectory() as tmp:
+            init_comm = Path(tmp) / "comm"
+            init_comm.write_text("systemd\n")
+            ppd_calls = []
+
+            report = self._collect(
+                init_comm,
+                lambda unit: service_state("inactive"),
+                lambda *args, **kwargs: ppd_calls.append(args),
+            )
+
+            self.assertEqual(ppd_calls, [])
+            self.assertEqual(report.ppd, PpdDiagnostics())
+
+    def test_non_systemd_host_does_not_trigger_dbus(self):
+        with TemporaryDirectory() as tmp:
+            init_comm = Path(tmp) / "comm"
+            init_comm.write_text("openrc-init\n")
+            ppd_calls = []
+
+            report = self._collect(
+                init_comm,
+                lambda unit: self.fail("systemctl must not be queried"),
+                lambda *args, **kwargs: ppd_calls.append(args),
+            )
+
+            self.assertEqual(ppd_calls, [])
+            self.assertEqual(report.ppd, PpdDiagnostics())
+
+    def test_snap_path_does_not_trigger_host_ppd_dbus(self):
+        with TemporaryDirectory() as tmp:
+            init_comm = Path(tmp) / "comm"
+            init_comm.write_text("systemd\n")
+            ppd_calls = []
+
+            snap_output = (
+                "Service               Startup  Current  Notes\n"
+                "auto-cpufreq.service  enabled  active   -\n"
+            )
+            report = self._collect(
+                init_comm,
+                lambda unit: self.fail("host systemctl must not be queried"),
+                lambda *args, **kwargs: ppd_calls.append(args),
+                is_snap=True,
+                snap_runner=lambda *args, **kwargs: result(snap_output),
+            )
+
+            self.assertEqual(ppd_calls, [])
+            self.assertEqual(report.ppd, PpdDiagnostics())
 
 
 if __name__ == "__main__":
