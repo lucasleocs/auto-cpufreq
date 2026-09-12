@@ -1,6 +1,7 @@
 import os
 from pathlib import Path
 from subprocess import run
+from typing import Optional
 
 from requests import exceptions, get
 
@@ -164,7 +165,7 @@ def remove_daemon() -> None:
         raise LifecycleError(str(exc)) from exc
 
 
-def _installed_source_version() -> str | None:
+def _installed_source_version() -> Optional[str]:
     python = SOURCE_VENV / "bin/python"
     if not python.is_file():
         return None
