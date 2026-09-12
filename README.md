@@ -651,7 +651,13 @@ The auto-cpufreq daemon, its service integration, and the persistent system chan
 
 Removal uses the detected service manager, cleans daemon-owned artifacts, and restores saved power-management state only after the auto-cpufreq service is no longer active. This can include GNOME Power Profiles, TuneD, the previously active power profile, and Bluetooth boot policy state that was changed during daemon installation. If cleanup or restoration fails, the recovery snapshot/marker is kept so `sudo auto-cpufreq --remove` can be retried. Bluetooth restoration is conservative: if `AutoEnable` was changed after daemon installation, that newer value is preserved instead of being overwritten.
 
-Use `auto-cpufreq --remove` instead of stopping or disabling the service directly so the full cleanup and restoration sequence can run. This command removes the daemon integration; it does not uninstall the source installation itself. To remove a source installation completely, run `sudo bash ./auto-cpufreq-installer` from an auto-cpufreq source tree and choose the remove option; the installer completes any pending daemon recovery before deleting installed source files and desktop integration.
+Use `auto-cpufreq --remove` instead of stopping or disabling the service directly so the full cleanup and restoration sequence can run. This command removes the daemon integration; it does not uninstall the source installation itself. To remove a source installation completely, run the following from an auto-cpufreq source tree:
+
+```bash
+sudo bash ./auto-cpufreq-installer --remove
+```
+
+The installer completes any pending daemon recovery before deleting installed source files and desktop integration.
 
 ### Stats
 
