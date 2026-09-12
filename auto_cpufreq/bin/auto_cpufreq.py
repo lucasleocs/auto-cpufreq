@@ -7,97 +7,27 @@
 # core import
 import sys, time, os
 from subprocess import run
-from shutil import rmtree
 
 from auto_cpufreq.battery_scripts.battery import *
 from auto_cpufreq.config.config import config as conf, find_config_file
 from auto_cpufreq.core import *
 from auto_cpufreq.globals import GITHUB, IS_INSTALLED_WITH_AUR, IS_INSTALLED_WITH_SNAP
+from auto_cpufreq.lifecycle import (
+    LifecycleError,
+    install_daemon as install_daemon_lifecycle,
+    remove_daemon as remove_daemon_lifecycle,
+    set_bluetooth_boot_enabled,
+    update_source_install,
+)
 from auto_cpufreq.modules.platform_profile import platform_profile
 from auto_cpufreq.modules.system_info import (
     format_platform_profile_summary,
     print_system_report,
 )
 from auto_cpufreq.modules.system_monitor import ViewType, SystemMonitor
-from auto_cpufreq.release_update import staged_release_commit, version_matches_commit
 # import everything from power_helper, including bluetooth_disable and bluetooth_enable
 from auto_cpufreq.power_helper import *
 from threading import Thread
-
-
-def _cleanup_staged_update(staged_source):
-    # stage_update() allocates a fresh, previously non-existing staging path,
-    # so this cleanup never targets a directory that existed before the update
-    # attempt.
-    try:
-        rmtree(staged_source)
-    except OSError as exc:
-        print(
-            "Warning: The update staging directory could not be "
-            f"removed: {exc}"
-        )
-
-
-def _complete_staged_update(
-    staged_source,
-    release_tag,
-    staged_commit,
-    daemon_was_installed,
-):
-    """Install and verify a staged release, then restore daemon state."""
-    if not install_staged_update(staged_source):
-        print("The stable release could not be installed.")
-        if daemon_was_installed:
-            print(
-                "The previous daemon was removed before installation "
-                "and was not re-enabled."
-            )
-        return False
-
-    if not verify_installed_release(release_tag):
-        print(
-            "The update command cannot confirm that the requested "
-            "stable release was installed."
-        )
-        print("The daemon was not automatically started.")
-        return False
-
-    installed_version = get_literal_version("auto-cpufreq")
-    if not version_matches_commit(installed_version, staged_commit):
-        print(
-            "The update command cannot confirm that the exact staged "
-            "Git revision was installed."
-        )
-        print(f"Expected staged revision: {staged_commit}")
-        print(f"Installed package version: {installed_version}")
-        print("The daemon was not automatically started.")
-        return False
-
-    # Preserve the pre-update daemon state rather than enabling a daemon
-    # for users who were running auto-cpufreq only on demand.
-    if daemon_was_installed:
-        print("Re-enabling auto-cpufreq daemon")
-        try:
-            reenable = run(["auto-cpufreq", "--install"])
-        except OSError as exc:
-            print(
-                "auto-cpufreq was updated, but the daemon could not "
-                f"be re-enabled: {exc}"
-            )
-            return False
-
-        if reenable.returncode != 0:
-            print(
-                "auto-cpufreq was updated, but the daemon could not "
-                "be re-enabled."
-            )
-            print(
-                "Run `sudo auto-cpufreq --install` after reviewing "
-                "the error above."
-            )
-            return False
-
-    return True
 
 
 @click.command()
@@ -250,9 +180,10 @@ def main(monitor, live, daemon, install, update, remove, force, turbo, config, s
                 daemon_running_msg()
                 sys.exit(0)
             root_check()
-            running_daemon_check()
-            gov_check()
-            deploy_daemon()
+            try:
+                install_daemon_lifecycle()
+            except LifecycleError as exc:
+                raise click.ClickException(str(exc)) from exc
             deploy_complete_msg()
         elif update:
             root_check()
@@ -277,73 +208,10 @@ def main(monitor, live, daemon, install, update, remove, force, turbo, config, s
                 #check for AUR 
             elif IS_INSTALLED_WITH_AUR: print("Arch-based distribution with AUR support detected. Please refresh auto-cpufreq using your AUR helper.")
             else:
-                release_tag = check_for_update()
-                if not release_tag:
-                    return
-
-                ans = input(
-                    "Do you want to update auto-cpufreq to the "
-                    "latest stable release? [Y/n]: "
-                ).strip().lower()
-
-                if ans not in ("", "y", "yes"):
-                    print("Aborted")
-                    return
-
                 try:
-                    os.makedirs(custom_dir, exist_ok=True)
-                except OSError as exc:
-                    print(
-                        "Error: Unable to create the update staging "
-                        f"directory: {exc}"
-                    )
-                    sys.exit(1)
-
-                # Download and validate the exact release before stopping
-                # anything currently running on the host.
-                staged_source = stage_update(
-                    custom_dir,
-                    release_tag,
-                )
-                if staged_source is None:
-                    sys.exit(1)
-
-                try:
-                    staged_commit = staged_release_commit(staged_source)
-                    if staged_commit is None:
-                        print(
-                            "Error: Unable to determine the Git revision of "
-                            "the staged stable release."
-                        )
-                        print(
-                            "The current auto-cpufreq installation was not changed."
-                        )
-                        sys.exit(1)
-
-                    daemon_was_installed = (
-                        DAEMON_REMOVE_HELPER.exists()
-                    )
-                    power_state_pending = power_state_exists()
-
-                    if daemon_was_installed or power_state_pending:
-                        remove_daemon()
-                        if daemon_was_installed:
-                            remove_complete_msg()
-
-                    if not _complete_staged_update(
-                        staged_source,
-                        release_tag,
-                        staged_commit,
-                        daemon_was_installed,
-                    ):
-                        sys.exit(1)
-                finally:
-                    _cleanup_staged_update(staged_source)
-
-                print(
-                    "auto-cpufreq successfully updated to stable "
-                    f"release {release_tag}"
-                )
+                    update_source_install(custom_dir)
+                except LifecycleError as exc:
+                    raise click.ClickException(str(exc)) from exc
 
         elif remove:
             root_check()
@@ -359,7 +227,11 @@ def main(monitor, live, daemon, install, update, remove, force, turbo, config, s
                 # {the following snippet also used in --update, update it there too(if required)}
                 # * undo bluetooth boot disable
                 gnome_power_rm_reminder_snap()
-            else: remove_daemon()
+            else:
+                try:
+                    remove_daemon_lifecycle()
+                except LifecycleError as exc:
+                    raise click.ClickException(str(exc)) from exc
             remove_complete_msg()
         elif stats:
             not_running_daemon_check()
@@ -396,7 +268,10 @@ def main(monitor, live, daemon, install, update, remove, force, turbo, config, s
             else:
                 footer()
                 root_check()
-                bluetooth_disable()
+                if not set_bluetooth_boot_enabled(False):
+                    raise click.ClickException(
+                        "Failed to disable Bluetooth on boot"
+                    )
                 footer()
         elif bluetooth_boot_on:
             if IS_INSTALLED_WITH_SNAP:
@@ -406,7 +281,10 @@ def main(monitor, live, daemon, install, update, remove, force, turbo, config, s
             else:
                 footer()
                 root_check()
-                bluetooth_enable()
+                if not set_bluetooth_boot_enabled(True):
+                    raise click.ClickException(
+                        "Failed to enable Bluetooth on boot"
+                    )
                 footer()
         elif debug:
             # ToDo: add status of GNOME Power Profile service status

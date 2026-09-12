@@ -53,6 +53,7 @@ auto-cpufreq-gtk = "auto_cpufreq.bin.auto_cpufreq_gtk:main"
 enable = true
 vcs = "git"
 format = "v{base}+{commit}"
+full-commit = true
 
 # SideNote
 # Regarding zip_safe = https://setuptools.pypa.io/en/latest/deprecated/zip_safe.html

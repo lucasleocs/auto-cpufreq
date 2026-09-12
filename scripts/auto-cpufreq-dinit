@@ -1,3 +1,4 @@
-type = scripted
+type = process
 command = /usr/local/bin/auto-cpufreq --daemon
 run-as = root
+restart = on-failure
