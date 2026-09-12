@@ -930,4 +930,36 @@ def format_diagnostics_report(system_report, diagnostics: DiagnosticsReport) -> 
             for service in services.services
         )
 
+    if _ppd_provider_active(services):
+        ppd = diagnostics.ppd
+        lines.extend(
+            [
+                "",
+                "Power Profiles Daemon",
+                f"Active profile: {_available(ppd.active_profile)}",
+            ]
+        )
+
+        if ppd.performance_degraded is None:
+            degraded = "Unavailable"
+        elif ppd.performance_degraded == "":
+            degraded = "No"
+        else:
+            degraded = ppd.performance_degraded
+        lines.append(f"Performance degraded: {degraded}")
+
+        holds = ppd.active_profile_holds
+        if holds is None:
+            lines.append("Active profile holds: Unavailable")
+        elif not holds:
+            lines.append("Active profile holds: None")
+        else:
+            lines.append("Active profile holds:")
+            for hold in holds:
+                lines.append(
+                    f"- Profile: {_available(hold.profile)}; "
+                    f"Application: {_available(hold.application_id)}; "
+                    f"Reason: {_available(hold.reason)}"
+                )
+
     return "\n".join(lines)
