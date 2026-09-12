@@ -1,0 +1,40 @@
+name: Temporary lockfile regeneration
+
+on:
+  push:
+    branches:
+      - tmp/975-final-hardening
+
+permissions:
+  contents: write
+
+jobs:
+  lock:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: tmp/975-final-hardening
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Poetry 2.2.1
+        run: pipx install poetry==2.2.1
+
+      - name: Regenerate lock file
+        run: poetry lock
+
+      - name: Commit lock file if changed
+        run: |
+          if git diff --quiet -- poetry.lock; then
+            echo 'poetry.lock is already current'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add poetry.lock
+          git commit -m 'tmp: regenerate poetry lock'
+          git push origin HEAD:tmp/975-final-hardening
