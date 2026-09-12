@@ -1,0 +1,46 @@
+name: Temporary Python 3.9 compatibility check
+
+on:
+  push:
+    branches:
+      - tmp/975-final-hardening
+
+jobs:
+  python39:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.9'
+
+      - name: Preserve the declared Python 3.9 runtime floor
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -Fq 'python = ">=3.9, <4.0"' pyproject.toml
+          ! grep -RE '\|[[:space:]]*None|None[[:space:]]*\|' \
+            auto_cpufreq/daemon_preflight.py \
+            auto_cpufreq/installation.py \
+            auto_cpufreq/lifecycle.py \
+            auto_cpufreq/operation_lock.py \
+            auto_cpufreq/release_update.py
+          python -m py_compile \
+            auto_cpufreq/daemon_preflight.py \
+            auto_cpufreq/installation.py \
+            auto_cpufreq/lifecycle.py \
+            auto_cpufreq/operation_lock.py \
+            auto_cpufreq/release_update.py
+          python - <<'PY'
+          import auto_cpufreq.daemon_preflight
+          import auto_cpufreq.installation
+          import auto_cpufreq.operation_lock
+          PY
+
+      - name: Verify the Poetry lock file is current
+        shell: bash
+        run: |
+          set -euo pipefail
+          pipx install poetry==2.2.1
+          poetry check --lock
