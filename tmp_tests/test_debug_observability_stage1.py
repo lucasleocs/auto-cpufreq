@@ -74,6 +74,30 @@ class DiagnosticsCollectorTests(unittest.TestCase):
             self.assertEqual((result.batteries[0].start_threshold, result.batteries[0].stop_threshold), (40, 80))
             self.assertEqual((result.batteries[1].start_threshold, result.batteries[1].stop_threshold), (55, 90))
 
+    def test_battery_diagnostics_ignore_device_scoped_batteries(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp) / "power_supply"
+            root.mkdir()
+
+            internal = root / "BAT0"
+            internal.mkdir()
+            (internal / "type").write_text("Battery\n")
+            (internal / "scope").write_text("System\n")
+            (internal / "charge_control_end_threshold").write_text("80\n")
+
+            peripheral = root / "hidpp_battery_0"
+            peripheral.mkdir()
+            (peripheral / "type").write_text("Battery\n")
+            (peripheral / "scope").write_text("Device\n")
+            (peripheral / "charge_control_end_threshold").write_text("100\n")
+
+            result = read_battery_threshold_diagnostics(
+                power_supply_root=root,
+                ideapad_roots=(),
+            )
+
+            self.assertEqual([item.name for item in result.batteries], ["BAT0"])
+
     def test_battery_diagnostics_read_conservation_mode_without_writes(self):
         with TemporaryDirectory() as tmp:
             power = Path(tmp) / "power_supply"
