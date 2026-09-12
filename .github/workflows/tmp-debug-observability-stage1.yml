@@ -10,6 +10,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -21,3 +23,7 @@ jobs:
         run: python -m unittest -v tmp_tests.test_debug_formatter_stage1
       - name: Run full Stage 1 contract
         run: python -m unittest -v tmp_tests.test_debug_observability_stage1
+      - name: Run static checks
+        run: |
+          python -m py_compile auto_cpufreq/modules/diagnostics.py auto_cpufreq/bin/auto_cpufreq.py
+          git diff --check 84669bcca702753ac50ccda87ca7fd93142d4e8e...HEAD
