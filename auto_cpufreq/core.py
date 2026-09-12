@@ -107,11 +107,6 @@ def get_turbo_override():
 
 def set_turbo_override(override):
     if override in ["never", "always"]:
-        with open(turbo_override_state, "rb") as store: return load(store)
-    else: return "auto"
-
-def set_turbo_override(override):
-    if override in ["never", "always"]:
         with open(turbo_override_state, "wb") as store:
             dump(override, store)
         print(f"Set turbo boost override to {override}")
