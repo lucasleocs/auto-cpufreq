@@ -8,6 +8,8 @@ from auto_cpufreq.power_state import capture_service_state
 
 
 INTEL_PSTATE_ROOT = Path("/sys/devices/system/cpu/intel_pstate")
+AMD_PSTATE_ROOT = Path("/sys/devices/system/cpu/amd_pstate")
+CPUFREQ_POLICY_ROOT = Path("/sys/devices/system/cpu/cpufreq")
 POWER_SUPPLY_ROOT = Path("/sys/class/power_supply")
 SYSTEMD_INIT_COMM = Path("/proc/1/comm")
 IDEAPAD_ROOTS = (
@@ -27,6 +29,27 @@ class IntelPstateInfo:
     mode: str | None = None
     min_perf_pct: int | None = None
     max_perf_pct: int | None = None
+
+
+@dataclass(frozen=True)
+class AmdPstateInfo:
+    mode: str | None = None
+    preferred_core: str | None = None
+
+
+@dataclass(frozen=True)
+class CpuFreqPolicyInfo:
+    name: str
+    related_cpus: tuple[int, ...] | None = None
+    scaling_driver: str | None = None
+    scaling_governor: str | None = None
+    available_governors: tuple[str, ...] | None = None
+    energy_performance_preference: str | None = None
+    available_epp_preferences: tuple[str, ...] | None = None
+    scaling_min_freq_khz: int | None = None
+    scaling_max_freq_khz: int | None = None
+    cpuinfo_min_freq_khz: int | None = None
+    cpuinfo_max_freq_khz: int | None = None
 
 
 @dataclass(frozen=True)
@@ -62,6 +85,8 @@ class DiagnosticsReport:
     governor_override: str | None
     turbo_override: str | None
     intel_pstate: IntelPstateInfo
+    amd_pstate: AmdPstateInfo
+    cpufreq_policies: tuple[CpuFreqPolicyInfo, ...]
     battery_thresholds: BatteryThresholdDiagnostics
     power_services: PowerServicesInfo
 
@@ -92,6 +117,53 @@ def _read_first_int(directory: Path, names: tuple[str, ...]) -> int | None:
     return None
 
 
+def _read_words(path: Path) -> tuple[str, ...] | None:
+    value = _read_text(path)
+    if value is None:
+        return None
+    words = tuple(dict.fromkeys(value.split()))
+    return words or None
+
+
+def _parse_cpu_list(value: str) -> tuple[int, ...] | None:
+    cpus = []
+    try:
+        for part in value.replace(",", " ").split():
+            if "-" in part:
+                start_text, end_text = part.split("-", 1)
+                start = int(start_text)
+                end = int(end_text)
+                if start < 0 or end < start:
+                    return None
+                cpus.extend(range(start, end + 1))
+            else:
+                cpu = int(part)
+                if cpu < 0:
+                    return None
+                cpus.append(cpu)
+    except ValueError:
+        return None
+
+    if not cpus:
+        return None
+    return tuple(sorted(dict.fromkeys(cpus)))
+
+
+def _read_cpu_list(path: Path) -> tuple[int, ...] | None:
+    value = _read_text(path)
+    if value is None:
+        return None
+    return _parse_cpu_list(value)
+
+
+def _policy_sort_key(path: Path) -> tuple[int, int | str]:
+    suffix = path.name.removeprefix("policy")
+    try:
+        return 0, int(suffix)
+    except ValueError:
+        return 1, path.name
+
+
 def read_debug_override(
     getter: Callable[[], object],
     allowed_values: set[str],
@@ -115,6 +187,54 @@ def read_intel_pstate_info(
         mode=_read_text(root / "status"),
         min_perf_pct=_read_int(root / "min_perf_pct"),
         max_perf_pct=_read_int(root / "max_perf_pct"),
+    )
+
+
+def read_amd_pstate_info(
+    root: Path = AMD_PSTATE_ROOT,
+) -> AmdPstateInfo:
+    """Read global AMD P-State diagnostics without changing driver state."""
+    return AmdPstateInfo(
+        mode=_read_text(root / "status"),
+        preferred_core=_read_text(root / "prefcore"),
+    )
+
+
+def read_cpufreq_policy_info(
+    root: Path = CPUFREQ_POLICY_ROOT,
+) -> tuple[CpuFreqPolicyInfo, ...]:
+    """Read CPUFreq policy state and capabilities from policy sysfs objects."""
+    try:
+        policies = sorted(
+            (
+                path
+                for path in root.iterdir()
+                if path.name.startswith("policy") and path.is_dir()
+            ),
+            key=_policy_sort_key,
+        )
+    except OSError:
+        return ()
+
+    return tuple(
+        CpuFreqPolicyInfo(
+            name=path.name,
+            related_cpus=_read_cpu_list(path / "related_cpus"),
+            scaling_driver=_read_text(path / "scaling_driver"),
+            scaling_governor=_read_text(path / "scaling_governor"),
+            available_governors=_read_words(path / "scaling_available_governors"),
+            energy_performance_preference=_read_text(
+                path / "energy_performance_preference"
+            ),
+            available_epp_preferences=_read_words(
+                path / "energy_performance_available_preferences"
+            ),
+            scaling_min_freq_khz=_read_int(path / "scaling_min_freq"),
+            scaling_max_freq_khz=_read_int(path / "scaling_max_freq"),
+            cpuinfo_min_freq_khz=_read_int(path / "cpuinfo_min_freq"),
+            cpuinfo_max_freq_khz=_read_int(path / "cpuinfo_max_freq"),
+        )
+        for path in policies
     )
 
 
@@ -233,6 +353,8 @@ def collect_diagnostics(
     governor_override_getter: Callable[[], object],
     turbo_override_getter: Callable[[], object],
     intel_pstate_root: Path = INTEL_PSTATE_ROOT,
+    amd_pstate_root: Path = AMD_PSTATE_ROOT,
+    cpufreq_policy_root: Path = CPUFREQ_POLICY_ROOT,
     power_supply_root: Path = POWER_SUPPLY_ROOT,
     ideapad_roots: Iterable[Path] = IDEAPAD_ROOTS,
     init_comm: Path = SYSTEMD_INIT_COMM,
@@ -240,9 +362,9 @@ def collect_diagnostics(
 ) -> DiagnosticsReport:
     """Collect deep diagnostics beside one already-collected fast snapshot.
 
-    Stage 1 does not need fields from the snapshot yet; accepting it here keeps
-    the one-snapshot boundary explicit and prevents future collectors from
-    silently recollecting fast telemetry.
+    The fast snapshot is accepted at this boundary so deeper diagnostics stay
+    attached to one point-in-time SystemReport rather than recollecting shared
+    telemetry through legacy helpers.
     """
     return DiagnosticsReport(
         config_path=config_path,
@@ -255,6 +377,8 @@ def collect_diagnostics(
             {"auto", "always", "never"},
         ),
         intel_pstate=read_intel_pstate_info(Path(intel_pstate_root)),
+        amd_pstate=read_amd_pstate_info(Path(amd_pstate_root)),
+        cpufreq_policies=read_cpufreq_policy_info(Path(cpufreq_policy_root)),
         battery_thresholds=read_battery_threshold_diagnostics(
             Path(power_supply_root),
             ideapad_roots,
