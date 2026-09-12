@@ -1,0 +1,100 @@
+name: Temporary source installer lock integration test
+
+on:
+  push:
+    branches:
+      - tmp/975-final-hardening
+
+jobs:
+  lock-integration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Reject a direct source install while another operation holds the lock
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo mkdir -p /run/lock /var/lib/auto-cpufreq
+          sudo rm -f /run/lock/auto-cpufreq.lock /tmp/auto-cpufreq-lock-ready
+          sudo touch /var/lib/auto-cpufreq/power-state.json
+
+          sudo bash -c '
+            exec 9>/run/lock/auto-cpufreq.lock
+            chmod 600 /run/lock/auto-cpufreq.lock
+            flock -x 9
+            touch /tmp/auto-cpufreq-lock-ready
+            sleep 20
+          ' &
+          holder=$!
+
+          for _ in $(seq 1 100); do
+            [ -e /tmp/auto-cpufreq-lock-ready ] && break
+            sleep 0.05
+          done
+          test -e /tmp/auto-cpufreq-lock-ready
+
+          set +e
+          output="$(sudo bash ./auto-cpufreq-installer --install 2>&1)"
+          status=$?
+          set -e
+
+          kill "$holder" 2>/dev/null || true
+          wait "$holder" 2>/dev/null || true
+          sudo rm -f /var/lib/auto-cpufreq/power-state.json /tmp/auto-cpufreq-lock-ready
+
+          test "$status" -ne 0
+          grep -Fq 'Another auto-cpufreq source installer operation is already in progress.' <<<"$output"
+
+      - name: Reject a mismatched inherited lock descriptor
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo mkdir -p /var/lib/auto-cpufreq
+          sudo touch /var/lib/auto-cpufreq/power-state.json
+
+          sudo python3 - <<'PY'
+          import os
+          import subprocess
+
+          wrong_path = "/tmp/not-auto-cpufreq-operation.lock"
+          fd = os.open(wrong_path, os.O_RDWR | os.O_CREAT, 0o600)
+          env = os.environ.copy()
+          env["AUTO_CPUFREQ_OPERATION_LOCK_FD"] = str(fd)
+          try:
+              result = subprocess.run(
+                  ["bash", "./auto-cpufreq-installer", "--install"],
+                  env=env,
+                  pass_fds=(fd,),
+                  capture_output=True,
+                  text=True,
+              )
+          finally:
+              os.close(fd)
+
+          output = result.stdout + result.stderr
+          assert result.returncode != 0, output
+          assert "inherited auto-cpufreq operation lock" in output, output
+          assert "does not match /run/lock/auto-cpufreq.lock" in output, output
+          PY
+
+          sudo rm -f /var/lib/auto-cpufreq/power-state.json /tmp/not-auto-cpufreq-operation.lock
+
+      - name: Require updater to pass its held lock to the staged installer
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          source = Path("auto_cpufreq/lifecycle.py").read_text()
+          start = source.index("def _install_staged_source")
+          end = source.index("\n\ndef _reenable_daemon", start)
+          function = source[start:end]
+
+          assert "lock_handle" in function
+          assert "INHERITED_LOCK_FD_ENV" in function
+          assert "pass_fds=(fd,)" in function
+          assert "env=env" in function
+          assert "_install_staged_source(staged_source, lock_handle)" in source
+          PY
