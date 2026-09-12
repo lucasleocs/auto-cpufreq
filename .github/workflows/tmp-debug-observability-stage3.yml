@@ -21,3 +21,7 @@ jobs:
         run: >-
           python -m unittest -v
           tmp_tests.test_debug_observability_stage3.PpdIntegrationTests
+      - name: Run PPD formatter contract
+        run: >-
+          python -m unittest -v
+          tmp_tests.test_debug_formatter_stage3.PpdFormatterTests
