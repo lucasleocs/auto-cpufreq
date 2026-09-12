@@ -14,4 +14,10 @@ jobs:
         with:
           python-version: "3.12"
       - name: Run PPD transport contract
-        run: python -m unittest -v tmp_tests.test_debug_observability_stage3
+        run: >-
+          python -m unittest -v
+          tmp_tests.test_debug_observability_stage3.PpdTransportTests
+      - name: Run PPD activation contract
+        run: >-
+          python -m unittest -v
+          tmp_tests.test_debug_observability_stage3.PpdIntegrationTests
