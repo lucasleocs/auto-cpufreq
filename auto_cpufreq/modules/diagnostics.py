@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+import subprocess
 from typing import Callable, Iterable
 
 from auto_cpufreq.power_state import capture_service_state
@@ -20,7 +21,15 @@ POWER_SERVICE_UNITS = (
     ("auto-cpufreq", "auto-cpufreq.service"),
     ("power-profiles-daemon", "power-profiles-daemon.service"),
     ("tuned", "tuned.service"),
+    ("tuned-ppd", "tuned-ppd.service"),
     ("TLP", "tlp.service"),
+)
+SNAP_DAEMON_SERVICE = "auto-cpufreq.service"
+SNAP_HOST_SERVICE_NAMES = (
+    "power-profiles-daemon",
+    "tuned",
+    "tuned-ppd",
+    "TLP",
 )
 
 
@@ -71,6 +80,7 @@ class ServiceStatus:
     installed: bool | None
     active_state: str | None = None
     unit_file_state: str | None = None
+    detail: str | None = None
 
 
 @dataclass(frozen=True)
@@ -323,12 +333,70 @@ def _service_status(name: str, state) -> ServiceStatus:
     )
 
 
+def _read_snap_daemon_status(snap_runner=subprocess.run) -> ServiceStatus:
+    try:
+        result = snap_runner(
+            ["snapctl", "services", SNAP_DAEMON_SERVICE],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except (OSError, FileNotFoundError, PermissionError):
+        return ServiceStatus(
+            name="auto-cpufreq",
+            installed=None,
+            detail="Unavailable",
+        )
+
+    if result.returncode != 0:
+        return ServiceStatus(
+            name="auto-cpufreq",
+            installed=None,
+            detail="Unavailable",
+        )
+
+    for line in result.stdout.splitlines()[1:]:
+        fields = line.split()
+        if len(fields) >= 3 and fields[0] == SNAP_DAEMON_SERVICE:
+            return ServiceStatus(
+                name="auto-cpufreq",
+                installed=True,
+                active_state=fields[2],
+                unit_file_state=fields[1],
+            )
+
+    return ServiceStatus(
+        name="auto-cpufreq",
+        installed=None,
+        detail="Unavailable",
+    )
+
+
 def read_power_services_info(
     init_comm: Path = SYSTEMD_INIT_COMM,
     capture_state=capture_service_state,
+    *,
+    is_snap: bool = False,
+    snap_runner=subprocess.run,
 ) -> PowerServicesInfo:
-    """Read relevant systemd service state without changing service state."""
+    """Read relevant service state without changing service state."""
     init_system = _read_text(Path(init_comm))
+
+    if is_snap:
+        services = [_read_snap_daemon_status(snap_runner)]
+        services.extend(
+            ServiceStatus(
+                name=name,
+                installed=None,
+                detail="Unavailable (Snap confinement)",
+            )
+            for name in SNAP_HOST_SERVICE_NAMES
+        )
+        return PowerServicesInfo(
+            init_system=init_system,
+            services=tuple(services),
+        )
+
     if init_system != "systemd":
         return PowerServicesInfo(init_system=init_system)
 
@@ -359,6 +427,8 @@ def collect_diagnostics(
     ideapad_roots: Iterable[Path] = IDEAPAD_ROOTS,
     init_comm: Path = SYSTEMD_INIT_COMM,
     capture_state=capture_service_state,
+    is_snap: bool = False,
+    snap_runner=subprocess.run,
 ) -> DiagnosticsReport:
     """Collect deep diagnostics beside one already-collected fast snapshot.
 
@@ -386,6 +456,8 @@ def collect_diagnostics(
         power_services=read_power_services_info(
             Path(init_comm),
             capture_state,
+            is_snap=is_snap,
+            snap_runner=snap_runner,
         ),
     )
 
@@ -518,6 +590,8 @@ def _format_policy_groups(policies, value_getter, value_formatter) -> str:
 
 
 def _format_service(status: ServiceStatus) -> str:
+    if status.detail is not None:
+        return status.detail
     if status.installed is False:
         return "Not installed"
     if status.installed is None:
@@ -681,7 +755,7 @@ def format_diagnostics_report(system_report, diagnostics: DiagnosticsReport) -> 
     )
 
     services = diagnostics.power_services
-    if services.init_system != "systemd":
+    if services.init_system != "systemd" and not services.services:
         lines.append(
             "Service status: Unavailable (PID 1: "
             f"{services.init_system or 'unknown'})"
