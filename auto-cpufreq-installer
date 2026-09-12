@@ -11,6 +11,7 @@ MID="$((COLOUMNS / 2))"
 APPLICATIONS_PATH="/usr/share/applications"
 VENV_PATH="/opt/auto-cpufreq"
 POWER_STATE_SNAPSHOT="/var/lib/auto-cpufreq/power-state.json"
+OPERATION_LOCK_PATH="/run/lock/auto-cpufreq.lock"
 CPUFREQCTL_FILE="/usr/local/bin/cpufreqctl.auto-cpufreq"
 AUTO_CPUFREQ_STATS_FILE="/var/run/auto-cpufreq.stats"
 
@@ -37,6 +38,78 @@ function ask_operation {
   read -p "Select a key [I]nstall/[R]emove or press ctrl+c to quit: " answer
 }
 
+function acquire_operation_lock {
+  local inherited_fd="${AUTO_CPUFREQ_OPERATION_LOCK_FD:-}"
+  local inherited_path
+  local expected_path
+
+  if ! command -v flock > /dev/null 2>&1; then
+    echo "Error: flock from util-linux is required to coordinate auto-cpufreq operations."
+    return 1
+  fi
+
+  if [ -n "$inherited_fd" ]; then
+    case "$inherited_fd" in
+      *[!0-9]*|'')
+        echo "Error: The inherited auto-cpufreq operation lock is invalid."
+        return 1
+        ;;
+    esac
+
+    if [ ! -e "/proc/$$/fd/$inherited_fd" ]; then
+      echo "Error: The inherited auto-cpufreq operation lock is invalid."
+      return 1
+    fi
+
+    inherited_path="$(readlink -f "/proc/$$/fd/$inherited_fd")" || {
+      echo "Error: The inherited auto-cpufreq operation lock is invalid."
+      return 1
+    }
+    expected_path="$(readlink -f "$OPERATION_LOCK_PATH")" || {
+      echo "Error: Unable to resolve the auto-cpufreq operation lock path."
+      return 1
+    }
+
+    if [ "$inherited_path" != "$expected_path" ]; then
+      echo "Error: The inherited auto-cpufreq operation lock does not match $OPERATION_LOCK_PATH."
+      return 1
+    fi
+
+    if ! flock -n "$inherited_fd"; then
+      echo "Error: The inherited auto-cpufreq operation lock is not held."
+      return 1
+    fi
+
+    OPERATION_LOCK_FD="$inherited_fd"
+  else
+    if ! mkdir -p "$(dirname "$OPERATION_LOCK_PATH")"; then
+      echo "Error: Unable to create the auto-cpufreq operation lock directory."
+      return 1
+    fi
+
+    if ! exec {OPERATION_LOCK_FD}>"$OPERATION_LOCK_PATH"; then
+      echo "Error: Unable to open the auto-cpufreq operation lock."
+      return 1
+    fi
+    if ! chmod 600 "$OPERATION_LOCK_PATH"; then
+      echo "Error: Unable to secure the auto-cpufreq operation lock."
+      exec {OPERATION_LOCK_FD}>&-
+      return 1
+    fi
+    if ! flock -n "$OPERATION_LOCK_FD"; then
+      echo "Error: Another auto-cpufreq source installer operation is already in progress."
+      exec {OPERATION_LOCK_FD}>&-
+      return 1
+    fi
+  fi
+
+  # Nested lifecycle commands must inherit the same open file description.
+  # Closing the descriptor at process exit releases locally acquired locks;
+  # do not explicitly unlock an inherited descriptor here.
+  export AUTO_CPUFREQ_OPERATION_LOCK_FD="$OPERATION_LOCK_FD"
+  return 0
+}
+
 function manual_install {
   if command -v lsb_release > /dev/null; then
     distro="$(lsb_release -is)"
@@ -48,7 +121,7 @@ function manual_install {
   echo "auto-cpufreq requires Python 3.10 or newer."
   echo "Install your distro's equivalents of these source-build requirements:"
   echo "Python 3.10+ with venv, pip and development headers; setuptools; dmidecode;"
-  echo "gcc; git; pkg-config; gobject-introspection; Cairo development files;"
+  echo "gcc; git; pkg-config; util-linux (flock); gobject-introspection; Cairo development files;"
   echo "PyGObject/GTK3 runtime or development files; and GTK3 development files."; echo
   echo "Then create an isolated virtual environment in a root-owned location,"
   echo "install the matching PyGObject runtime for your distribution, and install"
@@ -544,6 +617,8 @@ else
     *) ask_operation;;
   esac
 fi
+
+acquire_operation_lock || exit 1
 
 case $answer in
   I|i) tool_install;;
