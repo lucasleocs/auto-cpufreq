@@ -1,7 +1,8 @@
 import os
-import sys
 from pathlib import Path
 from subprocess import run
+
+from requests import exceptions, get
 
 from auto_cpufreq import core
 from auto_cpufreq.daemon_preflight import (
@@ -18,6 +19,7 @@ from auto_cpufreq.operation_lock import (
 from auto_cpufreq import power_helper
 from auto_cpufreq.release_update import (
     cleanup_staging_workspace,
+    extract_git_commit,
     new_staging_destination,
     stage_release,
     staged_release_commit,
@@ -188,6 +190,31 @@ def _installed_source_version() -> str | None:
     return version or None
 
 
+def _staged_commit_is_descendant(installed_version: str, staged_commit: str) -> bool:
+    installed_commit = extract_git_commit(installed_version)
+    if installed_commit is None:
+        return False
+
+    api_repository = core.GITHUB.replace("github.com", "api.github.com/repos")
+    compare_url = f"{api_repository}/compare/{installed_commit}...{staged_commit}"
+    try:
+        response = get(compare_url, timeout=core.GITHUB_REQUEST_TIMEOUT)
+    except (
+        exceptions.ConnectionError,
+        exceptions.Timeout,
+        exceptions.RequestException,
+    ):
+        return False
+
+    if response.status_code != 200:
+        return False
+
+    try:
+        return response.json().get("status") == "ahead"
+    except ValueError:
+        return False
+
+
 def _install_staged_source(staged_source: Path) -> bool:
     installer = Path(staged_source) / "auto-cpufreq-installer"
     if not installer.is_file():
@@ -282,6 +309,15 @@ def update_source_install(custom_dir: str) -> bool:
                     print(
                         "Error: Unable to determine the Git revision of the "
                         "staged stable release."
+                    )
+                    print("The current auto-cpufreq installation was not changed.")
+                    return False
+
+                installed_version = core.get_literal_version("auto-cpufreq")
+                if not _staged_commit_is_descendant(installed_version, staged_commit):
+                    print(
+                        "Error: The exact staged Git revision could not be "
+                        "verified as a descendant of the installed source revision."
                     )
                     print("The current auto-cpufreq installation was not changed.")
                     return False
