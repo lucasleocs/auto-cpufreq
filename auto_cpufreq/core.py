@@ -107,6 +107,11 @@ def get_turbo_override():
 
 def set_turbo_override(override):
     if override in ["never", "always"]:
+        with open(turbo_override_state, "rb") as store: return load(store)
+    else: return "auto"
+
+def set_turbo_override(override):
+    if override in ["never", "always"]:
         with open(turbo_override_state, "wb") as store:
             dump(override, store)
         print(f"Set turbo boost override to {override}")
@@ -545,16 +550,16 @@ def cpufreqctl():
     """
     deploy cpufreqctl.auto-cpufreq script
     """
-    if not (IS_INSTALLED_WITH_SNAP or os.path.isfile("/usr/local/bin/cpufreqctl.auto-cpufreq")):
-        copy(SCRIPTS_DIR / "cpufreqctl.sh", "/usr/local/bin/cpufreqctl.auto-cpufreq")
-        call(["chmod", "a+x", "/usr/local/bin/cpufreqctl.auto-cpufreq"])
+    if not IS_INSTALLED_WITH_SNAP and not CPUFREQCTL_PATH.exists():
+        copy(SCRIPTS_DIR / "cpufreqctl.sh", CPUFREQCTL_PATH)
+        CPUFREQCTL_PATH.chmod(0o755)
 
 def cpufreqctl_restore():
     """
     remove cpufreqctl.auto-cpufreq script
     """
-    if not IS_INSTALLED_WITH_SNAP and os.path.isfile("/usr/local/bin/cpufreqctl.auto-cpufreq"):
-        os.remove("/usr/local/bin/cpufreqctl.auto-cpufreq")
+    if not IS_INSTALLED_WITH_SNAP:
+        CPUFREQCTL_PATH.unlink(missing_ok=True)
 
 def footer(l=79): print("\n" + "-" * l + "\n")
 
@@ -884,7 +889,7 @@ def deploy_daemon_performance():
     gnome_power_detect_install()
     #"gnome_power_svc_disable_performance" is not defined
     #gnome_power_svc_disable_performance()
-   
+
     tlp_service_detect() # output warning if TLP service is detected
 
     call("/usr/local/bin/auto-cpufreq-install", shell=True)
