@@ -1,3 +1,10 @@
+# Helpers for stable-release selection and isolated update staging.
+#
+# Functions in this module deliberately avoid mutating the installed
+# auto-cpufreq environment. The lifecycle layer decides when it is safe to
+# remove/reinstall the daemon; this module only reasons about revisions and
+# manages a private staging workspace that it created itself.
+
 from pathlib import Path
 from re import fullmatch
 from shutil import rmtree
@@ -153,6 +160,8 @@ def cleanup_staging_workspace(staged_source: Path) -> bool:
         if staged_source.name == "source"
         else staged_source
     )
+    # Never recursively remove an arbitrary caller-supplied path. Only
+    # mkdtemp() workspaces with our private prefix are eligible for cleanup.
     if not workspace.name.startswith("auto-cpufreq-update-"):
         return False
     return _try_remove_destination(workspace)
