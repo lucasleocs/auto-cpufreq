@@ -7,9 +7,10 @@
 # verify a release before touching the installed daemon, then keep one operation
 # lock across nested installer/daemon commands.
 #
-# Some low-level daemon primitives still live in core.py because legacy and Nix
-# paths depend on them. This module owns the source CLI orchestration; moving
-# those helpers should be done together with every caller and packaging patch.
+# Some low-level daemon primitives still live in core.py because legacy callers
+# and packaging patches depend on them. This module owns the source CLI
+# orchestration; moving those helpers should be done together with every caller
+# and packaging patch.
 
 import os
 from pathlib import Path

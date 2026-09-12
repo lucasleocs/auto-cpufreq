@@ -224,7 +224,6 @@ def main(monitor, live, daemon, install, update, remove, force, turbo, config, s
 
                     auto_cpufreq_stats_path.unlink()
                 # ToDo: 
-                # {the following snippet also used in --update, update it there too(if required)}
                 # * undo bluetooth boot disable
                 gnome_power_rm_reminder_snap()
             else:

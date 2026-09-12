@@ -1,3 +1,10 @@
+# Persistent recovery state for host power-management changes.
+#
+# The first pre-install snapshot remains authoritative until restoration
+# completes: never replace it with a later partially modified state, and keep it
+# on incomplete restoration so removal can retry. Bluetooth restoration is
+# deliberately conservative and must preserve later user or system changes.
+
 import json
 import os
 from pathlib import Path

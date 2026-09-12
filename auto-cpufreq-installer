@@ -245,6 +245,8 @@ function tool_install {
 
   source_install_preflight || return 1
 
+  # Distro-provided PyGObject bindings are tied to the distro interpreter.
+  # Do not choose an unrelated python3 from PATH for these package paths.
   PYTHON_BIN="/usr/bin/python3"
   DISTRO_FAMILY=""
   USE_SYSTEM_PYGOBJECT=0
@@ -454,6 +456,9 @@ function tool_install {
 
   header "Installing auto-cpufreq tool"
 
+  # Do not mutate global Git safe.directory here. Normal sudo invocations keep
+  # SUDO_UID for Git's ownership check; unusual ownership should be fixed
+  # explicitly rather than leaving a persistent global exception.
   if ! "$venv_python" -m pip install .; then
     echo "Error: Failed to install auto-cpufreq into the virtual environment."
     return 1
