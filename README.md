@@ -142,7 +142,7 @@ NixOS uses the native Nix integration described below instead of the source inst
 Download a release from the [Releases](https://github.com/AdnanHodzic/auto-cpufreq/releases) page and extract the source code from its `.zip` or `.tar.gz` archive. Enter the extracted directory, then run:
 
 ```bash
-sudo ./auto-cpufreq-installer
+sudo bash ./auto-cpufreq-installer
 ```
 
 > The v3.1.0 and older GitHub source archives were published before archive version metadata was added and can still fail to build without Git history. Source-archive installation is supported by releases that include this metadata.
@@ -154,7 +154,7 @@ To install the current development version from `master`, clone the repository i
 ```bash
 git clone https://github.com/AdnanHodzic/auto-cpufreq.git
 cd auto-cpufreq
-sudo ./auto-cpufreq-installer
+sudo bash ./auto-cpufreq-installer
 ```
 
 > auto-cpufreq --update tracks published stable releases, not the master branch. A development checkout will not advance to newer development commits and will only update once a newer stable release includes that revision.

@@ -490,7 +490,11 @@ def main(
 
     if len(argv) == 1: print('Unrecognized option!\n\nRun: "' + app_name + ' --help" for list of available options.')
     else:
-        if gnome_power_enable: gnome_power_svc_enable()
+        if gnome_power_enable:
+            if not gnome_power_svc_enable():
+                raise click.ClickException(
+                    "Failed to enable GNOME Power Profiles daemon"
+                )
         elif gnome_power_disable:
             if not gnome_power_svc_disable():
                 raise click.ClickException(
