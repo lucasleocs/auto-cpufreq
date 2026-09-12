@@ -10,7 +10,6 @@ from auto_cpufreq.modules.diagnostics import (
     IntelPstateInfo,
     PowerServicesInfo,
     collect_diagnostics,
-    format_diagnostics_report,
     read_battery_threshold_diagnostics,
     read_debug_override,
     read_intel_pstate_info,
