@@ -18,21 +18,21 @@ SHARE_DIR="/usr/local/share/auto-cpufreq/"
 
 AUTO_CPUFREQ_FILE="/usr/local/bin/auto-cpufreq"
 AUTO_CPUFREQ_GTK_FILE=$AUTO_CPUFREQ_FILE-gtk
-AUTO_CPUFREQ_GTK_DESKTOP_FILE="$(basename $AUTO_CPUFREQ_GTK_FILE).desktop"
+AUTO_CPUFREQ_GTK_DESKTOP_FILE="$(basename "$AUTO_CPUFREQ_GTK_FILE").desktop"
 
 IMG_FILE="/usr/share/pixmaps/auto-cpufreq.png"
 ORG_FILE="/usr/share/polkit-1/actions/org.auto-cpufreq.pkexec.policy"
 
 function header {
   echo
-	printf "%0.s─" $(seq $((MID-(${#1}/2)-2)))
-	printf " $1 "
-	printf "%0.s─" $(seq $((MID-(${#1}/2)-2)))
-	echo; echo
+  printf "%0.s─" $(seq $((MID-(${#1}/2)-2)))
+  printf " $1 "
+  printf "%0.s─" $(seq $((MID-(${#1}/2)-2)))
+  echo; echo
 }
 
 function ask_operation {
-	header "auto-cpufreq installer"
+  header "auto-cpufreq installer"
   echo "Welcome to auto-cpufreq tool installer."; echo
   read -p "Select a key [I]nstall/[R]emove or press ctrl+c to quit: " answer
 }
@@ -45,24 +45,17 @@ function manual_install {
   fi
 
   echo "This Linux distribution is not handled automatically by the source installer."; echo
+  echo "auto-cpufreq requires Python 3.10 or newer."
   echo "Install your distro's equivalents of these source-build requirements:"
-  echo "Python 3 with venv, pip and development headers; setuptools; dmidecode;"
+  echo "Python 3.10+ with venv, pip and development headers; setuptools; dmidecode;"
   echo "gcc; git; pkg-config; gobject-introspection; Cairo development files;"
-  echo "and GTK3 development files."; echo
-  echo "Then install auto-cpufreq in an isolated virtual environment:"
-  echo "-----"; echo
-  echo "python3 -m venv \"$VENV_PATH/venv\""
-  echo "\"$VENV_PATH/venv/bin/python\" -m pip install --upgrade pip wheel"
-  echo "\"$VENV_PATH/venv/bin/python\" -m pip install PyGObject"
-  echo "\"$VENV_PATH/venv/bin/python\" -m pip install ."
-  echo "-----"; echo
-  echo "You can run the installed command directly from the virtual environment:"
-  echo "\"$VENV_PATH/venv/bin/auto-cpufreq\" --help"; echo
-  echo "Automatic system deployment and daemon integration are not available"
-  echo "for this distribution yet."
+  echo "PyGObject/GTK3 runtime or development files; and GTK3 development files."; echo
+  echo "Then create an isolated virtual environment in a root-owned location,"
+  echo "install the matching PyGObject runtime for your distribution, and install"
+  echo "auto-cpufreq into that environment. Automatic system deployment and daemon"
+  echo "integration are not available for this distribution yet."
 
   echo; printf "%0.s─" $(seq $COLOUMNS); echo
-  
   echo "Consider creating a feature request to add support for your distro:"
   echo "https://github.com/AdnanHodzic/auto-cpufreq/issues/new"; echo
   echo "Make sure to include following information:"; echo
@@ -86,17 +79,33 @@ function os_release_matches {
   return 1
 }
 
+function is_enterprise_linux {
+  case "${PLATFORM_ID:-}" in
+    platform:el[0-9]*) return 0;;
+  esac
+
+  os_release_matches rhel
+}
+
+function enterprise_linux_major {
+  case "${PLATFORM_ID:-}" in
+    platform:el[0-9]*)
+      printf '%s\n' "${PLATFORM_ID#platform:el}" | sed 's/[^0-9].*$//'
+      return 0
+      ;;
+  esac
+
+  printf '%s\n' "${VERSION_ID%%.*}"
+}
+
 function verify_python_version {
   "$1" - <<'PYVERSION'
 import sys
-raise SystemExit(0 if sys.version_info >= (3, 9) else 1)
+raise SystemExit(0 if sys.version_info >= (3, 10) else 1)
 PYVERSION
 }
 
 function verify_gtk3_runtime {
-  # Debian/Ubuntu provide PyGObject as python3-gi. The GTK3 introspection
-  # package supplies the typelibs used by the auto-cpufreq GUI.
-  # https://pygobject.gnome.org/getting_started.html
   "$1" - <<'PYGTK'
 import gi
 
@@ -108,81 +117,106 @@ from gi.repository import Gdk, GdkPixbuf, Gio, GLib, Gtk, Pango
 PYGTK
 }
 
+function source_install_preflight {
+  local daemon_remove="$AUTO_CPUFREQ_FILE-remove"
+
+  if [ -f "$daemon_remove" ] || [ -f "$POWER_STATE_SNAPSHOT" ]; then
+    echo "Error: An auto-cpufreq daemon installation or recovery snapshot is still present."
+    echo "Remove the daemon first with 'sudo auto-cpufreq --remove', then rerun the source installer."
+    echo "For normal stable source upgrades, prefer 'sudo auto-cpufreq --update'."
+    return 1
+  fi
+
+  return 0
+}
+
+function install_el_pygobject {
+  local venv_python="$1"
+  local glib_version
+  local pygobject_spec
+
+  if ! command -v pkg-config > /dev/null 2>&1; then
+    echo "Error: pkg-config is required to select a PyGObject version compatible with this EL host."
+    return 1
+  fi
+
+  glib_version="$(pkg-config --modversion glib-2.0 2>/dev/null)" || {
+    echo "Error: Unable to determine the installed GLib version."
+    return 1
+  }
+
+  if printf '%s\n%s\n' "2.64" "$glib_version" | sort -V -C; then
+    pygobject_spec='PyGObject>=3.46,<3.50'
+  elif printf '%s\n%s\n' "2.56" "$glib_version" | sort -V -C; then
+    pygobject_spec='PyGObject>=3.44.2,<3.46'
+  else
+    echo "Error: GLib $glib_version is too old for the supported Python 3.12 PyGObject path."
+    return 1
+  fi
+
+  if ! "$venv_python" -m pip install pycairo "$pygobject_spec"; then
+    echo "Error: Failed to install a PyGObject build compatible with GLib $glib_version."
+    return 1
+  fi
+
+  return 0
+}
+
 function tool_install {
   echo
-  # First argument is the distro
+
   function detected_distro {
     header "Detected $1 distribution"
     header "Setting up Python environment"
   }
 
-  PYTHON_BIN=python3
+  source_install_preflight || return 1
 
-  # Prefer the standardized os-release identification data. /etc/os-release
-  # takes precedence over /usr/lib/os-release as documented by os-release(5).
+  PYTHON_BIN="/usr/bin/python3"
+  DISTRO_FAMILY=""
+  USE_SYSTEM_PYGOBJECT=0
+
   if [ -r /etc/os-release ]; then
     . /etc/os-release
   elif [ -r /usr/lib/os-release ]; then
     . /usr/lib/os-release
   fi
 
-  # NixOS uses its native module/package integration instead of this installer.
   if [ "${ID:-}" = "nixos" ]; then
     echo "NixOS detected"
     echo "This installer is not supported on NixOS."
     echo "Please refer to the install instructions for NixOS at https://github.com/AdnanHodzic/auto-cpufreq#nixos"
     exit 1
 
-  # Keep the historical marker-file checks as compatibility fallbacks, while
-  # ID_LIKE lets derivative distributions use their base distribution's
-  # packaging interface as recommended by os-release(5).
   elif [ -f /etc/debian_version ] || os_release_matches debian; then
     detected_distro "Debian based"
     DISTRO_FAMILY="debian"
+    USE_SYSTEM_PYGOBJECT=1
+    PYTHON_BIN="/usr/bin/python3"
     VERSION="${VERSION_ID:-unknown}"
     [ -r /etc/debian_version ] && VERSION="$(cat /etc/debian_version)"
 
-    # apt(8) is intended for interactive use. Debian recommends apt-get for
-    # scripts because its command-line behavior is kept backward compatible.
+    if [ ! -x "$PYTHON_BIN" ] || ! verify_python_version "$PYTHON_BIN"; then
+      echo "Error: auto-cpufreq requires Python 3.10 or newer from the distribution."
+      return 1
+    fi
+
     if ! apt-get update; then
       echo "Error: Failed to update package lists."
       return 1
     fi
-
-    # Detect a broken package-manager state before attempting installation.
-    # Do not repair or upgrade the user's system automatically.
     if ! apt-get check; then
       echo "Error: APT reports broken or inconsistent package dependencies."
       echo "Repair the package-manager state and run the installer again."
       return 1
     fi
 
-    # Use Debian/Ubuntu's native PyGObject runtime instead of compiling
-    # PyGObject from PyPI. python3-gi provides the Python bindings and
-    # gir1.2-gtk-3.0 provides the GTK3 introspection data used by the GUI.
-    #
-    # gcc and python3-dev remain because other Python dependencies may still
-    # need to build native extensions when a compatible wheel is unavailable.
     echo "Installing Debian/Ubuntu dependencies for version $VERSION..."
     echo '---- '
     if ! apt-get install -y \
       python3-dev python3-venv python3-setuptools \
       dmidecode gcc git python3-gi gir1.2-gtk-3.0; then
       echo "Error: Failed to install required system dependencies."
-      return 1
-    fi
-
-    # python3-gi is installed for the distribution interpreter. Do not let
-    # a /usr/local Python earlier in PATH create a venv that cannot see it.
-    PYTHON_BIN="/usr/bin/python3"
-    if [ ! -x "$PYTHON_BIN" ]; then
-      echo "Error: The Debian/Ubuntu system Python is unavailable at $PYTHON_BIN."
-      return 1
-    fi
-
-    if ! verify_gtk3_runtime "$PYTHON_BIN"; then
-      echo "Error: The Debian/Ubuntu PyGObject GTK3 runtime could not be loaded."
-      echo "Verify that python3-gi and gir1.2-gtk-3.0 are correctly installed."
       return 1
     fi
 
@@ -199,36 +233,48 @@ function tool_install {
       return 1
     fi
 
-    RPM_MAJOR="${VERSION_ID%%.*}"
-    if os_release_matches rhel && [ "$RPM_MAJOR" = "8" ]; then
-      # RHEL 8's unversioned platform Python is an internal Python 3.6 runtime.
-      # Use the supported Python 3.9 AppStream packages instead, which match
-      # auto-cpufreq's declared Python >=3.9 requirement.
-      PYTHON_BIN="/usr/bin/python3.9"
-      RPM_PYTHON_PACKAGES=(python39 python39-devel python39-pip)
+    if is_enterprise_linux; then
+      EL_MAJOR="$(enterprise_linux_major)"
+      case "$EL_MAJOR" in
+        8|9)
+          PYTHON_BIN="/usr/bin/python3.12"
+          RPM_PYTHON_PACKAGES=(python3.12 python3.12-devel python3.12-pip)
+          ;;
+        10)
+          # RHEL 10 uses Python 3.12 as the default /usr/bin/python3.
+          PYTHON_BIN="/usr/bin/python3"
+          RPM_PYTHON_PACKAGES=(python3 python3-devel python3-pip)
+          ;;
+        *)
+          echo "Error: Unsupported Enterprise Linux major version '$EL_MAJOR'."
+          return 1
+          ;;
+      esac
+
+      if ! "$RPM_PM" install -y "${RPM_PYTHON_PACKAGES[@]}" \
+        dmidecode gcc git pkgconf-pkg-config glib2-devel cairo-devel \
+        gobject-introspection-devel cairo-gobject-devel gtk3-devel; then
+        echo "Error: Failed to install required Enterprise Linux dependencies."
+        return 1
+      fi
     else
-      # Fedora and current RHEL-family releases provide a supported Python 3
-      # through the standard package names. Pin the distro interpreter so a
-      # /usr/local Python earlier in PATH cannot mismatch RPM-provided headers.
+      USE_SYSTEM_PYGOBJECT=1
       PYTHON_BIN="/usr/bin/python3"
-      RPM_PYTHON_PACKAGES=(python3 python3-devel python3-pip)
-    fi
-
-    if ! "$RPM_PM" install -y "${RPM_PYTHON_PACKAGES[@]}" \
-      dmidecode gcc git cairo-devel gobject-introspection-devel cairo-gobject-devel gtk3-devel; then
-      echo "Error: Failed to install required system dependencies."
-      return 1
-    fi
-
-    if [ ! -x "$PYTHON_BIN" ]; then
-      echo "Error: The RPM-provided Python interpreter is unavailable at $PYTHON_BIN."
-      return 1
+      if ! "$RPM_PM" install -y \
+        python3 python3-devel python3-pip python3-gobject \
+        dmidecode gcc git pkgconf-pkg-config gtk3; then
+        echo "Error: Failed to install required Fedora dependencies."
+        return 1
+      fi
     fi
 
   elif [ -f /etc/solus-release ] || [ "${ID:-}" = "solus" ]; then
     detected_distro "Solus"
     DISTRO_FAMILY="solus"
-    if ! eopkg install pip python3 python3-devel dmidecode gobject-introspection-devel libcairo-devel gcc git libgtk-3; then
+    USE_SYSTEM_PYGOBJECT=1
+    PYTHON_BIN="/usr/bin/python3"
+    if ! eopkg install pip python3 python3-devel python-gobject python-cairo \
+      dmidecode gobject-introspection-devel libcairo-devel gcc git libgtk-3; then
       echo "Error: Failed to install required system dependencies."
       return 1
     fi
@@ -240,7 +286,11 @@ function tool_install {
   elif [ -f /etc/arch-release ] || [ "${ID:-}" = "artix" ] || os_release_matches arch; then
     detected_distro "Arch Linux based"
     DISTRO_FAMILY="arch"
-    if ! pacman -S --noconfirm --needed python python-pip python-setuptools base-devel dmidecode gobject-introspection gtk3 gcc git; then
+    USE_SYSTEM_PYGOBJECT=1
+    PYTHON_BIN="/usr/bin/python3"
+    if ! pacman -S --noconfirm --needed \
+      python python-pip python-setuptools python-gobject python-cairo \
+      base-devel dmidecode gobject-introspection gtk3 gcc git pkgconf; then
       echo "Error: Failed to install required system dependencies."
       return 1
     fi
@@ -248,7 +298,11 @@ function tool_install {
   elif [ "${ID:-}" = "opensuse-leap" ] || [ "${ID:-}" = "opensuse-tumbleweed" ] || os_release_matches suse || os_release_matches opensuse; then
     detected_distro "OpenSUSE"
     DISTRO_FAMILY="suse"
-    if ! zypper install -y python3 python3-pip python311-setuptools python3-devel gcc git dmidecode gobject-introspection-devel python3-cairo-devel gtk3 gtk3-devel; then
+    USE_SYSTEM_PYGOBJECT=1
+    PYTHON_BIN="/usr/bin/python3"
+    if ! zypper install -y \
+      python3 python3-pip python3-setuptools python3-devel python3-gobject python3-cairo \
+      gcc git pkg-config dmidecode gobject-introspection-devel gtk3 gtk3-devel; then
       echo "Error: Failed to install required system dependencies."
       return 1
     fi
@@ -256,7 +310,11 @@ function tool_install {
   elif [ "${ID:-}" = "void" ]; then
     detected_distro "Void Linux"
     DISTRO_FAMILY="void"
-    if ! xbps-install -Sy python3 python3-pip python3-devel python3-setuptools base-devel dmidecode cairo-devel gobject-introspection gcc git gtk+3; then
+    USE_SYSTEM_PYGOBJECT=1
+    PYTHON_BIN="/usr/bin/python3"
+    if ! xbps-install -Sy \
+      python3 python3-pip python3-devel python3-setuptools python3-gobject python3-cairo \
+      base-devel dmidecode cairo-devel gobject-introspection gcc git gtk+3 pkg-config; then
       echo "Error: Failed to install required system dependencies."
       return 1
     fi
@@ -265,18 +323,38 @@ function tool_install {
     manual_install
   fi
 
+  if [ ! -x "$PYTHON_BIN" ]; then
+    echo "Error: The distribution Python interpreter is unavailable at $PYTHON_BIN."
+    return 1
+  fi
   if ! verify_python_version "$PYTHON_BIN"; then
-    echo "Error: auto-cpufreq requires Python 3.9 or newer."
+    echo "Error: auto-cpufreq requires Python 3.10 or newer."
+    return 1
+  fi
+
+  if [ "$USE_SYSTEM_PYGOBJECT" -eq 1 ] && ! verify_gtk3_runtime "$PYTHON_BIN"; then
+    echo "Error: The distribution PyGObject GTK3 runtime could not be loaded."
     return 1
   fi
 
   header "Installing necessary Python packages"
 
-  venv_dir=$VENV_PATH/venv
-  mkdir -p "$venv_dir"
-  if ! "$PYTHON_BIN" -m venv --system-site-packages "$venv_dir"; then
-    echo "Error: Failed to create the Python virtual environment."
+  venv_dir="$VENV_PATH/venv"
+  if ! mkdir -p "$VENV_PATH"; then
+    echo "Error: Failed to create the auto-cpufreq virtual environment directory."
     return 1
+  fi
+
+  if [ "$USE_SYSTEM_PYGOBJECT" -eq 1 ]; then
+    if ! "$PYTHON_BIN" -m venv --system-site-packages "$venv_dir"; then
+      echo "Error: Failed to create the Python virtual environment."
+      return 1
+    fi
+  else
+    if ! "$PYTHON_BIN" -m venv "$venv_dir"; then
+      echo "Error: Failed to create the Python virtual environment."
+      return 1
+    fi
   fi
 
   venv_python="$venv_dir/bin/python"
@@ -284,37 +362,26 @@ function tool_install {
     echo "Error: Python executable was not created in the virtual environment."
     return 1
   fi
-
   if ! "$venv_python" -m pip --version > /dev/null 2>&1; then
     echo "Error: pip is unavailable in the Python virtual environment."
     return 1
   fi
-
-  # Debian/Ubuntu intentionally use the distro-provided PyGObject runtime.
-  # Confirm that --system-site-packages made it visible inside the venv before
-  # installing the rest of auto-cpufreq.
-  if [ "$DISTRO_FAMILY" = "debian" ] && ! verify_gtk3_runtime "$venv_python"; then
-    echo "Error: The virtual environment cannot access the system PyGObject GTK3 runtime."
-    return 1
-  fi
-
   if ! "$venv_python" -m pip install --upgrade pip wheel; then
     echo "Error: Failed to install Python build dependencies."
     return 1
   fi
 
-  # Debian/Ubuntu use python3-gi from the distribution through
-  # --system-site-packages. Other supported families retain their existing
-  # PyPI PyGObject installation path.
-  if [ "$DISTRO_FAMILY" != "debian" ]; then
-    if ! "$venv_python" -m pip install PyGObject; then
-      echo "Error: Failed to install PyGObject."
-      return 1
-    fi
+  if [ "$USE_SYSTEM_PYGOBJECT" -eq 0 ]; then
+    install_el_pygobject "$venv_python" || return 1
+  fi
+
+  if ! verify_gtk3_runtime "$venv_python"; then
+    echo "Error: The virtual environment cannot load the required PyGObject GTK3 runtime."
+    return 1
   fi
 
   header "Installing auto-cpufreq tool"
-  
+
   if ! "$venv_python" -m pip install .; then
     echo "Error: Failed to install auto-cpufreq into the virtual environment."
     return 1
@@ -328,25 +395,15 @@ function tool_install {
     echo "Error: Failed to install auto-cpufreq shared resources."
     return 1
   fi
-  if ! mkdir -p "$(dirname "$IMG_FILE")"; then
-    echo "Error: Failed to create auto-cpufreq icon directory."
-    return 1
-  fi
-  if ! cp images/icon.png "$IMG_FILE"; then
+  if ! mkdir -p "$(dirname "$IMG_FILE")" || ! cp images/icon.png "$IMG_FILE"; then
     echo "Error: Failed to install auto-cpufreq icon."
     return 1
   fi
-  if ! mkdir -p "$(dirname "$ORG_FILE")"; then
-    echo "Error: Failed to create auto-cpufreq PolicyKit policy directory."
-    return 1
-  fi
-  if ! cp "scripts/$(basename "$ORG_FILE")" "$(dirname "$ORG_FILE")"; then
+  if ! mkdir -p "$(dirname "$ORG_FILE")" || ! cp "scripts/$(basename "$ORG_FILE")" "$(dirname "$ORG_FILE")"; then
     echo "Error: Failed to install auto-cpufreq PolicyKit policy."
     return 1
   fi
 
-  # Install the wrapper before exposing the command: it is the user-facing
-  # entry point that dispatches to auto-cpufreq inside the virtual environment.
   if ! cp scripts/auto-cpufreq-venv-wrapper "$AUTO_CPUFREQ_FILE" || ! chmod a+x "$AUTO_CPUFREQ_FILE"; then
     echo "Error: Failed to install auto-cpufreq command wrapper."
     return 1
@@ -371,7 +428,16 @@ function tool_install {
       echo "Warning: Failed to refresh the desktop application database."
     fi
   fi
-  
+
+  # If an old on-demand run left this helper behind, synchronize it with the
+  # newly installed source version. Daemon installs create the helper as needed.
+  if [ -f "$CPUFREQCTL_FILE" ]; then
+    if ! cp scripts/cpufreqctl.sh "$CPUFREQCTL_FILE" || ! chmod 755 "$CPUFREQCTL_FILE"; then
+      echo "Error: Failed to synchronize the auto-cpufreq cpufreqctl helper."
+      return 1
+    fi
+  fi
+
   header "auto-cpufreq tool successfully installed"
   echo "For list of options, run:"
   echo "auto-cpufreq --help"; echo
@@ -380,51 +446,33 @@ function tool_install {
 function tool_remove {
   local cleanup_failed=0
 
-  # Stop running live/monitor processes on a best-effort basis. A process may
-  # exit between pgrep and kill, so that race must not turn removal into an
-  # artificial failure.
-  tool_arg_pids=($(pgrep -f "auto-cpufreq --"))
-  for pid in "${tool_arg_pids[@]}"; do
-    if [ "$pid" != "$$" ]; then
-      kill "$pid" 2>/dev/null || true
-    fi
-  done
-
   function remove_directory {
     local path="$1"
-
     [ -d "$path" ] || return 0
-
     if ! rm -rf -- "$path"; then
       echo "Error: Failed to remove directory: $path"
       return 1
     fi
-
     return 0
   }
 
   function remove_file {
     local path="$1"
-
     if [ ! -e "$path" ] && [ ! -L "$path" ]; then
       return 0
     fi
-
     if ! rm -f -- "$path"; then
       echo "Error: Failed to remove file: $path"
       return 1
     fi
-
     return 0
   }
 
   daemon_install="$AUTO_CPUFREQ_FILE-install"
   daemon_remove="$AUTO_CPUFREQ_FILE-remove"
-  venv_auto_cpufreq="$VENV_PATH/venv/bin/auto-cpufreq"
+  venv_python="$VENV_PATH/venv/bin/python"
+  venv_entrypoint="$VENV_PATH/venv/bin/auto-cpufreq"
 
-  # A daemon remove helper means the daemon is still installed. A persistent
-  # power-state snapshot means daemon removal/restoration is still incomplete,
-  # even if the helper itself has already been removed.
   if [ -f "$daemon_remove" ] || [ -f "$POWER_STATE_SNAPSHOT" ]; then
     if [ -x "$AUTO_CPUFREQ_FILE" ]; then
       if ! "$AUTO_CPUFREQ_FILE" --remove; then
@@ -432,8 +480,8 @@ function tool_remove {
         echo "The source installation was left in place so removal can be retried."
         return 1
       fi
-    elif [ -x "$venv_auto_cpufreq" ]; then
-      if ! PYTHONPATH="$VENV_PATH" "$venv_auto_cpufreq" --remove; then
+    elif [ -x "$venv_python" ] && [ -f "$venv_entrypoint" ]; then
+      if ! PYTHONPATH="$VENV_PATH" "$venv_python" "$venv_entrypoint" --remove; then
         echo "Error: Failed to remove auto-cpufreq or restore its saved power state using the virtual environment."
         echo "The source installation was left in place so removal can be retried."
         return 1
@@ -448,10 +496,7 @@ function tool_remove {
     echo "auto-cpufreq daemon is not installed and no power-state restoration is pending; skipping daemon removal."
   fi
 
-  # Continue cleanup after individual filesystem errors so as much as possible
-  # is removed, but remember every failure and report a non-zero result at end.
   remove_directory "$SHARE_DIR" || cleanup_failed=1
-
   remove_file "$daemon_install" || cleanup_failed=1
   remove_file "$daemon_remove" || cleanup_failed=1
   remove_file "$AUTO_CPUFREQ_FILE" || cleanup_failed=1
@@ -460,7 +505,6 @@ function tool_remove {
   remove_file "$ORG_FILE" || cleanup_failed=1
   remove_file "$CPUFREQCTL_FILE" || cleanup_failed=1
   remove_file "$AUTO_CPUFREQ_STATS_FILE" || cleanup_failed=1
-
   remove_file "$APPLICATIONS_PATH/$AUTO_CPUFREQ_GTK_DESKTOP_FILE" || cleanup_failed=1
 
   if command -v update-desktop-database > /dev/null 2>&1; then
@@ -485,13 +529,14 @@ function tool_remove {
   return 0
 }
 
-# root check
 if ((EUID != 0)); then
-  echo; echo "Must be run as root (i.e: 'sudo $0')."; echo
+  echo
+  echo "Must be run as root (for example: 'sudo bash ./auto-cpufreq-installer')."
+  echo
   exit 1
 fi
 
-if [[ -z "$1" ]]; then ask_operation
+if [[ -z "${1:-}" ]]; then ask_operation
 else
   case "$1" in
     --install) answer="i";;
@@ -501,9 +546,9 @@ else
 fi
 
 case $answer in
-	I|i) tool_install;;
-	R|r) tool_remove;;
-	*)
+  I|i) tool_install;;
+  R|r) tool_remove;;
+  *)
     echo "Unknown key, aborting ..."; echo
     exit 1
   ;;
