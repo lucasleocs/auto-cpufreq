@@ -15,3 +15,5 @@ jobs:
           python-version: "3.12"
       - name: Run policy diagnostics contract
         run: python -m unittest -v tmp_tests.test_debug_observability_stage2
+      - name: Run formatter contract
+        run: python -m unittest -v tmp_tests.test_debug_formatter_stage2
