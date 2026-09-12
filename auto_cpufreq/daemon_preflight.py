@@ -1,5 +1,6 @@
 from pathlib import Path
 from subprocess import run
+from typing import Optional
 
 
 class DaemonPreflightError(RuntimeError):
@@ -34,7 +35,7 @@ def _os_release_id() -> str:
     return ""
 
 
-def daemon_service_conflict() -> str | None:
+def daemon_service_conflict() -> Optional[str]:
     init_name = _init_name()
 
     if init_name == "systemd":
