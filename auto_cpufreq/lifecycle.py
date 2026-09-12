@@ -287,7 +287,11 @@ def update_source_install(custom_dir: str) -> bool:
 
     try:
         with operation_lock(operation="update") as lock_handle:
-            release_tag = core.check_for_update()
+            try:
+                release_tag = core.check_for_update()
+            except core.UpdateCheckError as exc:
+                raise LifecycleError(str(exc)) from exc
+
             if not release_tag:
                 return False
 
@@ -306,28 +310,27 @@ def update_source_install(custom_dir: str) -> bool:
                 workspace,
             )
             if staged_source is None:
-                print(f"Error: Failed to stage stable release {release_tag}.")
-                print("The current auto-cpufreq installation was not changed.")
-                return False
+                raise LifecycleError(
+                    f"Failed to stage stable release {release_tag}. "
+                    "The current auto-cpufreq installation was not changed."
+                )
 
             try:
                 staged_commit = staged_release_commit(staged_source)
                 if staged_commit is None:
-                    print(
-                        "Error: Unable to determine the Git revision of the "
-                        "staged stable release."
+                    raise LifecycleError(
+                        "Unable to determine the Git revision of the staged "
+                        "stable release. The current auto-cpufreq installation "
+                        "was not changed."
                     )
-                    print("The current auto-cpufreq installation was not changed.")
-                    return False
 
                 installed_version = core.get_literal_version("auto-cpufreq")
                 if not _staged_commit_is_descendant(installed_version, staged_commit):
-                    print(
-                        "Error: The exact staged Git revision could not be "
-                        "verified as a descendant of the installed source revision."
+                    raise LifecycleError(
+                        "The exact staged Git revision could not be verified as "
+                        "a descendant of the installed source revision. The "
+                        "current auto-cpufreq installation was not changed."
                     )
-                    print("The current auto-cpufreq installation was not changed.")
-                    return False
 
                 daemon_was_installed = core.DAEMON_REMOVE_HELPER.exists()
                 power_state_pending = core.power_state_exists()
@@ -338,41 +341,44 @@ def update_source_install(custom_dir: str) -> bool:
                         core.remove_complete_msg()
 
                 if not _install_staged_source(staged_source, lock_handle):
-                    print("The stable release could not be installed.")
                     if daemon_was_installed:
-                        print(
-                            "The previous daemon was removed before installation "
+                        raise LifecycleError(
+                            "The stable release could not be installed. The "
+                            "previous daemon was removed before installation "
                             "and was not re-enabled."
                         )
-                    return False
+                    raise LifecycleError(
+                        "The stable release could not be installed."
+                    )
 
                 installed_version = _installed_source_version()
                 if installed_version is None:
-                    print(
+                    raise LifecycleError(
                         "The update command cannot read the version metadata "
                         "from the newly installed source environment."
                     )
-                    return False
 
                 if not version_matches_release(installed_version, release_tag):
-                    print(
+                    raise LifecycleError(
                         "The installed version does not match the staged release "
-                        f"{release_tag}."
+                        f"{release_tag}. Reported installed version: "
+                        f"{installed_version}"
                     )
-                    print(f"Reported installed version: {installed_version}")
-                    return False
 
                 if not version_matches_exact_commit(installed_version, staged_commit):
-                    print(
+                    raise LifecycleError(
                         "The update command cannot confirm that the exact staged "
-                        "Git revision was installed."
+                        "Git revision was installed. Expected staged revision: "
+                        f"{staged_commit}. Installed package version: "
+                        f"{installed_version}"
                     )
-                    print(f"Expected staged revision: {staged_commit}")
-                    print(f"Installed package version: {installed_version}")
-                    return False
 
                 if daemon_was_installed and not _reenable_daemon(lock_handle):
-                    return False
+                    raise LifecycleError(
+                        "auto-cpufreq was updated, but the daemon could not be "
+                        "re-enabled. Run `sudo auto-cpufreq --install` after "
+                        "reviewing the error above."
+                    )
 
                 print(
                     "auto-cpufreq successfully updated to stable release "
