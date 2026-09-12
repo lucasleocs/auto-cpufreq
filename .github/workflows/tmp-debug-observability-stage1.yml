@@ -13,5 +13,9 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Run Stage 1 contract
+      - name: Run collector contract
+        run: >-
+          python -m unittest -v
+          tmp_tests.test_debug_observability_stage1.DiagnosticsCollectorTests
+      - name: Run full Stage 1 contract
         run: python -m unittest -v tmp_tests.test_debug_observability_stage1
