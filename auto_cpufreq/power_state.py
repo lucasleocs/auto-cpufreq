@@ -288,9 +288,9 @@ def _restore_bluetooth_state(bluetooth_config: Path, original_state) -> bool:
     if current_state is None:
         return False
 
-    # If the file or AutoEnable state changed after installation, leave the
-    # newer user/system state untouched instead of overwriting it during
-    # daemon removal.
+    # Restore only while AutoEnable still matches the value managed by
+    # auto-cpufreq. If the file disappeared or AutoEnable was changed later,
+    # preserve that newer user/system state. Unrelated config edits are kept.
     if not current_state.get("config_present"):
         return True
     if not _bluetooth_state_is_managed_false(current_state):

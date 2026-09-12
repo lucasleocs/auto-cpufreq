@@ -1,3 +1,10 @@
+# Serialize source installation, daemon lifecycle and source-update operations.
+#
+# The updater intentionally keeps one flock-backed open file description alive
+# while it invokes the staged installer and, when needed, the newly installed
+# command. Nested processes inherit that same lock descriptor instead of trying
+# to acquire an independent lock and being rejected as a competing operation.
+
 from contextlib import contextmanager
 import fcntl
 import os
@@ -32,6 +39,8 @@ def _inherited_lock_handle(path: Path):
             f"{expected}."
         )
 
+    # dup() references the same open file description, so this process can own
+    # a Python file object without changing the lock lifetime of its parent.
     try:
         handle = os.fdopen(os.dup(fd), "a+")
         fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -54,6 +63,9 @@ def operation_lock(
         try:
             yield inherited_handle
         finally:
+            # Closing this duplicate must not explicitly unlock the inherited
+            # lock; the shared open file description remains held through the
+            # outer lifecycle process's descriptor until that process finishes.
             inherited_handle.close()
         return
 

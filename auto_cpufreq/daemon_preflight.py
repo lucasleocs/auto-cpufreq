@@ -1,3 +1,10 @@
+# Protect service-manager artifacts before daemon installation.
+#
+# The lifecycle helper must never overwrite a service definition merely because
+# it has auto-cpufreq's name: the artifact may belong to a distro package or a
+# different installation method. This module only detects conflicts; ownership
+# and rollback remain the responsibility of the lifecycle layer.
+
 from pathlib import Path
 from subprocess import run
 from typing import Optional
@@ -39,6 +46,8 @@ def daemon_service_conflict() -> Optional[str]:
     init_name = _init_name()
 
     if init_name == "systemd":
+        # Check common unit locations first, then ask systemd itself. The latter
+        # catches vendor paths or aliases that are outside this explicit list.
         path = first_existing_path(
             [
                 "/etc/systemd/system/auto-cpufreq.service",

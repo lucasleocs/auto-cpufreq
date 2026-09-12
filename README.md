@@ -135,6 +135,8 @@ The source installer automatically handles several major Linux distribution fami
 
 The installer automatically installs system dependencies and manages a dedicated Python virtual environment in `/opt/auto-cpufreq`.
 
+Source installation and source lifecycle operations use a shared operation lock, so a second installer, daemon install/remove operation, or source update fails instead of modifying the same installation concurrently. The source installer also refuses to replace the source environment while an auto-cpufreq daemon installation or saved recovery snapshot is still present; use `sudo auto-cpufreq --remove` first, or `sudo auto-cpufreq --update` for a normal stable source upgrade.
+
 NixOS uses the native Nix integration described below instead of the source installer.
 
 #### Stable release
@@ -157,7 +159,7 @@ cd auto-cpufreq
 sudo bash ./auto-cpufreq-installer
 ```
 
-> auto-cpufreq --update tracks published stable releases, not the master branch. A development checkout will not advance to newer development commits and will only update once a newer stable release includes that revision.
+> The built-in stable source updater is used only for installations made with `auto-cpufreq-installer`. It tracks published stable releases, not the `master` branch. A development checkout will not advance to newer development commits and will only update once a newer stable release includes that revision. Snap and AUR installations should be updated through their package managers.
 
 ### Snap Store
 
@@ -609,6 +611,8 @@ Installing the auto-cpufreq daemon using CLI is as simple as running the followi
 
 `sudo auto-cpufreq --install`
 
+For source installs, daemon installation first verifies that it will not overwrite an existing auto-cpufreq service definition and captures the recoverable host power-management state before persistent changes are made. On systemd this includes the state of GNOME Power Profiles and TuneD, the active power profile when available, and the Bluetooth `AutoEnable` setting. If installation or rollback is incomplete, recovery state is kept so cleanup can be retried instead of silently discarding the original host state.
+
 After the daemon is installed, `auto-cpufreq` is available as a binary and runs in the background. Its stats can be viewed by running: `auto-cpufreq --stats`
 
 The daemon can also be installed from the GTK interface. See [GUI](#gui).
@@ -629,9 +633,11 @@ If installed via Snap package, daemon status can be viewed as follows:
 
 ### Update - auto-cpufreq update
 
-`auto-cpufreq --update` follows published stable releases instead of the current `master` branch. It checks the latest release, verifies that the installed Git revision is on the direct history of that release, stages the exact release tag before changing the current installation, and verifies the installed version afterward. Diverged or otherwise unverifiable Git histories are left untouched.
+For installations made with `auto-cpufreq-installer`, `auto-cpufreq --update` follows published stable releases instead of the current `master` branch. It requires the latest stable release to be a verified descendant of the installed Git revision, stages the exact release tag in an isolated workspace, and verifies the staged commit before changing the current installation. After installation, it verifies both the release version and the exact staged Git commit. Diverged or otherwise unverifiable histories are left untouched.
 
-If the daemon was installed before the update, auto-cpufreq remembers that state and re-enables it only after the new release has been installed and verified. An installation that was being used only on demand is not converted into a persistent daemon.
+Snap and AUR installations are not replaced by the source updater; use the package manager that owns those installations instead.
+
+If the daemon was installed before the update, auto-cpufreq remembers that state and re-enables it only after the new release has been installed and verified. An installation that was being used only on demand is not converted into a persistent daemon. If replacement fails after the previous daemon has been removed, it is deliberately left disabled rather than restarting the old daemon against a partially replaced source installation.
 
 Update auto-cpufreq by running: `sudo auto-cpufreq --update`. By default, `/opt/auto-cpufreq/source` is used as the parent directory for update staging. Each update uses a unique temporary subdirectory rather than keeping a persistent clone of the release.
 
@@ -643,9 +649,9 @@ The auto-cpufreq daemon, its service integration, and the persistent system chan
 
 `sudo auto-cpufreq --remove`
 
-Removal uses the detected service manager, cleans daemon-owned artifacts, and restores saved power-management state only after the auto-cpufreq service is no longer active. This can include GNOME Power Profiles, TuneD, and Bluetooth boot policy state that was changed during daemon installation. Use `auto-cpufreq --remove` instead of stopping or disabling the service directly so the full cleanup and restoration sequence can run.
+Removal uses the detected service manager, cleans daemon-owned artifacts, and restores saved power-management state only after the auto-cpufreq service is no longer active. This can include GNOME Power Profiles, TuneD, the previously active power profile, and Bluetooth boot policy state that was changed during daemon installation. If cleanup or restoration fails, the recovery snapshot/marker is kept so `sudo auto-cpufreq --remove` can be retried. Bluetooth restoration is conservative: if `AutoEnable` was changed after daemon installation, that newer value is preserved instead of being overwritten.
 
-*Please note:* after the daemon is removed, the auto-cpufreq GUI and desktop entry (icon) are also removed.
+Use `auto-cpufreq --remove` instead of stopping or disabling the service directly so the full cleanup and restoration sequence can run. This command removes the daemon integration; it does not uninstall the source installation itself. To remove a source installation completely, run `sudo bash ./auto-cpufreq-installer` from an auto-cpufreq source tree and choose the remove option; the installer completes any pending daemon recovery before deleting installed source files and desktop integration.
 
 ### Stats
 

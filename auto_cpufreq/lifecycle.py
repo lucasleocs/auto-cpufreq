@@ -1,3 +1,16 @@
+# Transactional orchestration for source-install lifecycle operations.
+#
+# Keep the ordering guarantees in this module explicit: capture recoverable
+# host state before persistent changes, do not restore competing power managers
+# until auto-cpufreq is confirmed stopped, and retain recovery markers whenever
+# cleanup or restoration is incomplete. Source updates additionally stage and
+# verify a release before touching the installed daemon, then keep one operation
+# lock across nested installer/daemon commands.
+#
+# Some low-level daemon primitives still live in core.py because legacy and Nix
+# paths depend on them. This module owns the source CLI orchestration; moving
+# those helpers should be done together with every caller and packaging patch.
+
 import os
 from pathlib import Path
 from subprocess import run
@@ -222,6 +235,9 @@ def _install_staged_source(staged_source: Path, lock_handle) -> bool:
         print("Error: The staged release does not contain auto-cpufreq-installer.")
         return False
 
+    # The staged Bash installer participates in the same transaction. Passing
+    # the already-held descriptor prevents it from racing another lifecycle
+    # command without requiring it to acquire a second lock of its own.
     fd = lock_handle.fileno()
     env = os.environ.copy()
     env[INHERITED_LOCK_FD_ENV] = str(fd)
@@ -255,6 +271,8 @@ def _reenable_daemon(lock_handle) -> bool:
         )
         return False
 
+    # Re-enable through the newly installed command while the updater still
+    # owns the transaction lock; the child inherits the same descriptor.
     fd = lock_handle.fileno()
     env = os.environ.copy()
     env[INHERITED_LOCK_FD_ENV] = str(fd)
@@ -278,6 +296,9 @@ def _reenable_daemon(lock_handle) -> bool:
 
 
 def update_source_install(custom_dir: str) -> bool:
+    # Self-update is allowed only when this running process belongs to the
+    # dedicated source venv. Do not infer ownership from installed package
+    # markers because source and packaged installations may coexist.
     if not is_source_install():
         raise LifecycleError(
             "Automatic self-update is only supported for installations made "
@@ -286,6 +307,8 @@ def update_source_install(custom_dir: str) -> bool:
         )
 
     try:
+        # Hold one lock across check -> stage -> daemon removal -> install ->
+        # verification -> optional daemon re-enable. Nested commands inherit it.
         with operation_lock(operation="update") as lock_handle:
             try:
                 release_tag = core.check_for_update()
@@ -303,6 +326,8 @@ def update_source_install(custom_dir: str) -> bool:
                 print("Aborted")
                 return False
 
+            # Staging and ancestry verification happen before the installed
+            # daemon or source environment is modified.
             workspace = new_staging_destination(Path(custom_dir))
             staged_source = stage_release(
                 core.GITHUB + ".git",
@@ -335,6 +360,9 @@ def update_source_install(custom_dir: str) -> bool:
                 daemon_was_installed = core.DAEMON_REMOVE_HELPER.exists()
                 power_state_pending = core.power_state_exists()
 
+                # Only after staging is trusted may the old daemon be removed.
+                # If replacement later fails, leaving it disabled is safer than
+                # restarting an old daemon against a partially replaced source.
                 if daemon_was_installed or power_state_pending:
                     core.remove_daemon()
                     if daemon_was_installed:
@@ -351,6 +379,8 @@ def update_source_install(custom_dir: str) -> bool:
                         "The stable release could not be installed."
                     )
 
+                # Verify through the new venv, not metadata cached by the old
+                # updater process, and require both release and exact 40-char SHA.
                 installed_version = _installed_source_version()
                 if installed_version is None:
                     raise LifecycleError(
