@@ -51,6 +51,9 @@ GITHUB_REQUEST_TIMEOUT = (10, 30)
 CPUS = os.cpu_count()
 
 
+class UpdateCheckError(RuntimeError):
+    pass
+
 
 # Note:
 # "load1m" & "cpuload" can't be global vars and to in order to show correct data must be
@@ -160,9 +163,10 @@ def check_for_update():
         exceptions.Timeout,
         exceptions.RequestException,
         exceptions.HTTPError,
-    ):
-        print("Error connecting to GitHub while checking for updates.")
-        return False
+    ) as exc:
+        raise UpdateCheckError(
+            "Unable to connect to GitHub while checking for updates."
+        ) from exc
 
     if response.status_code != 200:
         try:
@@ -170,48 +174,42 @@ def check_for_update():
         except ValueError:
             message = None
 
-        print("Error fetching the latest stable release.")
-
         if (
             message is not None
             and message.startswith("API rate limit exceeded")
         ):
-            print(
-                "GitHub API rate limit exceeded. "
+            raise UpdateCheckError(
+                "GitHub API rate limit exceeded while checking for updates. "
                 "Please try again later."
             )
-        else:
-            print("Unexpected status code:", response.status_code)
 
-        return False
+        raise UpdateCheckError(
+            "Unable to fetch the latest stable release "
+            f"(GitHub returned HTTP {response.status_code})."
+        )
 
     try:
         latest_release = response.json()
-    except ValueError:
-        print("Malformed release data returned by GitHub.")
-        return False
+    except ValueError as exc:
+        raise UpdateCheckError(
+            "GitHub returned malformed stable-release data."
+        ) from exc
 
     latest_version = latest_release.get("tag_name")
     if not latest_version:
-        print(
-            "The latest GitHub release does not contain a release tag. "
-            "Automatic update was skipped."
+        raise UpdateCheckError(
+            "The latest GitHub release does not contain a release tag."
         )
-        return False
 
     installed_version = get_literal_version("auto-cpufreq")
     installed_commit = extract_git_commit(installed_version)
 
     if installed_commit is None:
-        print(
-            "Unable to determine the Git revision of this "
-            "auto-cpufreq installation."
+        raise UpdateCheckError(
+            "Unable to determine the Git revision of this auto-cpufreq "
+            "installation. Automatic stable update was skipped to avoid "
+            "replacing an installation whose history cannot be verified."
         )
-        print(
-            "Automatic stable update was skipped to avoid replacing "
-            "an installation whose history cannot be verified."
-        )
-        return False
 
     compare_url = (
         f"{api_repository}/compare/"
@@ -228,13 +226,11 @@ def check_for_update():
         exceptions.Timeout,
         exceptions.RequestException,
         exceptions.HTTPError,
-    ):
-        print(
-            "Unable to compare the installed Git revision with "
-            "the latest stable release."
-        )
-        print("Automatic update was skipped.")
-        return False
+    ) as exc:
+        raise UpdateCheckError(
+            "Unable to compare the installed Git revision with the latest "
+            "stable release."
+        ) from exc
 
     if comparison.status_code != 200:
         try:
@@ -242,29 +238,27 @@ def check_for_update():
         except ValueError:
             message = None
 
-        print(
-            "Unable to compare the installed Git build with "
-            "the latest stable release."
-        )
-
         if (
             message is not None
             and message.startswith("API rate limit exceeded")
         ):
-            print(
-                "GitHub API rate limit exceeded. "
+            raise UpdateCheckError(
+                "GitHub API rate limit exceeded while checking for updates. "
                 "Please try again later."
             )
-        else:
-            print("Unexpected status code:", comparison.status_code)
 
-        print("Automatic update was skipped.")
-        return False
+        raise UpdateCheckError(
+            "Unable to compare the installed Git build with the latest "
+            "stable release "
+            f"(GitHub returned HTTP {comparison.status_code})."
+        )
 
     try:
         compare_status = comparison.json().get("status")
-    except ValueError:
-        compare_status = None
+    except ValueError as exc:
+        raise UpdateCheckError(
+            "GitHub returned malformed commit-comparison data."
+        ) from exc
 
     decision = decide_release_update(
         installed_version,
@@ -301,11 +295,10 @@ def check_for_update():
             "custom or development code."
         )
     else:
-        print(
-            "Unable to prove that the latest stable release is "
-            "newer than the installed build."
+        raise UpdateCheckError(
+            "Unable to prove that the latest stable release is newer than "
+            "the installed build. Automatic update was skipped."
         )
-        print("Automatic update was skipped.")
 
     return False
 
