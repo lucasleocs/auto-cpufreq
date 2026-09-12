@@ -298,6 +298,7 @@ def main(monitor, live, daemon, install, update, remove, force, turbo, config, s
                 config_path=config_path if conf.has_config() else None,
                 governor_override_getter=get_override,
                 turbo_override_getter=get_turbo_override,
+                is_snap=IS_INSTALLED_WITH_SNAP,
             )
             footer()
             print_system_report(report, include_config=False)
