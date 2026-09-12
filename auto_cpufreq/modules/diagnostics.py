@@ -126,6 +126,7 @@ class DiagnosticsReport:
     cpufreq_policies: tuple[CpuFreqPolicyInfo, ...]
     battery_thresholds: BatteryThresholdDiagnostics
     power_services: PowerServicesInfo
+    ppd: PpdDiagnostics = PpdDiagnostics()
 
 
 def _read_text(path: Path) -> str | None:
@@ -558,6 +559,14 @@ def read_power_profiles_daemon_info(
     return PpdDiagnostics()
 
 
+def _ppd_provider_active(info: PowerServicesInfo) -> bool:
+    return any(
+        service.name in {"power-profiles-daemon", "tuned-ppd"}
+        and service.active_state == "active"
+        for service in info.services
+    )
+
+
 def collect_diagnostics(
     _system_report,
     *,
@@ -573,6 +582,7 @@ def collect_diagnostics(
     capture_state=capture_service_state,
     is_snap: bool = False,
     snap_runner=subprocess.run,
+    ppd_runner=subprocess.run,
 ) -> DiagnosticsReport:
     """Collect deep diagnostics beside one already-collected fast snapshot.
 
@@ -580,6 +590,18 @@ def collect_diagnostics(
     attached to one point-in-time SystemReport rather than recollecting shared
     telemetry through legacy helpers.
     """
+    power_services = read_power_services_info(
+        Path(init_comm),
+        capture_state,
+        is_snap=is_snap,
+        snap_runner=snap_runner,
+    )
+    ppd = (
+        read_power_profiles_daemon_info(ppd_runner)
+        if not is_snap and _ppd_provider_active(power_services)
+        else PpdDiagnostics()
+    )
+
     return DiagnosticsReport(
         config_path=config_path,
         governor_override=read_debug_override(
@@ -597,12 +619,8 @@ def collect_diagnostics(
             Path(power_supply_root),
             ideapad_roots,
         ),
-        power_services=read_power_services_info(
-            Path(init_comm),
-            capture_state,
-            is_snap=is_snap,
-            snap_runner=snap_runner,
-        ),
+        power_services=power_services,
+        ppd=ppd,
     )
 
 
