@@ -13,7 +13,6 @@ from typing import Optional
 class DaemonPreflightError(RuntimeError):
     pass
 
-
 def first_existing_path(paths):
     for path in map(Path, paths):
         if path.exists() or path.is_symlink():
@@ -106,7 +105,12 @@ def daemon_service_conflict() -> Optional[str]:
         return None if path is None else str(path)
 
     if init_name == "s6-svscan":
-        path = first_existing_path(["/etc/s6/sv/auto-cpufreq"])
+        path = first_existing_path(
+            [
+                "/etc/s6/sv/auto-cpufreq",
+                "/etc/s6/adminsv/default/contents.d/auto-cpufreq",
+            ]
+        )
         return None if path is None else str(path)
 
     return None
