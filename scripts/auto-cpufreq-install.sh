@@ -31,6 +31,35 @@ refuse_existing_path() {
   fi
 }
 
+publish_owned_file() {
+  local source="$1"
+  local destination="$2"
+  local mode="$3"
+  local description="$4"
+  local temporary
+
+  refuse_existing_path "$destination" "$description"
+  if [ ! -f "$source" ] || [ -L "$source" ]; then
+    fail_install "Source for $description is not a regular file."
+  fi
+
+  temporary="$(mktemp "${destination}.tmp.XXXXXX")" \
+    || fail_install "Failed to create a temporary $description."
+  if ! install -m "$mode" -- "$source" "$temporary"; then
+    rm -f -- "$temporary"
+    fail_install "Failed to prepare $description."
+  fi
+
+  # A hardlink publishes only the complete file and fails if another artifact
+  # appeared after preflight; no reader can observe a partially copied unit.
+  if ! ln -- "$temporary" "$destination"; then
+    rm -f -- "$temporary"
+    fail_install "Failed to publish $description without overwriting it."
+  fi
+  rm -f -- "$temporary" \
+    || fail_install "Failed to remove the temporary $description."
+}
+
 run_step() {
   local description="$1"
   shift
@@ -42,6 +71,20 @@ run_step() {
   fi
 }
 
+systemd_unit_file_state() {
+  local state
+
+  state="$(LC_ALL=C systemctl is-enabled "$1" 2>/dev/null)"
+  case "$state" in
+    enabled|enabled-runtime|linked|linked-runtime|alias|masked|masked-runtime|static|indirect|disabled|generated|transient|not-found)
+      printf '%s\n' "$state"
+      return 0
+      ;;
+  esac
+
+  return 1
+}
+
 case "$(ps h -o comm 1)" in
   dinit)
     command -v dinitctl > /dev/null 2>&1 || fail_install "dinit detected but dinitctl is unavailable."
@@ -49,8 +92,9 @@ case "$(ps h -o comm 1)" in
     refuse_existing_path /etc/dinit.d/auto-cpufreq "dinit service definition"
 
     echo -e "\n* Deploying auto-cpufreq (dinit) unit file"
-    cp /usr/local/share/auto-cpufreq/scripts/auto-cpufreq-dinit /etc/dinit.d/auto-cpufreq \
-      || fail_install "Failed to deploy the dinit service definition."
+    publish_owned_file \
+      /usr/local/share/auto-cpufreq/scripts/auto-cpufreq-dinit \
+      /etc/dinit.d/auto-cpufreq 644 "dinit service definition"
 
     # Dinit caches loaded service descriptions. A stopped service from an
     # older source installation may still be loaded after its file was removed;
@@ -76,10 +120,9 @@ case "$(ps h -o comm 1)" in
     refuse_existing_path /etc/init.d/auto-cpufreq "OpenRC service definition"
 
     echo -e "\n* Deploying auto-cpufreq OpenRC unit file"
-    cp /usr/local/share/auto-cpufreq/scripts/auto-cpufreq-openrc /etc/init.d/auto-cpufreq \
-      || fail_install "Failed to deploy the OpenRC service definition."
-    chmod +x /etc/init.d/auto-cpufreq \
-      || fail_install "Failed to make the OpenRC service definition executable."
+    publish_owned_file \
+      /usr/local/share/auto-cpufreq/scripts/auto-cpufreq-openrc \
+      /etc/init.d/auto-cpufreq 755 "OpenRC service definition"
 
     run_step "Starting auto-cpufreq daemon (OpenRC) service" rc-service auto-cpufreq start \
       || exit 1
@@ -105,12 +148,19 @@ case "$(ps h -o comm 1)" in
       refuse_existing_path "$active_link" "runit activation path"
 
       echo -e "\n* Deploying auto-cpufreq (runit) service directory"
-      mkdir -p "$service_dir" \
-        || fail_install "Failed to create the runit service directory."
-      cp /usr/local/share/auto-cpufreq/scripts/auto-cpufreq-runit "$service_dir/run" \
-        || fail_install "Failed to deploy the runit service definition."
-      chmod +x "$service_dir/run" \
-        || fail_install "Failed to make the runit service definition executable."
+      staged_service_dir="$(mktemp -d "${service_dir}.tmp.XXXXXX")" \
+        || fail_install "Failed to stage the runit service directory."
+      if ! install -m 755 /usr/local/share/auto-cpufreq/scripts/auto-cpufreq-runit \
+        "$staged_service_dir/run"; then
+        rm -rf -- "$staged_service_dir"
+        fail_install "Failed to prepare the runit service definition."
+      fi
+      refuse_existing_path "$service_dir" "runit service directory"
+      if ! mv -Tn -- "$staged_service_dir" "$service_dir" \
+        || [ -e "$staged_service_dir" ]; then
+        rm -rf -- "$staged_service_dir"
+        fail_install "Failed to publish the runit service directory."
+      fi
 
       echo -e "\n* Enabling auto-cpufreq daemon (runit) at boot"
       ln -s "$service_dir" "$active_link" \
@@ -136,16 +186,19 @@ case "$(ps h -o comm 1)" in
   systemd)
     command -v systemctl > /dev/null 2>&1 || fail_install "systemd detected but systemctl is unavailable."
 
-    if ! existing_unit="$(systemctl list-unit-files auto-cpufreq.service --no-legend --no-pager 2>/dev/null)"; then
-      fail_install "Failed to inspect existing systemd service definitions."
-    fi
-    if [ -n "$existing_unit" ] || [ -e /etc/systemd/system/auto-cpufreq.service ] || [ -L /etc/systemd/system/auto-cpufreq.service ]; then
+    existing_unit="$(systemd_unit_file_state auto-cpufreq.service)" \
+      || fail_install "Failed to inspect existing systemd service definitions."
+    if [ "$existing_unit" != "not-found" ] \
+      || [ -e /etc/systemd/system/auto-cpufreq.service ] \
+      || [ -L /etc/systemd/system/auto-cpufreq.service ]; then
       fail_install "Refusing to overwrite existing systemd service definition for auto-cpufreq."
     fi
 
     echo -e "\n* Deploying auto-cpufreq systemd unit file"
-    cp /usr/local/share/auto-cpufreq/scripts/auto-cpufreq.service /etc/systemd/system/auto-cpufreq.service \
-      || fail_install "Failed to deploy the systemd service unit."
+    publish_owned_file \
+      /usr/local/share/auto-cpufreq/scripts/auto-cpufreq.service \
+      /etc/systemd/system/auto-cpufreq.service 644 \
+      "systemd service definition"
 
     run_step "Reloading systemd manager configuration" systemctl daemon-reload || exit 1
     run_step "Starting auto-cpufreq daemon (systemd) service" systemctl start auto-cpufreq.service || exit 1
@@ -170,8 +223,19 @@ case "$(ps h -o comm 1)" in
     refuse_existing_path /etc/s6/adminsv/default/contents.d/auto-cpufreq "s6 default-bundle membership"
 
     echo -e "\n* Deploying auto-cpufreq (s6) service definition"
-    mkdir -p /etc/s6/sv/auto-cpufreq || fail_install "Failed to create the s6 service directory."
-    cp -r /usr/local/share/auto-cpufreq/scripts/auto-cpufreq-s6/. /etc/s6/sv/auto-cpufreq/ || fail_install "Failed to deploy the s6 service definition."
+    staged_service_dir="$(mktemp -d /etc/s6/sv/auto-cpufreq.tmp.XXXXXX)" \
+      || fail_install "Failed to stage the s6 service directory."
+    if ! cp -r /usr/local/share/auto-cpufreq/scripts/auto-cpufreq-s6/. \
+      "$staged_service_dir/"; then
+      rm -rf -- "$staged_service_dir"
+      fail_install "Failed to prepare the s6 service definition."
+    fi
+    refuse_existing_path /etc/s6/sv/auto-cpufreq "s6 service definition"
+    if ! mv -Tn -- "$staged_service_dir" /etc/s6/sv/auto-cpufreq \
+      || [ -e "$staged_service_dir" ]; then
+      rm -rf -- "$staged_service_dir"
+      fail_install "Failed to publish the s6 service directory."
+    fi
     if [ "$s6_backend" = "frontend" ]; then
       run_step "Synchronizing the s6 service repository" s6 repository sync || exit 1
       run_step "Enabling auto-cpufreq daemon (s6) at boot" s6 set enable auto-cpufreq || exit 1

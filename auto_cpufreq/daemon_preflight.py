@@ -6,8 +6,9 @@
 # and rollback remain the responsibility of the lifecycle layer.
 
 from pathlib import Path
-from subprocess import run
 from typing import Optional
+
+from auto_cpufreq.systemd import SystemdQueryError, query_unit_file_state
 
 
 class DaemonPreflightError(RuntimeError):
@@ -59,26 +60,12 @@ def daemon_service_conflict() -> Optional[str]:
         if path is not None:
             return str(path)
         try:
-            result = run(
-                [
-                    "systemctl",
-                    "list-unit-files",
-                    "auto-cpufreq.service",
-                    "--no-legend",
-                    "--no-pager",
-                ],
-                capture_output=True,
-                text=True,
-            )
-        except OSError as exc:
+            unit_file_state = query_unit_file_state("auto-cpufreq.service")
+        except SystemdQueryError as exc:
             raise DaemonPreflightError(
                 "Unable to inspect existing systemd service definitions."
             ) from exc
-        if result.returncode != 0:
-            raise DaemonPreflightError(
-                "Unable to inspect existing systemd service definitions."
-            )
-        if result.stdout.strip():
+        if unit_file_state != "not-found":
             return "systemd unit auto-cpufreq.service"
         return None
 

@@ -2,6 +2,7 @@
 #
 # auto-cpufreq - core functionality
 import click, distro, os, platform, psutil, sys
+import stat
 from importlib.metadata import metadata, PackageNotFoundError
 from math import isclose
 from pathlib import Path
@@ -12,6 +13,7 @@ from shutil import copy
 from subprocess import call, check_output, DEVNULL, getoutput, run
 from time import sleep
 from warnings import filterwarnings
+from uuid import uuid4
 
 from auto_cpufreq.config.config import config
 from auto_cpufreq.globals import (
@@ -595,44 +597,151 @@ def remove_complete_msg():
     print("auto-cpufreq successfully removed.")
     footer()
 
+def _publish_new_daemon_helper(source: Path, destination: Path) -> None:
+    directory = None
+    source_descriptor = None
+    destination_descriptor = None
+    temporary = f".{destination.name}.{os.getpid()}.{uuid4().hex}.tmp"
+    try:
+        directory = os.open(
+            destination.parent,
+            os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC | os.O_NOFOLLOW,
+        )
+        directory_metadata = os.fstat(directory)
+        if (
+            not stat.S_ISDIR(directory_metadata.st_mode)
+            or directory_metadata.st_uid != 0
+        ):
+            raise OSError("daemon helper directory is not root-owned")
+
+        source_descriptor = os.open(
+            source,
+            os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW,
+        )
+        source_metadata = os.fstat(source_descriptor)
+        if not stat.S_ISREG(source_metadata.st_mode) or source_metadata.st_uid != 0:
+            raise OSError("daemon helper source is not a root-owned regular file")
+
+        destination_descriptor = os.open(
+            temporary,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC | os.O_NOFOLLOW,
+            0o755,
+            dir_fd=directory,
+        )
+        os.fchmod(destination_descriptor, 0o755)
+        with (
+            os.fdopen(source_descriptor, "rb") as source_handle,
+            os.fdopen(destination_descriptor, "wb") as destination_handle,
+        ):
+            source_descriptor = None
+            destination_descriptor = None
+            while chunk := source_handle.read(1024 * 1024):
+                destination_handle.write(chunk)
+            destination_handle.flush()
+            os.fsync(destination_handle.fileno())
+
+        # The canonical path is the lifecycle marker. link() refuses to
+        # replace an artifact that appeared after preflight, and it exposes
+        # only a fully written, durable helper.
+        os.link(
+            temporary,
+            destination.name,
+            src_dir_fd=directory,
+            dst_dir_fd=directory,
+            follow_symlinks=False,
+        )
+        os.fsync(directory)
+    finally:
+        if source_descriptor is not None:
+            os.close(source_descriptor)
+        if destination_descriptor is not None:
+            os.close(destination_descriptor)
+        if directory is not None:
+            try:
+                os.unlink(temporary, dir_fd=directory)
+            except OSError:
+                pass
+            os.close(directory)
+
+
 def _deploy_daemon_helpers():
     helpers = (
-        ("install", SCRIPTS_DIR / "auto-cpufreq-install.sh", DAEMON_INSTALL_HELPER),
         ("remove", SCRIPTS_DIR / "auto-cpufreq-remove.sh", DAEMON_REMOVE_HELPER),
+        ("install", SCRIPTS_DIR / "auto-cpufreq-install.sh", DAEMON_INSTALL_HELPER),
     )
 
     for label, source, destination in helpers:
         print(f"\n* Deploy auto-cpufreq {label} script")
-        copy(source, destination)
-        destination.chmod(0o755)
+        _publish_new_daemon_helper(source, destination)
+
+
+def _owned_file_matches(destination: Path, source: Path) -> bool:
+    if (
+        destination.is_symlink()
+        or not destination.is_file()
+        or source.is_symlink()
+        or not source.is_file()
+    ):
+        return False
+    try:
+        return destination.read_bytes() == source.read_bytes()
+    except OSError:
+        return False
+
+
+def _remove_owned_file(destination: Path, source: Path, description: str) -> bool:
+    if not destination.exists() and not destination.is_symlink():
+        return True
+    if not _owned_file_matches(destination, source):
+        print(
+            f"\nERROR: Preserving {destination}; ownership of the "
+            f"{description} can no longer be verified."
+        )
+        return False
+
+    try:
+        destination.unlink()
+    except OSError as exc:
+        print(f"\nERROR: Unable to remove {description} {destination}: {exc}")
+        return False
+
+    return True
 
 
 def _remove_daemon_helpers() -> bool:
     # remove_daemon() uses the removal helper as the installed-daemon marker.
     # Delete it last so a failed install-helper cleanup still leaves a marker
     # that allows --remove to retry the same cleanup.
-    try:
-        DAEMON_INSTALL_HELPER.unlink(missing_ok=True)
-    except OSError as exc:
-        print(
-            f"\nERROR: Unable to remove daemon lifecycle helper "
-            f"{DAEMON_INSTALL_HELPER}: {exc}"
-        )
+    if not _remove_owned_file(
+        DAEMON_INSTALL_HELPER,
+        SCRIPTS_DIR / "auto-cpufreq-install.sh",
+        "daemon installation helper",
+    ):
         return False
 
-    try:
-        DAEMON_REMOVE_HELPER.unlink(missing_ok=True)
-    except OSError as exc:
-        print(
-            f"\nERROR: Unable to remove daemon lifecycle helper "
-            f"{DAEMON_REMOVE_HELPER}: {exc}"
-        )
+    if not _remove_owned_file(
+        DAEMON_REMOVE_HELPER,
+        SCRIPTS_DIR / "auto-cpufreq-remove.sh",
+        "daemon removal helper",
+    ):
         return False
 
     return True
 
 
 def _run_daemon_helper(helper: Path, action: str) -> bool:
+    sources = {
+        DAEMON_INSTALL_HELPER: SCRIPTS_DIR / "auto-cpufreq-install.sh",
+        DAEMON_REMOVE_HELPER: SCRIPTS_DIR / "auto-cpufreq-remove.sh",
+    }
+    source = sources.get(helper)
+    if source is None or not _owned_file_matches(helper, source):
+        print(
+            f"\nERROR: Refusing to execute {helper}; it no longer matches "
+            "the source-installed lifecycle helper."
+        )
+        return False
+
     try:
         result = run([str(helper)])
     except OSError as exc:
@@ -650,37 +759,11 @@ def _run_daemon_helper(helper: Path, action: str) -> bool:
 
 
 def _remove_owned_cpufreqctl() -> bool:
-    if not CPUFREQCTL_PATH.exists() and not CPUFREQCTL_PATH.is_symlink():
-        return True
-
-    source = SCRIPTS_DIR / "cpufreqctl.sh"
-    if (
-        CPUFREQCTL_PATH.is_symlink()
-        or not CPUFREQCTL_PATH.is_file()
-        or not source.is_file()
-    ):
-        print(
-            f"\nWarning: Preserving {CPUFREQCTL_PATH}; its ownership "
-            "can no longer be verified."
-        )
-        return True
-
-    try:
-        if CPUFREQCTL_PATH.read_bytes() != source.read_bytes():
-            print(
-                f"\nWarning: Preserving {CPUFREQCTL_PATH}; it no longer "
-                "matches the source-installed helper."
-            )
-            return True
-        CPUFREQCTL_PATH.unlink()
-    except OSError as exc:
-        print(
-            f"\nERROR: Unable to remove cpufreqctl helper "
-            f"{CPUFREQCTL_PATH}: {exc}"
-        )
-        return False
-
-    return True
+    return _remove_owned_file(
+        CPUFREQCTL_PATH,
+        SCRIPTS_DIR / "cpufreqctl.sh",
+        "cpufreqctl helper",
+    )
 
 
 def _cleanup_daemon_artifacts(
@@ -791,7 +874,7 @@ def _prepare_power_state_snapshot() -> bool:
     # The removal helper is the installed-daemon marker for source installs.
     # A stopped legacy daemon may not have a snapshot, but installing over it
     # would capture already-modified host state as if it were the original.
-    if DAEMON_REMOVE_HELPER.exists():
+    if DAEMON_REMOVE_HELPER.exists() or DAEMON_INSTALL_HELPER.exists():
         print("\nERROR: An auto-cpufreq daemon installation is already present.")
         print(
             "Remove it first with `sudo auto-cpufreq --remove` before "
@@ -814,6 +897,9 @@ def _prepare_power_state_snapshot() -> bool:
         "cpufreqctl_preexisting": (
             CPUFREQCTL_PATH.exists() or CPUFREQCTL_PATH.is_symlink()
         ),
+        # PPD and TuneD are masked without disabling them, so their original
+        # systemd enablement links remain host-owned and intact for removal.
+        "power_service_enablement_preserved": True,
     }
     if not save_power_state(transaction=transaction):
         print(
@@ -993,7 +1079,7 @@ def remove_daemon():
         sys.exit(1)
 
     if saved_power_state:
-        if daemon_present and not _remove_daemon_helpers():
+        if not _remove_daemon_helpers():
             print(
                 "\nDaemon lifecycle helper cleanup is incomplete. "
                 "Power-management restoration was not attempted."

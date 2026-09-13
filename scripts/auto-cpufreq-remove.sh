@@ -33,19 +33,48 @@ run_step() {
   fi
 }
 
+require_owned_file() {
+  local installed="$1"
+  local source="$2"
+  local description="$3"
+
+  if [ ! -f "$installed" ] || [ -L "$installed" ] \
+    || [ ! -f "$source" ] || [ -L "$source" ] \
+    || ! cmp -s -- "$installed" "$source"; then
+    fail_remove "Refusing to remove $description at '$installed'; it no longer matches the source-installed artifact."
+  fi
+}
+
+systemd_unit_file_state() {
+  local state
+
+  state="$(LC_ALL=C systemctl is-enabled "$1" 2>/dev/null)"
+  case "$state" in
+    enabled|enabled-runtime|linked|linked-runtime|alias|masked|masked-runtime|static|indirect|disabled|generated|transient|not-found)
+      printf '%s\n' "$state"
+      return 0
+      ;;
+  esac
+
+  return 1
+}
+
 case "$(ps h -o comm 1)" in
   dinit)
     command -v dinitctl > /dev/null 2>&1 || fail_remove "dinit detected but dinitctl is unavailable."
 
-    # --ignore-unstarted also treats an unloaded/missing service as stopped,
-    # so an interrupted removal can safely retry this step.
-    run_step "Stopping auto-cpufreq daemon (dinit) service" dinitctl stop --ignore-unstarted auto-cpufreq \
-      || exit 1
+    dinit_unit=/etc/dinit.d/auto-cpufreq
+    dinit_source=/usr/local/share/auto-cpufreq/scripts/auto-cpufreq-dinit
+    if [ -e "$dinit_unit" ] || [ -L "$dinit_unit" ]; then
+      require_owned_file "$dinit_unit" "$dinit_source" "dinit service definition"
 
-    # dinitctl disable fails when the persistent boot dependency is already
-    # absent. Treat only that state as a completed retry step; other dinit
-    # failures must still abort removal.
-    if [ -e /etc/dinit.d/auto-cpufreq ]; then
+      # --ignore-unstarted also treats an unloaded service as stopped, so an
+      # interrupted removal can safely retry while the owned definition exists.
+      run_step "Stopping auto-cpufreq daemon (dinit) service" dinitctl stop --ignore-unstarted auto-cpufreq \
+        || exit 1
+
+      # dinitctl disable fails when the persistent boot dependency is already
+      # absent. Treat only that state as a completed retry step.
       echo -e "\n* Disabling auto-cpufreq daemon (dinit) at boot"
       if dinit_disable_output="$(LC_ALL=C dinitctl disable auto-cpufreq 2>&1)"; then
         [ -z "$dinit_disable_output" ] || printf '%s\n' "$dinit_disable_output"
@@ -55,13 +84,12 @@ case "$(ps h -o comm 1)" in
         [ -z "$dinit_disable_output" ] || printf '%s\n' "$dinit_disable_output" >&2
         fail_remove "Failed to disable the dinit service at boot."
       fi
+      echo -e "\n* Removing auto-cpufreq daemon (dinit) service definition"
+      rm -f "$dinit_unit" \
+        || fail_remove "Failed to remove the dinit service definition."
     else
-      echo -e "\n* auto-cpufreq dinit definition is already absent; skipping disable"
+      echo -e "\n* auto-cpufreq dinit definition is already absent"
     fi
-
-    echo -e "\n* Removing auto-cpufreq daemon (dinit) service definition"
-    rm -f /etc/dinit.d/auto-cpufreq \
-      || fail_remove "Failed to remove the dinit service definition."
   ;;
 
   init|openrc-init)
@@ -69,28 +97,34 @@ case "$(ps h -o comm 1)" in
       fail_remove "OpenRC-style init detected, but rc-service or rc-update is unavailable."
     fi
 
-    # OpenRC's conditional options make both an absent service and an already
-    # stopped service successful no-ops while preserving real stop failures.
-    run_step "Stopping auto-cpufreq daemon (OpenRC) service" \
-      rc-service --ifexists --ifstarted auto-cpufreq stop \
-      || exit 1
+    openrc_unit=/etc/init.d/auto-cpufreq
+    openrc_source=/usr/local/share/auto-cpufreq/scripts/auto-cpufreq-openrc
+    if [ -e "$openrc_unit" ] || [ -L "$openrc_unit" ]; then
+      require_owned_file "$openrc_unit" "$openrc_source" "OpenRC service definition"
 
-    # The install helper adds auto-cpufreq only to the default runlevel. Remove
-    # that exact boot dependency, and treat only the precise already-absent
-    # state as a completed retry step; unrelated rc-update failures stay fatal.
-    echo -e "\n* Disabling auto-cpufreq daemon (OpenRC) at boot"
-    if openrc_disable_output="$(LC_ALL=C rc-update delete auto-cpufreq default 2>&1)"; then
-      [ -z "$openrc_disable_output" ] || printf '%s\n' "$openrc_disable_output"
-    elif [[ "$openrc_disable_output" == *"service \`auto-cpufreq' is not in the runlevel \`default'"* ]]; then
-      echo "* auto-cpufreq daemon (OpenRC) is already disabled at boot"
+      # Conditional options make an already-stopped service a successful no-op
+      # while preserving real stop failures.
+      run_step "Stopping auto-cpufreq daemon (OpenRC) service" \
+        rc-service --ifexists --ifstarted auto-cpufreq stop \
+        || exit 1
+
+      # Remove the exact default-runlevel dependency created by installation.
+      echo -e "\n* Disabling auto-cpufreq daemon (OpenRC) at boot"
+      if openrc_disable_output="$(LC_ALL=C rc-update delete auto-cpufreq default 2>&1)"; then
+        [ -z "$openrc_disable_output" ] || printf '%s\n' "$openrc_disable_output"
+      elif [[ "$openrc_disable_output" == *"service \`auto-cpufreq' is not in the runlevel \`default'"* ]]; then
+        echo "* auto-cpufreq daemon (OpenRC) is already disabled at boot"
+      else
+        [ -z "$openrc_disable_output" ] || printf '%s\n' "$openrc_disable_output" >&2
+        fail_remove "Failed to disable the OpenRC service at boot."
+      fi
+
+      echo -e "\n* Removing auto-cpufreq daemon (OpenRC) service definition"
+      rm -f "$openrc_unit" \
+        || fail_remove "Failed to remove the OpenRC service definition."
     else
-      [ -z "$openrc_disable_output" ] || printf '%s\n' "$openrc_disable_output" >&2
-      fail_remove "Failed to disable the OpenRC service at boot."
+      echo -e "\n* auto-cpufreq OpenRC definition is already absent"
     fi
-
-    echo -e "\n* Removing auto-cpufreq daemon (OpenRC) service definition"
-    rm -f /etc/init.d/auto-cpufreq \
-      || fail_remove "Failed to remove the OpenRC service definition."
   ;;
 
   runit)
@@ -101,10 +135,26 @@ case "$(ps h -o comm 1)" in
       local active_root="$2"
       local service_dir="$service_root/sv/auto-cpufreq"
       local active_link="$active_root/service/auto-cpufreq"
+      local source_run=/usr/local/share/auto-cpufreq/scripts/auto-cpufreq-runit
+
+      if [ -e "$service_dir" ] || [ -L "$service_dir" ]; then
+        [ -d "$service_dir" ] && [ ! -L "$service_dir" ] \
+          || fail_remove "Refusing to remove a replaced runit service directory."
+        require_owned_file "$service_dir/run" "$source_run" "runit service definition"
+        if find "$service_dir" -mindepth 1 -maxdepth 1 \
+          ! -name run ! -name supervise -print -quit | grep -q .; then
+          fail_remove "Refusing to remove a runit service directory containing unexpected artifacts."
+        fi
+      fi
 
       if [ -e "$active_link" ] || [ -L "$active_link" ]; then
-        run_step "Stopping auto-cpufreq daemon (runit) service" sv stop "$active_link" \
-          || exit 1
+        if [ ! -L "$active_link" ] || [ "$(readlink "$active_link")" != "$service_dir" ]; then
+          fail_remove "Refusing to remove a replaced runit activation path."
+        fi
+        if [ -d "$service_dir" ]; then
+          run_step "Stopping auto-cpufreq daemon (runit) service" sv stop "$active_link" \
+            || exit 1
+        fi
       fi
 
       echo -e "\n* Disabling auto-cpufreq daemon (runit) at boot"
@@ -131,63 +181,84 @@ case "$(ps h -o comm 1)" in
   systemd)
     command -v systemctl > /dev/null 2>&1 || fail_remove "systemd detected but systemctl is unavailable."
 
+    systemd_snapshot() {
+      local output
+      local status
+      local load_state
+      local unit_file_state
+      local manager
+
+      output="$(systemctl show auto-cpufreq.service --no-pager \
+        --property=LoadState \
+        --property=ActiveState \
+        --property=UnitFileState \
+        --property=FragmentPath 2>/dev/null)"
+      status=$?
+      load_state="$(printf '%s\n' "$output" | sed -n 's/^LoadState=//p')"
+
+      if [ "$load_state" = "not-found" ]; then
+        printf 'LoadState=not-found\nActiveState=inactive\nUnitFileState=\nFragmentPath=\n'
+        return 0
+      fi
+
+      if [ "$status" -eq 0 ] \
+        && [[ "$output" == *$'LoadState='* ]] \
+        && [[ "$output" == *$'ActiveState='* ]] \
+        && [[ "$output" == *$'UnitFileState='* ]] \
+        && [[ "$output" == *$'FragmentPath='* ]]; then
+        printf '%s\n' "$output"
+        return 0
+      fi
+
+      # A few older systemd versions omit properties for a missing unit. Do
+      # not turn a broken manager connection into not-found: both the unit-file
+      # API and a separate manager query must succeed before accepting absence.
+      unit_file_state="$(systemd_unit_file_state auto-cpufreq.service)" \
+        || return 1
+      [ "$unit_file_state" = "not-found" ] || return 1
+      manager="$(systemctl show --no-pager --property=Version 2>/dev/null)" \
+        || return 1
+      [[ "$manager" == *$'Version='* ]] || return 1
+
+      printf 'LoadState=not-found\nActiveState=inactive\nUnitFileState=\nFragmentPath=\n'
+    }
+
     systemd_property() {
-      local property="$1"
-      local value
-
-      if ! value="$(systemctl show auto-cpufreq.service --no-pager --property="$property" --value 2>/dev/null)"; then
-        return 1
-      fi
-
-      printf '%s\n' "$value"
+      printf '%s\n' "$systemd_state" | sed -n "s/^$1=//p"
     }
 
-    systemd_load_state() {
-      local value
-      local unit_files
-
-      if value="$(systemd_property LoadState)"; then
-        printf '%s\n' "$value"
-        return 0
-      fi
-
-      # systemctl show has returned different statuses for missing units across
-      # systemd versions. An empty successful list-unit-files query proves that
-      # the unit is absent without turning unrelated systemctl failures into
-      # successful removal.
-      if ! unit_files="$(systemctl list-unit-files auto-cpufreq.service --no-legend --no-pager 2>/dev/null)"; then
-        return 1
-      fi
-      if [ -z "$unit_files" ]; then
-        printf 'not-found\n'
-        return 0
-      fi
-
-      return 1
-    }
-
-    load_state="$(systemd_load_state)" \
+    systemd_state="$(systemd_snapshot)" \
       || fail_remove "Failed to inspect the systemd service state."
+    load_state="$(systemd_property LoadState)"
+    installed_unit="/etc/systemd/system/auto-cpufreq.service"
+    source_unit="/usr/local/share/auto-cpufreq/scripts/auto-cpufreq.service"
+    installed_unit_present=0
 
-    if [ "$load_state" = "not-found" ]; then
-      echo -e "\n* auto-cpufreq systemd unit is already absent; skipping stop/disable"
-    else
-      installed_unit="/etc/systemd/system/auto-cpufreq.service"
-      source_unit="/usr/local/share/auto-cpufreq/scripts/auto-cpufreq.service"
-
-      fragment_path="$(systemd_property FragmentPath)" \
-        || fail_remove "Failed to inspect the loaded systemd service definition."
-      if [ "$fragment_path" != "$installed_unit" ]; then
-        fail_remove "Refusing to remove auto-cpufreq: systemd loaded the service from '$fragment_path', not the source-installed unit."
-      fi
+    # The unit file is a filesystem artifact even if systemd has not loaded it
+    # yet. Verify and remove an interrupted installation without confusing
+    # manager LoadState with ownership of the path on disk.
+    if [ -e "$installed_unit" ] || [ -L "$installed_unit" ]; then
       if [ ! -f "$installed_unit" ] || [ -L "$installed_unit" ]; then
         fail_remove "Refusing to remove auto-cpufreq: the systemd service path was replaced or masked after installation."
       fi
-      if [ ! -f "$source_unit" ]; then
+      if [ ! -f "$source_unit" ] || [ -L "$source_unit" ]; then
         fail_remove "Unable to verify ownership of the installed systemd service definition."
       fi
       if ! cmp -s -- "$installed_unit" "$source_unit"; then
         fail_remove "Refusing to remove auto-cpufreq: the systemd service definition no longer matches the source-installed unit."
+      fi
+      installed_unit_present=1
+    elif [ "$load_state" != "not-found" ]; then
+      fail_remove "Refusing to remove auto-cpufreq: systemd loaded a service whose installed definition is absent."
+    fi
+
+    if [ "$load_state" = "not-found" ]; then
+      echo -e "\n* auto-cpufreq systemd unit is already absent; skipping stop/disable"
+    else
+      fragment_path="$(systemd_property FragmentPath)" \
+        || fail_remove "Failed to inspect the loaded systemd service definition."
+      if [ "$fragment_path" != "$installed_unit" ]; then
+        fail_remove "Refusing to remove auto-cpufreq: systemd loaded the service from '$fragment_path', not the source-installed unit."
       fi
 
       active_state="$(systemd_property ActiveState)" \
@@ -197,6 +268,8 @@ case "$(ps h -o comm 1)" in
         active|activating|reloading|deactivating)
           run_step "Stopping auto-cpufreq daemon (systemd) service" systemctl stop auto-cpufreq.service \
             || exit 1
+          systemd_state="$(systemd_snapshot)" \
+            || fail_remove "Failed to refresh the systemd service state after stopping it."
           ;;
         inactive|failed|"")
           echo -e "\n* auto-cpufreq daemon (systemd) is already stopped"
@@ -221,6 +294,8 @@ case "$(ps h -o comm 1)" in
         enabled|enabled-runtime|linked|linked-runtime)
           run_step "Disabling auto-cpufreq daemon (systemd) at boot" systemctl disable auto-cpufreq.service \
             || exit 1
+          systemd_state="$(systemd_snapshot)" \
+            || fail_remove "Failed to refresh the systemd service state after disabling it."
           unit_file_state="$(systemd_property UnitFileState)" \
             || fail_remove "Failed to verify the systemd boot activation state."
           case "$unit_file_state" in
@@ -238,9 +313,9 @@ case "$(ps h -o comm 1)" in
       esac
     fi
 
-    if [ "$load_state" != "not-found" ]; then
+    if [ "$installed_unit_present" -eq 1 ]; then
       echo -e "\n* Removing auto-cpufreq daemon (systemd) unit file"
-      rm -f /etc/systemd/system/auto-cpufreq.service \
+      rm -f "$installed_unit" \
         || fail_remove "Failed to remove the systemd service unit."
     fi
 
@@ -253,6 +328,21 @@ case "$(ps h -o comm 1)" in
 
   s6-svscan)
     if command -v s6 > /dev/null 2>&1; then
+      if [ -e /etc/s6/sv/auto-cpufreq ] || [ -L /etc/s6/sv/auto-cpufreq ]; then
+        [ -d /etc/s6/sv/auto-cpufreq ] && [ ! -L /etc/s6/sv/auto-cpufreq ] \
+          || fail_remove "Refusing to remove a replaced s6 service directory."
+        require_owned_file /etc/s6/sv/auto-cpufreq/run \
+          /usr/local/share/auto-cpufreq/scripts/auto-cpufreq-s6/run \
+          "s6 run definition"
+        require_owned_file /etc/s6/sv/auto-cpufreq/type \
+          /usr/local/share/auto-cpufreq/scripts/auto-cpufreq-s6/type \
+          "s6 type definition"
+        if find /etc/s6/sv/auto-cpufreq -mindepth 1 -maxdepth 1 \
+          ! -name run ! -name type -print -quit | grep -q .; then
+          fail_remove "Refusing to remove an s6 service directory containing unexpected artifacts."
+        fi
+      fi
+
       echo -e "\n* Stopping auto-cpufreq daemon (s6) service"
       s6 live stop auto-cpufreq
       s6_stop_status=$?
@@ -263,26 +353,53 @@ case "$(ps h -o comm 1)" in
         echo "* auto-cpufreq is already absent from the live s6 database"
       fi
 
-      echo -e "\n* Removing auto-cpufreq daemon (s6) service definition"
-      rm -rf /etc/s6/sv/auto-cpufreq \
-        || fail_remove "Failed to remove the s6 service definition."
+      if [ -d /etc/s6/sv/auto-cpufreq ]; then
+        # Mask in the working set while the store definition still exists, then
+        # install that set so the live database no longer references it.
+        run_step "Masking auto-cpufreq in the s6 service set" s6 set mask auto-cpufreq \
+          || exit 1
+        run_step "Committing the updated s6 service set" s6 set commit -f \
+          || exit 1
+        run_step "Installing the updated s6 live database" s6 live install \
+          || exit 1
 
-      # s6-frontend keeps service sets separate from the store. Synchronizing
-      # after deleting the definition removes auto-cpufreq from every set; a
-      # commit plus live install then updates boot and live databases while
-      # preserving unrelated service state as much as possible.
-      run_step "Synchronizing the s6 service repository" s6 repository sync \
-        || exit 1
-      run_step "Committing the updated s6 service set" s6 set commit \
-        || exit 1
-      run_step "Installing the updated s6 live database" s6 live install \
-        || exit 1
+        echo -e "\n* Removing auto-cpufreq daemon (s6) service definition"
+        rm -rf /etc/s6/sv/auto-cpufreq \
+          || fail_remove "Failed to remove the s6 service definition."
+        run_step "Synchronizing the s6 service repository" s6 repository sync \
+          || exit 1
+      else
+        # A retry may begin after the store was removed. Sync first, then force
+        # a fresh compiled set so live install also removes any stale database
+        # entry left by an interrupted older removal.
+        run_step "Synchronizing the s6 service repository" s6 repository sync \
+          || exit 1
+        run_step "Recompiling the s6 service set" s6 set commit -f \
+          || exit 1
+        run_step "Installing the updated s6 live database" s6 live install \
+          || exit 1
+      fi
     else
       # Keep compatibility with pre-s6-frontend Artix installations. The
       # legacy path is also retry-safe after the service definition vanished.
       command -v s6-service > /dev/null 2>&1 || fail_remove "s6 detected but neither s6-frontend nor s6-service is available."
       command -v s6-db-reload > /dev/null 2>&1 || fail_remove "s6 detected but s6-db-reload is unavailable."
       command -v s6-rc > /dev/null 2>&1 || fail_remove "s6 detected but s6-rc is unavailable."
+
+      if [ -e /etc/s6/sv/auto-cpufreq ] || [ -L /etc/s6/sv/auto-cpufreq ]; then
+        [ -d /etc/s6/sv/auto-cpufreq ] && [ ! -L /etc/s6/sv/auto-cpufreq ] \
+          || fail_remove "Refusing to remove a replaced legacy s6 service directory."
+        require_owned_file /etc/s6/sv/auto-cpufreq/run \
+          /usr/local/share/auto-cpufreq/scripts/auto-cpufreq-s6/run \
+          "legacy s6 run definition"
+        require_owned_file /etc/s6/sv/auto-cpufreq/type \
+          /usr/local/share/auto-cpufreq/scripts/auto-cpufreq-s6/type \
+          "legacy s6 type definition"
+        if find /etc/s6/sv/auto-cpufreq -mindepth 1 -maxdepth 1 \
+          ! -name run ! -name type -print -quit | grep -q .; then
+          fail_remove "Refusing to remove a legacy s6 service directory containing unexpected artifacts."
+        fi
+      fi
 
       if [ -d /etc/s6/sv/auto-cpufreq ]; then
         echo -e "\n* Stopping auto-cpufreq daemon (legacy s6) service"

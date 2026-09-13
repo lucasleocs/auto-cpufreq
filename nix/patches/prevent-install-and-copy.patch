@@ -152,7 +152,7 @@ diff --git a/auto_cpufreq/core.py b/auto_cpufreq/core.py
 -        sys.exit(1)
 -
 -    if saved_power_state:
--        if daemon_present and not _remove_daemon_helpers():
+-        if not _remove_daemon_helpers():
 -            print(
 -                "\nDaemon lifecycle helper cleanup is incomplete. "
 -                "Power-management restoration was not attempted."

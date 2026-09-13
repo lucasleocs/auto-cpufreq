@@ -7,10 +7,13 @@
 
 import json
 import os
+import stat
 from pathlib import Path
 from shutil import copystat, which
 from subprocess import run
 from uuid import uuid4
+
+from auto_cpufreq.systemd import SystemdQueryError, query_unit_properties
 
 
 DEFAULT_STATE_DIR = Path("/var/lib/auto-cpufreq")
@@ -38,7 +41,9 @@ _NO_ENABLE_ACTION_STATES = {
 _TRANSACTION_BOOL_FIELDS = {
     "bluetooth_managed",
     "cpufreqctl_preexisting",
+    "power_service_enablement_preserved",
 }
+_SNAPSHOT_VERSION = 2
 
 
 def _command_exists(command: str) -> bool:
@@ -69,57 +74,18 @@ def _missing_service_state():
 
 
 def capture_service_state(unit: str, *, systemctl: str = "systemctl"):
-    result = _run(
-        [
-            systemctl,
-            "show",
-            unit,
-            "--no-pager",
-            "--property=LoadState",
-            "--property=ActiveState",
-            "--property=UnitFileState",
-            "--property=FragmentPath",
-        ],
-        capture_output=True,
-    )
-    if result is None:
-        return None
-
-    properties = {}
-    for line in result.stdout.splitlines():
-        key, separator, value = line.partition("=")
-        if separator:
-            properties[key] = value
-
-    # systemctl show has differed across systemd versions for missing units:
-    # some return success with LoadState=not-found, while others return a
-    # non-zero status. Treat absence as a valid snapshot state, but keep real
-    # systemctl failures fatal.
-    if properties.get("LoadState") == "not-found":
-        return _missing_service_state()
-
-    if result.returncode != 0:
-        installed = _run(
-            [
-                systemctl,
-                "list-unit-files",
-                unit,
-                "--no-legend",
-                "--no-pager",
-            ],
-            capture_output=True,
-        )
-        if (
-            installed is not None
-            and installed.returncode == 0
-            and not installed.stdout.strip()
-        ):
-            return _missing_service_state()
-        return None
-
     required = ("LoadState", "ActiveState", "UnitFileState", "FragmentPath")
-    if any(key not in properties for key in required):
+    try:
+        properties = query_unit_properties(
+            unit,
+            required,
+            systemctl=systemctl,
+        )
+    except SystemdQueryError:
         return None
+
+    if properties is None:
+        return _missing_service_state()
 
     return {
         "load_state": properties["LoadState"],
@@ -134,7 +100,13 @@ def _systemctl(systemctl: str, *args: str) -> bool:
     return result is not None and result.returncode == 0
 
 
-def restore_service_state(unit: str, state, *, systemctl: str = "systemctl") -> bool:
+def restore_service_state(
+    unit: str,
+    state,
+    *,
+    systemctl: str = "systemctl",
+    enablement_links_preserved: bool = False,
+) -> bool:
     if not state or state.get("load_state") == "not-found":
         return True
 
@@ -142,18 +114,21 @@ def restore_service_state(unit: str, state, *, systemctl: str = "systemctl") -> 
     unit_file_state = state.get("unit_file_state", "")
     fragment_path = state.get("fragment_path", "")
 
-    if unit_file_state == "enabled":
-        success = _systemctl(systemctl, "enable", unit) and success
-    elif unit_file_state == "enabled-runtime":
-        success = _systemctl(systemctl, "enable", "--runtime", unit) and success
-    elif unit_file_state == "disabled":
-        success = _systemctl(systemctl, "disable", unit) and success
-    elif unit_file_state == "linked" and fragment_path:
-        success = _systemctl(systemctl, "link", fragment_path) and success
-    elif unit_file_state == "linked-runtime" and fragment_path:
-        success = _systemctl(systemctl, "link", "--runtime", fragment_path) and success
-    elif unit_file_state not in _NO_ENABLE_ACTION_STATES | {"masked", "masked-runtime"}:
-        return False
+    if not enablement_links_preserved:
+        # Version 1 installs used `systemctl disable`; retain the best-effort
+        # reconstruction needed by those already-published recovery snapshots.
+        if unit_file_state == "enabled":
+            success = _systemctl(systemctl, "enable", unit) and success
+        elif unit_file_state == "enabled-runtime":
+            success = _systemctl(systemctl, "enable", "--runtime", unit) and success
+        elif unit_file_state == "disabled":
+            success = _systemctl(systemctl, "disable", unit) and success
+        elif unit_file_state == "linked" and fragment_path:
+            success = _systemctl(systemctl, "link", fragment_path) and success
+        elif unit_file_state == "linked-runtime" and fragment_path:
+            success = _systemctl(systemctl, "link", "--runtime", fragment_path) and success
+        elif unit_file_state not in _NO_ENABLE_ACTION_STATES | {"masked", "masked-runtime"}:
+            return False
 
     if state.get("active_state") in _ACTIVE_STATES:
         success = _systemctl(systemctl, "start", unit) and success
@@ -188,6 +163,86 @@ def _service_active(services, unit: str) -> bool:
 
 def _state_path(state_dir: Path):
     return state_dir / STATE_FILE_NAME
+
+
+def _open_state_directory(state_dir: Path, *, create: bool = False):
+    state_dir = Path(state_dir)
+    if create:
+        try:
+            state_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+        except OSError:
+            return None
+
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC | os.O_NOFOLLOW
+    try:
+        descriptor = os.open(state_dir, flags)
+        metadata = os.fstat(descriptor)
+        if not stat.S_ISDIR(metadata.st_mode) or metadata.st_uid != 0:
+            os.close(descriptor)
+            return None
+        # Tighten a legacy root-owned directory before trusting files inside it.
+        os.fchmod(descriptor, 0o700)
+        return descriptor
+    except OSError:
+        return None
+
+
+def _load_snapshot(state_dir: Path):
+    directory = _open_state_directory(state_dir)
+    if directory is None:
+        return None
+
+    descriptor = None
+    try:
+        descriptor = os.open(
+            STATE_FILE_NAME,
+            os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW,
+            dir_fd=directory,
+        )
+        metadata = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or metadata.st_uid != 0
+            or stat.S_IMODE(metadata.st_mode) != 0o600
+        ):
+            return None
+        identity = metadata.st_dev, metadata.st_ino
+        with os.fdopen(descriptor) as handle:
+            descriptor = None
+            return json.load(handle), identity
+    except (OSError, ValueError, TypeError, UnicodeError):
+        return None
+    finally:
+        if descriptor is not None:
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
+        os.close(directory)
+
+
+def _remove_snapshot(state_dir: Path, identity) -> bool:
+    directory = _open_state_directory(state_dir)
+    if directory is None:
+        return False
+    try:
+        try:
+            current = os.stat(
+                STATE_FILE_NAME,
+                dir_fd=directory,
+                follow_symlinks=False,
+            )
+        except FileNotFoundError:
+            return True
+        if (current.st_dev, current.st_ino) != identity:
+            return False
+        os.unlink(STATE_FILE_NAME, dir_fd=directory)
+        os.fsync(directory)
+        return True
+    except OSError:
+        return False
+    finally:
+        os.close(directory)
 
 
 def _try_unlink(path: Path) -> bool:
@@ -328,6 +383,14 @@ def _atomic_write_text_preserving_metadata(path: Path, content: str) -> bool:
             handle.flush()
             os.fsync(handle.fileno())
         os.replace(temporary, target)
+        directory = os.open(
+            target.parent,
+            os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC | os.O_NOFOLLOW,
+        )
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
     except (OSError, UnicodeError):
         return False
     finally:
@@ -402,7 +465,8 @@ def _valid_transaction_state(state) -> bool:
 def _valid_snapshot(snapshot) -> bool:
     if not isinstance(snapshot, dict):
         return False
-    if snapshot.get("version") != 1:
+    version = snapshot.get("version")
+    if version not in (1, _SNAPSHOT_VERSION):
         return False
 
     services = snapshot.get("services")
@@ -428,7 +492,10 @@ def _valid_snapshot(snapshot) -> bool:
     if profile is not None and not isinstance(profile, str):
         return False
 
-    if not _valid_transaction_state(snapshot.get("transaction", {})):
+    transaction = snapshot.get("transaction", {})
+    if not _valid_transaction_state(transaction):
+        return False
+    if version == _SNAPSHOT_VERSION and set(transaction) != _TRANSACTION_BOOL_FIELDS:
         return False
 
     return _valid_bluetooth_state(snapshot.get("bluetooth"))
@@ -436,15 +503,14 @@ def _valid_snapshot(snapshot) -> bool:
 
 def power_state_exists(*, state_dir: Path = DEFAULT_STATE_DIR) -> bool:
     state_file = _state_path(Path(state_dir))
-    return state_file.exists()
+    return state_file.exists() or state_file.is_symlink()
 
 
 def get_power_state_transaction(*, state_dir: Path = DEFAULT_STATE_DIR):
-    state_file = _state_path(Path(state_dir))
-    try:
-        snapshot = json.loads(state_file.read_text())
-    except (OSError, ValueError, TypeError):
+    loaded = _load_snapshot(Path(state_dir))
+    if loaded is None:
         return None
+    snapshot, _ = loaded
     if not _valid_snapshot(snapshot):
         return None
     return dict(snapshot.get("transaction", {}))
@@ -461,14 +527,16 @@ def save_power_state(
 ) -> bool:
     state_dir = Path(state_dir)
     bluetooth_config = Path(bluetooth_config)
-    state_file = _state_path(state_dir)
     transaction = {} if transaction is None else transaction
 
-    if not _valid_transaction_state(transaction):
+    if (
+        not _valid_transaction_state(transaction)
+        or set(transaction) != _TRANSACTION_BOOL_FIELDS
+    ):
         return False
 
     # Never replace the original pre-install snapshot with a later state.
-    if state_file.exists():
+    if power_state_exists(state_dir=state_dir):
         return False
 
     services = {}
@@ -511,14 +579,12 @@ def save_power_state(
     if bluetooth_state is None:
         return False
 
-    try:
-        state_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
-        state_dir.chmod(0o700)
-    except OSError:
+    directory = _open_state_directory(state_dir, create=True)
+    if directory is None:
         return False
 
     snapshot = {
-        "version": 1,
+        "version": _SNAPSHOT_VERSION,
         "services": services,
         "power_profiles_profile": power_profiles_profile,
         "bluetooth": bluetooth_state,
@@ -528,17 +594,46 @@ def save_power_state(
     # Publish through a unique file in the same directory. link() creates
     # the canonical snapshot name atomically and refuses to replace a snapshot
     # that another installer created after the pre-check above.
-    temporary = state_dir / (
-        f".{STATE_FILE_NAME}.{os.getpid()}.{uuid4().hex}.tmp"
-    )
+    temporary = f".{STATE_FILE_NAME}.{os.getpid()}.{uuid4().hex}.tmp"
+    descriptor = None
     try:
-        temporary.write_text(json.dumps(snapshot, indent=2, sort_keys=True) + "\n")
-        temporary.chmod(0o600)
-        os.link(temporary, state_file)
-    except OSError:
+        descriptor = os.open(
+            temporary,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC | os.O_NOFOLLOW,
+            0o600,
+            dir_fd=directory,
+        )
+        metadata = os.fstat(descriptor)
+        if not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != 0:
+            return False
+        os.fchmod(descriptor, 0o600)
+        content = json.dumps(snapshot, indent=2, sort_keys=True) + "\n"
+        with os.fdopen(descriptor, "w") as handle:
+            descriptor = None
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.link(
+            temporary,
+            STATE_FILE_NAME,
+            src_dir_fd=directory,
+            dst_dir_fd=directory,
+            follow_symlinks=False,
+        )
+        os.fsync(directory)
+    except (OSError, UnicodeError):
         return False
     finally:
-        _try_unlink(temporary)
+        if descriptor is not None:
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
+        try:
+            os.unlink(temporary, dir_fd=directory)
+        except OSError:
+            pass
+        os.close(directory)
 
     return True
 
@@ -561,18 +656,21 @@ def restore_power_state(
 ) -> bool:
     state_dir = Path(state_dir)
     bluetooth_config = Path(bluetooth_config)
-    state_file = _state_path(state_dir)
-
-    try:
-        snapshot = json.loads(state_file.read_text())
-    except (OSError, ValueError, TypeError):
+    loaded = _load_snapshot(state_dir)
+    if loaded is None:
         return False
+    snapshot, snapshot_identity = loaded
 
     if not _valid_snapshot(snapshot):
         return False
 
     success = True
     services = snapshot["services"]
+    transaction = snapshot.get("transaction", {})
+    enablement_links_preserved = (
+        snapshot["version"] == _SNAPSHOT_VERSION
+        and transaction["power_service_enablement_preserved"]
+    )
     if services:
         if not _command_exists(systemctl):
             success = False
@@ -583,11 +681,20 @@ def restore_power_state(
                 state = services.get(unit)
                 if state is None:
                     continue
-                if not restore_service_state(unit, state, systemctl=systemctl):
+                if not restore_service_state(
+                    unit,
+                    state,
+                    systemctl=systemctl,
+                    enablement_links_preserved=enablement_links_preserved,
+                ):
                     success = False
 
-    transaction = snapshot.get("transaction", {})
-    if transaction.get("bluetooth_managed") is True:
+    # Published version 1 snapshots predate transaction metadata and always
+    # managed Bluetooth. Honor an intermediate v1 flag when it is present.
+    bluetooth_was_managed = transaction.get("bluetooth_managed")
+    if snapshot["version"] == 1 and bluetooth_was_managed is None:
+        bluetooth_was_managed = True
+    if bluetooth_was_managed is True:
         bluetooth_state = snapshot["bluetooth"]
         if bluetooth_state is None or not _restore_bluetooth_state(
             bluetooth_config,
@@ -609,7 +716,7 @@ def restore_power_state(
     # Keep the canonical snapshot marker if it cannot be removed. Callers
     # must then report restoration as incomplete so a later retry remains
     # possible instead of claiming that recovery state has been cleared.
-    if not _try_unlink(state_file):
+    if not _remove_snapshot(state_dir, snapshot_identity):
         return False
 
     try:

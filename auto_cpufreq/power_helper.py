@@ -10,6 +10,7 @@ from sys import argv
 from auto_cpufreq.core import *
 from auto_cpufreq.globals import GITHUB, IS_INSTALLED_WITH_SNAP
 from auto_cpufreq.power_state import _atomic_write_text_preserving_metadata
+from auto_cpufreq.systemd import SystemdQueryError, query_unit_properties
 from auto_cpufreq.tlp_stat_parser import TLPStatusParser
 
 # app_name var
@@ -305,57 +306,16 @@ def valid_options():
 def _systemd_unit_state(unit: str):
     """Return (LoadState, ActiveState) while distinguishing absence/failure."""
     try:
-        state = run(
-            [
-                "systemctl",
-                "show",
-                unit,
-                "--no-pager",
-                "--property=LoadState",
-                "--property=ActiveState",
-            ],
-            capture_output=True,
-            text=True,
+        properties = query_unit_properties(
+            unit,
+            ("LoadState", "ActiveState"),
         )
-    except (OSError, FileNotFoundError, PermissionError):
+    except SystemdQueryError:
         return None
 
-    properties = {}
-    for line in state.stdout.splitlines():
-        key, separator, value = line.partition("=")
-        if separator:
-            properties[key] = value
-
-    load_state = properties.get("LoadState")
-    active_state = properties.get("ActiveState")
-    if load_state == "not-found":
+    if properties is None:
         return "not-found", "inactive"
-    if state.returncode == 0:
-        if load_state is None or active_state is None:
-            return None
-        return load_state, active_state
-
-    # Older systemd releases can make `show` fail for a missing unit. An empty
-    # successful list-unit-files query establishes absence without accepting a
-    # genuine systemctl failure as if the service were not installed.
-    try:
-        installed = run(
-            [
-                "systemctl",
-                "list-unit-files",
-                unit,
-                "--no-legend",
-                "--no-pager",
-            ],
-            capture_output=True,
-            text=True,
-        )
-    except (OSError, FileNotFoundError, PermissionError):
-        return None
-
-    if installed.returncode == 0 and not installed.stdout.strip():
-        return "not-found", "inactive"
-    return None
+    return properties["LoadState"], properties["ActiveState"]
 
 
 def _run_required_power_command(args, description: str) -> bool:
@@ -493,15 +453,12 @@ def _disable_systemd_power_service(unit: str, description: str) -> bool:
         )
         return False
 
-    if not _run_required_power_command(
-        ["systemctl", "disable", "--now", unit],
-        f"disable {description}",
-    ):
-        return False
-
+    # Masking prevents activation without deleting enablement links owned by
+    # the host. Removal can then undo only auto-cpufreq's mask and leave the
+    # original boot configuration intact.
     return _run_required_power_command(
-        ["systemctl", "mask", unit],
-        f"mask {description}",
+        ["systemctl", "mask", "--now", unit],
+        f"stop and mask {description}",
     )
 
 
