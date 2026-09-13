@@ -8,7 +8,7 @@
 import json
 import os
 from pathlib import Path
-from shutil import which
+from shutil import copystat, which
 from subprocess import run
 from uuid import uuid4
 
@@ -298,6 +298,45 @@ def _drop_empty_created_policy_section(lines):
     return result
 
 
+def _atomic_write_text_preserving_metadata(path: Path, content: str) -> bool:
+    path = Path(path)
+    try:
+        target = path.resolve(strict=True)
+        metadata = target.stat()
+    except OSError:
+        return False
+
+    temporary = target.parent / (
+        f".{target.name}.{os.getpid()}.{uuid4().hex}.tmp"
+    )
+    descriptor = None
+    try:
+        descriptor = os.open(
+            temporary,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+            0o600,
+        )
+        os.chown(temporary, metadata.st_uid, metadata.st_gid)
+        copystat(target, temporary)
+        with os.fdopen(descriptor, "w") as handle:
+            descriptor = None
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, target)
+    except (OSError, UnicodeError):
+        return False
+    finally:
+        if descriptor is not None:
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
+        _try_unlink(temporary)
+
+    return True
+
+
 def _restore_bluetooth_state(bluetooth_config: Path, original_state) -> bool:
     if not original_state.get("config_present"):
         return True
@@ -341,12 +380,10 @@ def _restore_bluetooth_state(bluetooth_config: Path, original_state) -> bool:
     if not original_state.get("policy_present") and not original_lines:
         new_lines = _drop_empty_created_policy_section(new_lines)
 
-    try:
-        Path(bluetooth_config).write_text("".join(new_lines))
-    except OSError:
-        return False
-
-    return True
+    return _atomic_write_text_preserving_metadata(
+        bluetooth_config,
+        "".join(new_lines),
+    )
 
 
 def _valid_snapshot(snapshot) -> bool:
