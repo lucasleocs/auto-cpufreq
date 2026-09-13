@@ -59,17 +59,22 @@ def daemon_service_conflict() -> Optional[str]:
         )
         if path is not None:
             return str(path)
-        result = run(
-            [
-                "systemctl",
-                "list-unit-files",
-                "auto-cpufreq.service",
-                "--no-legend",
-                "--no-pager",
-            ],
-            capture_output=True,
-            text=True,
-        )
+        try:
+            result = run(
+                [
+                    "systemctl",
+                    "list-unit-files",
+                    "auto-cpufreq.service",
+                    "--no-legend",
+                    "--no-pager",
+                ],
+                capture_output=True,
+                text=True,
+            )
+        except OSError as exc:
+            raise DaemonPreflightError(
+                "Unable to inspect existing systemd service definitions."
+            ) from exc
         if result.returncode != 0:
             raise DaemonPreflightError(
                 "Unable to inspect existing systemd service definitions."
