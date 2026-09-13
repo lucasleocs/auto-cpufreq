@@ -238,9 +238,11 @@ PYGTK
 }
 
 function source_install_preflight {
+  local daemon_install="$AUTO_CPUFREQ_FILE-install"
   local daemon_remove="$AUTO_CPUFREQ_FILE-remove"
 
-  if [ -e "$daemon_remove" ] || [ -L "$daemon_remove" ] \
+  if [ -e "$daemon_install" ] || [ -L "$daemon_install" ] \
+    || [ -e "$daemon_remove" ] || [ -L "$daemon_remove" ] \
     || [ -e "$POWER_STATE_SNAPSHOT" ] || [ -L "$POWER_STATE_SNAPSHOT" ]; then
     echo "Error: An auto-cpufreq daemon installation or recovery snapshot is still present."
     echo "Remove the daemon first with 'sudo auto-cpufreq --remove', then rerun the source installer."
