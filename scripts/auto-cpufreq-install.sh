@@ -167,6 +167,7 @@ case "$(ps h -o comm 1)" in
     fi
 
     refuse_existing_path /etc/s6/sv/auto-cpufreq "s6 service definition"
+    refuse_existing_path /etc/s6/adminsv/default/contents.d/auto-cpufreq "s6 default-bundle membership"
 
     echo -e "\n* Deploying auto-cpufreq (s6) service definition"
     mkdir -p /etc/s6/sv/auto-cpufreq || fail_install "Failed to create the s6 service directory."
