@@ -40,13 +40,75 @@ function ask_operation {
 
 function acquire_operation_lock {
   local inherited_fd="${AUTO_CPUFREQ_OPERATION_LOCK_FD:-}"
-  local inherited_path
-  local expected_path
+  local lock_directory
+  local lock_directory_mode
+  local lock_directory_mode_decimal
+  local lock_info
+  local inherited_info
+  local temporary_lock
 
-  if ! command -v flock > /dev/null 2>&1; then
-    echo "Error: flock from util-linux is required to coordinate auto-cpufreq operations."
+  if ! command -v flock > /dev/null 2>&1 \
+    || ! command -v mktemp > /dev/null 2>&1 \
+    || ! command -v stat > /dev/null 2>&1; then
+    echo "Error: flock, mktemp and stat are required to coordinate auto-cpufreq operations."
     return 1
   fi
+
+  lock_directory="$(dirname "$OPERATION_LOCK_PATH")"
+  if ! mkdir -p "$lock_directory" \
+    || [ -L "$lock_directory" ] \
+    || [ ! -d "$lock_directory" ]; then
+    echo "Error: Unable to use the auto-cpufreq operation lock directory."
+    return 1
+  fi
+  if [ "$(stat -Lc '%u' "$lock_directory" 2>/dev/null)" != "0" ]; then
+    echo "Error: The auto-cpufreq operation lock directory is not root-owned."
+    return 1
+  fi
+  lock_directory_mode="$(stat -Lc '%a' "$lock_directory" 2>/dev/null)" \
+    || return 1
+  lock_directory_mode_decimal=$((8#$lock_directory_mode))
+  if (( (lock_directory_mode_decimal & 0022) != 0 \
+    && (lock_directory_mode_decimal & 01000) == 0 )); then
+    echo "Error: The auto-cpufreq operation lock directory is writable without sticky protection."
+    return 1
+  fi
+
+  # Publish a new lock inode without following or replacing an existing path.
+  # In a sticky shared /run/lock, a root-owned canonical file then cannot be
+  # swapped by an unprivileged process between validation and open.
+  if [ ! -e "$OPERATION_LOCK_PATH" ] && [ ! -L "$OPERATION_LOCK_PATH" ]; then
+    temporary_lock="$(mktemp "${OPERATION_LOCK_PATH}.tmp.XXXXXX")" || {
+      echo "Error: Unable to create the auto-cpufreq operation lock."
+      return 1
+    }
+    chmod 600 "$temporary_lock" || {
+      rm -f -- "$temporary_lock"
+      return 1
+    }
+    if ! ln -- "$temporary_lock" "$OPERATION_LOCK_PATH" 2>/dev/null \
+      && [ ! -e "$OPERATION_LOCK_PATH" ] \
+      && [ ! -L "$OPERATION_LOCK_PATH" ]; then
+      rm -f -- "$temporary_lock"
+      echo "Error: Unable to publish the auto-cpufreq operation lock."
+      return 1
+    fi
+    rm -f -- "$temporary_lock"
+  fi
+
+  if [ -L "$OPERATION_LOCK_PATH" ] || [ ! -f "$OPERATION_LOCK_PATH" ]; then
+    echo "Error: The auto-cpufreq operation lock is not a regular file."
+    return 1
+  fi
+  lock_info="$(stat -Lc '%u:%a:%d:%i' "$OPERATION_LOCK_PATH" 2>/dev/null)" \
+    || return 1
+  case "$lock_info" in
+    0:600:*) ;;
+    *)
+      echo "Error: The auto-cpufreq operation lock is not a secure root-owned file."
+      return 1
+      ;;
+  esac
 
   if [ -n "$inherited_fd" ]; then
     case "$inherited_fd" in
@@ -55,44 +117,29 @@ function acquire_operation_lock {
         return 1
         ;;
     esac
-
-    if [ ! -e "/proc/$$/fd/$inherited_fd" ]; then
+    if [ ! -f "/proc/$$/fd/$inherited_fd" ]; then
       echo "Error: The inherited auto-cpufreq operation lock is invalid."
       return 1
     fi
-
-    inherited_path="$(readlink -f "/proc/$$/fd/$inherited_fd")" || {
-      echo "Error: The inherited auto-cpufreq operation lock is invalid."
-      return 1
-    }
-    expected_path="$(readlink -f "$OPERATION_LOCK_PATH")" || {
-      echo "Error: Unable to resolve the auto-cpufreq operation lock path."
-      return 1
-    }
-
-    if [ "$inherited_path" != "$expected_path" ]; then
+    inherited_info="$(stat -Lc '%u:%a:%d:%i' "/proc/$$/fd/$inherited_fd" 2>/dev/null)" \
+      || return 1
+    if [ "$inherited_info" != "$lock_info" ]; then
       echo "Error: The inherited auto-cpufreq operation lock does not match $OPERATION_LOCK_PATH."
       return 1
     fi
-
     if ! flock -n "$inherited_fd"; then
       echo "Error: The inherited auto-cpufreq operation lock is not held."
       return 1
     fi
-
     OPERATION_LOCK_FD="$inherited_fd"
   else
-    if ! mkdir -p "$(dirname "$OPERATION_LOCK_PATH")"; then
-      echo "Error: Unable to create the auto-cpufreq operation lock directory."
-      return 1
-    fi
-
-    if ! exec {OPERATION_LOCK_FD}>"$OPERATION_LOCK_PATH"; then
+    if ! exec {OPERATION_LOCK_FD}>>"$OPERATION_LOCK_PATH"; then
       echo "Error: Unable to open the auto-cpufreq operation lock."
       return 1
     fi
-    if ! chmod 600 "$OPERATION_LOCK_PATH"; then
-      echo "Error: Unable to secure the auto-cpufreq operation lock."
+    inherited_info="$(stat -Lc '%u:%a:%d:%i' "/proc/$$/fd/$OPERATION_LOCK_FD" 2>/dev/null)"
+    if [ "$inherited_info" != "$lock_info" ]; then
+      echo "Error: The opened auto-cpufreq operation lock changed during validation."
       exec {OPERATION_LOCK_FD}>&-
       return 1
     fi
