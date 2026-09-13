@@ -59,17 +59,22 @@ def daemon_service_conflict() -> Optional[str]:
         )
         if path is not None:
             return str(path)
-        result = run(
-            [
-                "systemctl",
-                "list-unit-files",
-                "auto-cpufreq.service",
-                "--no-legend",
-                "--no-pager",
-            ],
-            capture_output=True,
-            text=True,
-        )
+        try:
+            result = run(
+                [
+                    "systemctl",
+                    "list-unit-files",
+                    "auto-cpufreq.service",
+                    "--no-legend",
+                    "--no-pager",
+                ],
+                capture_output=True,
+                text=True,
+            )
+        except OSError as exc:
+            raise DaemonPreflightError(
+                "Unable to inspect existing systemd service definitions."
+            ) from exc
         if result.returncode != 0:
             raise DaemonPreflightError(
                 "Unable to inspect existing systemd service definitions."
@@ -101,7 +106,12 @@ def daemon_service_conflict() -> Optional[str]:
         return None if path is None else str(path)
 
     if init_name == "s6-svscan":
-        path = first_existing_path(["/etc/s6/sv/auto-cpufreq"])
+        path = first_existing_path(
+            [
+                "/etc/s6/sv/auto-cpufreq",
+                "/etc/s6/adminsv/default/contents.d/auto-cpufreq",
+            ]
+        )
         return None if path is None else str(path)
 
     return None

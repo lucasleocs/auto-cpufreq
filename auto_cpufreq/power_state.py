@@ -8,7 +8,7 @@
 import json
 import os
 from pathlib import Path
-from shutil import which
+from shutil import copystat, which
 from subprocess import run
 from uuid import uuid4
 
@@ -34,6 +34,10 @@ _NO_ENABLE_ACTION_STATES = {
     "alias",
     "invalid",
     "",
+}
+_TRANSACTION_BOOL_FIELDS = {
+    "bluetooth_managed",
+    "cpufreqctl_preexisting",
 }
 
 
@@ -298,6 +302,45 @@ def _drop_empty_created_policy_section(lines):
     return result
 
 
+def _atomic_write_text_preserving_metadata(path: Path, content: str) -> bool:
+    path = Path(path)
+    try:
+        target = path.resolve(strict=True)
+        metadata = target.stat()
+    except OSError:
+        return False
+
+    temporary = target.parent / (
+        f".{target.name}.{os.getpid()}.{uuid4().hex}.tmp"
+    )
+    descriptor = None
+    try:
+        descriptor = os.open(
+            temporary,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+            0o600,
+        )
+        os.chown(temporary, metadata.st_uid, metadata.st_gid)
+        copystat(target, temporary)
+        with os.fdopen(descriptor, "w") as handle:
+            descriptor = None
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, target)
+    except (OSError, UnicodeError):
+        return False
+    finally:
+        if descriptor is not None:
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
+        _try_unlink(temporary)
+
+    return True
+
+
 def _restore_bluetooth_state(bluetooth_config: Path, original_state) -> bool:
     if not original_state.get("config_present"):
         return True
@@ -341,12 +384,19 @@ def _restore_bluetooth_state(bluetooth_config: Path, original_state) -> bool:
     if not original_state.get("policy_present") and not original_lines:
         new_lines = _drop_empty_created_policy_section(new_lines)
 
-    try:
-        Path(bluetooth_config).write_text("".join(new_lines))
-    except OSError:
-        return False
+    return _atomic_write_text_preserving_metadata(
+        bluetooth_config,
+        "".join(new_lines),
+    )
 
-    return True
+
+def _valid_transaction_state(state) -> bool:
+    if not isinstance(state, dict):
+        return False
+    return all(
+        key in _TRANSACTION_BOOL_FIELDS and isinstance(value, bool)
+        for key, value in state.items()
+    )
 
 
 def _valid_snapshot(snapshot) -> bool:
@@ -378,12 +428,26 @@ def _valid_snapshot(snapshot) -> bool:
     if profile is not None and not isinstance(profile, str):
         return False
 
+    if not _valid_transaction_state(snapshot.get("transaction", {})):
+        return False
+
     return _valid_bluetooth_state(snapshot.get("bluetooth"))
 
 
 def power_state_exists(*, state_dir: Path = DEFAULT_STATE_DIR) -> bool:
     state_file = _state_path(Path(state_dir))
     return state_file.exists()
+
+
+def get_power_state_transaction(*, state_dir: Path = DEFAULT_STATE_DIR):
+    state_file = _state_path(Path(state_dir))
+    try:
+        snapshot = json.loads(state_file.read_text())
+    except (OSError, ValueError, TypeError):
+        return None
+    if not _valid_snapshot(snapshot):
+        return None
+    return dict(snapshot.get("transaction", {}))
 
 
 def save_power_state(
@@ -393,10 +457,15 @@ def save_power_state(
     systemctl: str = "systemctl",
     powerprofilesctl: str = "powerprofilesctl",
     init_comm: Path = DEFAULT_INIT_COMM,
+    transaction=None,
 ) -> bool:
     state_dir = Path(state_dir)
     bluetooth_config = Path(bluetooth_config)
     state_file = _state_path(state_dir)
+    transaction = {} if transaction is None else transaction
+
+    if not _valid_transaction_state(transaction):
+        return False
 
     # Never replace the original pre-install snapshot with a later state.
     if state_file.exists():
@@ -453,6 +522,7 @@ def save_power_state(
         "services": services,
         "power_profiles_profile": power_profiles_profile,
         "bluetooth": bluetooth_state,
+        "transaction": dict(transaction),
     }
 
     # Publish through a unique file in the same directory. link() creates
@@ -516,13 +586,14 @@ def restore_power_state(
                 if not restore_service_state(unit, state, systemctl=systemctl):
                     success = False
 
-    bluetooth_state = snapshot["bluetooth"]
-
-    if bluetooth_state is None or not _restore_bluetooth_state(
-        bluetooth_config,
-        bluetooth_state,
-    ):
-        success = False
+    transaction = snapshot.get("transaction", {})
+    if transaction.get("bluetooth_managed") is True:
+        bluetooth_state = snapshot["bluetooth"]
+        if bluetooth_state is None or not _restore_bluetooth_state(
+            bluetooth_config,
+            bluetooth_state,
+        ):
+            success = False
 
     if not _restore_power_profiles_profile(
         snapshot.get("power_profiles_profile"),

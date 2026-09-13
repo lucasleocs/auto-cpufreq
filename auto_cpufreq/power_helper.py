@@ -9,6 +9,7 @@ from sys import argv
 # ToDo: update README part how to run this script
 from auto_cpufreq.core import *
 from auto_cpufreq.globals import GITHUB, IS_INSTALLED_WITH_SNAP
+from auto_cpufreq.power_state import _atomic_write_text_preserving_metadata
 from auto_cpufreq.tlp_stat_parser import TLPStatusParser
 
 # app_name var
@@ -160,7 +161,16 @@ def tuned_svc_enable() -> bool:
         return True
 
     print("* Enabling TuneD\n")
-    return _enable_systemd_power_service("tuned", "TuneD daemon")
+    if not _enable_systemd_power_service("tuned", "TuneD daemon"):
+        return False
+
+    # Legacy daemon installs disabled tuned.service without recording whether
+    # tuned-ppd was running. If its boot unit is still enabled, starting it is
+    # the closest recoverable approximation of the pre-install runtime state.
+    return _start_systemd_power_service_if_enabled(
+        "tuned-ppd",
+        "TuneD PPD compatibility daemon",
+    )
 
 # gnome power profiles current status
 def gnome_power_svc_status():
@@ -221,11 +231,10 @@ def set_bluetooth_auto_enable(value: bool) -> bool:
         new_lines.append("\n[Policy]\n")
         new_lines.append(f"{setting}\n")
 
-    try:
-        btconf.write_text("".join(new_lines))
-        return True
-    except Exception:
-        return False
+    return _atomic_write_text_preserving_metadata(
+        btconf,
+        "".join(new_lines),
+    )
 
 # disable bluetooth on boot
 def bluetooth_disable() -> bool:
@@ -364,6 +373,66 @@ def _run_required_power_command(args, description: str) -> bool:
         return False
 
     return True
+
+
+def _start_systemd_power_service_if_enabled(
+    unit: str,
+    description: str,
+) -> bool:
+    state = _systemd_unit_state(unit)
+    if state is None:
+        print(f"\nUnable to inspect {description} with systemctl")
+        return False
+
+    load_state, active_state = state
+    if load_state == "not-found":
+        return True
+    if load_state == "masked":
+        return True
+    if load_state != "loaded":
+        print(
+            f"\nUnable to safely restore {description}: "
+            f"unexpected LoadState={load_state!r}"
+        )
+        return False
+
+    if active_state in ("active", "activating", "reloading"):
+        return True
+
+    try:
+        enabled = run(
+            ["systemctl", "is-enabled", unit],
+            capture_output=True,
+            text=True,
+        )
+    except (OSError, FileNotFoundError, PermissionError) as exc:
+        print(f"\nUnable to inspect whether {description} is enabled: {exc}")
+        return False
+
+    unit_file_state = enabled.stdout.strip()
+    if unit_file_state in ("enabled", "enabled-runtime"):
+        return _run_required_power_command(
+            ["systemctl", "start", unit],
+            f"start {description}",
+        )
+
+    if unit_file_state in (
+        "disabled",
+        "static",
+        "indirect",
+        "generated",
+        "transient",
+        "alias",
+        "masked",
+        "masked-runtime",
+    ):
+        return True
+
+    print(
+        f"\nUnable to safely restore {description}: "
+        f"unexpected UnitFileState={unit_file_state!r}"
+    )
+    return False
 
 
 def _enable_systemd_power_service(unit: str, description: str) -> bool:

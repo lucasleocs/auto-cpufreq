@@ -172,6 +172,24 @@ case "$(ps h -o comm 1)" in
     if [ "$load_state" = "not-found" ]; then
       echo -e "\n* auto-cpufreq systemd unit is already absent; skipping stop/disable"
     else
+      installed_unit="/etc/systemd/system/auto-cpufreq.service"
+      source_unit="/usr/local/share/auto-cpufreq/scripts/auto-cpufreq.service"
+
+      fragment_path="$(systemd_property FragmentPath)" \
+        || fail_remove "Failed to inspect the loaded systemd service definition."
+      if [ "$fragment_path" != "$installed_unit" ]; then
+        fail_remove "Refusing to remove auto-cpufreq: systemd loaded the service from '$fragment_path', not the source-installed unit."
+      fi
+      if [ ! -f "$installed_unit" ] || [ -L "$installed_unit" ]; then
+        fail_remove "Refusing to remove auto-cpufreq: the systemd service path was replaced or masked after installation."
+      fi
+      if [ ! -f "$source_unit" ]; then
+        fail_remove "Unable to verify ownership of the installed systemd service definition."
+      fi
+      if ! cmp -s -- "$installed_unit" "$source_unit"; then
+        fail_remove "Refusing to remove auto-cpufreq: the systemd service definition no longer matches the source-installed unit."
+      fi
+
       active_state="$(systemd_property ActiveState)" \
         || fail_remove "Failed to inspect whether the systemd service is active."
 
@@ -220,9 +238,11 @@ case "$(ps h -o comm 1)" in
       esac
     fi
 
-    echo -e "\n* Removing auto-cpufreq daemon (systemd) unit file"
-    rm -f /etc/systemd/system/auto-cpufreq.service \
-      || fail_remove "Failed to remove the systemd service unit."
+    if [ "$load_state" != "not-found" ]; then
+      echo -e "\n* Removing auto-cpufreq daemon (systemd) unit file"
+      rm -f /etc/systemd/system/auto-cpufreq.service \
+        || fail_remove "Failed to remove the systemd service unit."
+    fi
 
     run_step "Reloading systemd manager configuration" systemctl daemon-reload \
       || exit 1

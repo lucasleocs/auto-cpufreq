@@ -157,21 +157,28 @@ case "$(ps h -o comm 1)" in
   ;;
 
   s6-svscan)
+    if command -v s6 > /dev/null 2>&1; then
+      s6_backend="frontend"
+    else
+      command -v s6-service > /dev/null 2>&1 || fail_install "s6 detected but neither s6-frontend nor s6-service is available."
+      command -v s6-db-reload > /dev/null 2>&1 || fail_install "s6 detected but s6-db-reload is unavailable."
+      command -v s6-rc > /dev/null 2>&1 || fail_install "s6 detected but s6-rc is unavailable."
+      s6_backend="legacy"
+    fi
+
     refuse_existing_path /etc/s6/sv/auto-cpufreq "s6 service definition"
+    refuse_existing_path /etc/s6/adminsv/default/contents.d/auto-cpufreq "s6 default-bundle membership"
 
     echo -e "\n* Deploying auto-cpufreq (s6) service definition"
     mkdir -p /etc/s6/sv/auto-cpufreq || fail_install "Failed to create the s6 service directory."
     cp -r /usr/local/share/auto-cpufreq/scripts/auto-cpufreq-s6/. /etc/s6/sv/auto-cpufreq/ || fail_install "Failed to deploy the s6 service definition."
-    if command -v s6 > /dev/null 2>&1; then
+    if [ "$s6_backend" = "frontend" ]; then
       run_step "Synchronizing the s6 service repository" s6 repository sync || exit 1
       run_step "Enabling auto-cpufreq daemon (s6) at boot" s6 set enable auto-cpufreq || exit 1
       run_step "Committing the updated s6 service set" s6 set commit || exit 1
       run_step "Installing the updated s6 live database" s6 live install || exit 1
       run_step "Starting auto-cpufreq daemon (s6) service" s6 live start auto-cpufreq || exit 1
     else
-      command -v s6-service > /dev/null 2>&1 || fail_install "s6 detected but neither s6-frontend nor s6-service is available."
-      command -v s6-db-reload > /dev/null 2>&1 || fail_install "s6 detected but s6-db-reload is unavailable."
-      command -v s6-rc > /dev/null 2>&1 || fail_install "s6 detected but s6-rc is unavailable."
       run_step "Adding auto-cpufreq service (legacy s6) to default bundle" s6-service add default auto-cpufreq || exit 1
       if ! run_step "Updating legacy s6 service database" s6-db-reload; then
         s6-service delete default auto-cpufreq > /dev/null 2>&1 || true
