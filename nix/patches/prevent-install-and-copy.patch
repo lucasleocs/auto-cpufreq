@@ -102,12 +102,13 @@ diff --git a/auto_cpufreq/core.py b/auto_cpufreq/core.py
 
 
  def deploy_daemon_performance():
-@@ -896,80 +826,8 @@
+@@ -947,86 +877,8 @@
      call("/usr/local/bin/auto-cpufreq-install", shell=True)
 
  def remove_daemon():
 -    daemon_present = DAEMON_REMOVE_HELPER.exists()
 -    saved_power_state = power_state_exists()
+-    transaction = get_power_state_transaction() if saved_power_state else None
 -
 -    if not daemon_present and not saved_power_state:
 -        print("\nauto-cpufreq daemon is not installed.\n")
@@ -131,13 +132,18 @@ diff --git a/auto_cpufreq/core.py b/auto_cpufreq/core.py
 -            "retrying saved cleanup and power-state restoration.\n"
 -        )
 -
+-    remove_cpufreqctl = not saved_power_state or (
+-        transaction is not None
+-        and transaction.get("cpufreqctl_preexisting") is False
+-    )
+-
 -    # Recovery state remains intact until every daemon-owned artifact has been
 -    # handled. A filesystem error can therefore be retried with --remove
 -    # instead of leaving an incomplete cleanup with no marker to resume from.
 -    if not _cleanup_daemon_artifacts(
 -        remove_override=True,
 -        remove_stats=True,
--        remove_cpufreqctl=True,
+-        remove_cpufreqctl=remove_cpufreqctl,
 -    ):
 -        print(
 -            "\nDaemon filesystem cleanup is incomplete. Lifecycle helpers "
