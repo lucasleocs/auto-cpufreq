@@ -225,9 +225,12 @@ def _staged_commit_is_descendant(installed_version: str, staged_commit: str) -> 
         return False
 
     try:
-        return response.json().get("status") == "ahead"
+        payload = response.json()
     except ValueError:
         return False
+    if not isinstance(payload, dict):
+        return False
+    return payload.get("status") == "ahead"
 
 
 def _install_staged_source(staged_source: Path, lock_handle) -> bool:
@@ -329,7 +332,14 @@ def update_source_install(custom_dir: str) -> bool:
 
             # Staging and ancestry verification happen before the installed
             # daemon or source environment is modified.
-            workspace = new_staging_destination(Path(custom_dir))
+            try:
+                workspace = new_staging_destination(Path(custom_dir))
+            except OSError as exc:
+                raise LifecycleError(
+                    "Unable to create the update staging workspace. "
+                    "The current auto-cpufreq installation was not changed."
+                ) from exc
+
             staged_source = stage_release(
                 core.GITHUB + ".git",
                 release_tag,
