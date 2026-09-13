@@ -9,6 +9,7 @@ from sys import argv
 # ToDo: update README part how to run this script
 from auto_cpufreq.core import *
 from auto_cpufreq.globals import GITHUB, IS_INSTALLED_WITH_SNAP
+from auto_cpufreq.power_state import _atomic_write_text_preserving_metadata
 from auto_cpufreq.tlp_stat_parser import TLPStatusParser
 
 # app_name var
@@ -230,11 +231,10 @@ def set_bluetooth_auto_enable(value: bool) -> bool:
         new_lines.append("\n[Policy]\n")
         new_lines.append(f"{setting}\n")
 
-    try:
-        btconf.write_text("".join(new_lines))
-        return True
-    except Exception:
-        return False
+    return _atomic_write_text_preserving_metadata(
+        btconf,
+        "".join(new_lines),
+    )
 
 # disable bluetooth on boot
 def bluetooth_disable() -> bool:
@@ -425,7 +425,6 @@ def _start_systemd_power_service_if_enabled(
         "alias",
         "masked",
         "masked-runtime",
-        "",
     ):
         return True
 
