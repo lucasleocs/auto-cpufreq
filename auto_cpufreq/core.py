@@ -8,7 +8,7 @@ from pathlib import Path
 from pickle import dump, load
 from re import search
 from requests import get, exceptions
-from shutil import copy, rmtree
+from shutil import copy
 from subprocess import call, check_output, DEVNULL, getoutput, run
 from time import sleep
 from warnings import filterwarnings
@@ -19,6 +19,7 @@ from auto_cpufreq.globals import (
 )
 from auto_cpufreq.modules.platform_profile import platform_profile
 from auto_cpufreq.release_update import (
+    cleanup_staging_workspace,
     decide_release_update,
     extract_git_commit,
     new_staging_destination,
@@ -26,6 +27,7 @@ from auto_cpufreq.release_update import (
     version_matches_release,
 )
 from auto_cpufreq.power_state import (
+    get_power_state_transaction,
     power_state_exists,
     restore_power_state,
     save_power_state,
@@ -53,6 +55,14 @@ CPUS = os.cpu_count()
 
 class UpdateCheckError(RuntimeError):
     pass
+
+
+def _response_json_object(response):
+    try:
+        payload = response.json()
+    except ValueError:
+        return None
+    return payload if isinstance(payload, dict) else None
 
 
 # Note:
@@ -147,6 +157,17 @@ def app_version():
 def check_for_update():
     """Return the exact stable release tag when a safe update is available."""
 
+    if IS_INSTALLED_WITH_SNAP:
+        raise UpdateCheckError(
+            "Automatic source updates are not supported for Snap installations. "
+            "Update with `sudo snap refresh auto-cpufreq`."
+        )
+    if IS_INSTALLED_WITH_AUR:
+        raise UpdateCheckError(
+            "Automatic source updates are not supported for AUR installations. "
+            "Update auto-cpufreq with your AUR helper instead."
+        )
+
     api_repository = GITHUB.replace(
         "github.com",
         "api.github.com/repos",
@@ -169,13 +190,11 @@ def check_for_update():
         ) from exc
 
     if response.status_code != 200:
-        try:
-            message = response.json().get("message")
-        except ValueError:
-            message = None
+        payload = _response_json_object(response)
+        message = payload.get("message") if payload is not None else None
 
         if (
-            message is not None
+            isinstance(message, str)
             and message.startswith("API rate limit exceeded")
         ):
             raise UpdateCheckError(
@@ -188,18 +207,18 @@ def check_for_update():
             f"(GitHub returned HTTP {response.status_code})."
         )
 
-    try:
-        latest_release = response.json()
-    except ValueError as exc:
+    latest_release = _response_json_object(response)
+    if latest_release is None:
         raise UpdateCheckError(
             "GitHub returned malformed stable-release data."
-        ) from exc
+        )
 
     latest_version = latest_release.get("tag_name")
-    if not latest_version:
+    if not isinstance(latest_version, str) or not latest_version.strip():
         raise UpdateCheckError(
-            "The latest GitHub release does not contain a release tag."
+            "The latest GitHub release does not contain a valid release tag."
         )
+    latest_version = latest_version.strip()
 
     installed_version = get_literal_version("auto-cpufreq")
     installed_commit = extract_git_commit(installed_version)
@@ -233,13 +252,11 @@ def check_for_update():
         ) from exc
 
     if comparison.status_code != 200:
-        try:
-            message = comparison.json().get("message")
-        except ValueError:
-            message = None
+        payload = _response_json_object(comparison)
+        message = payload.get("message") if payload is not None else None
 
         if (
-            message is not None
+            isinstance(message, str)
             and message.startswith("API rate limit exceeded")
         ):
             raise UpdateCheckError(
@@ -253,12 +270,16 @@ def check_for_update():
             f"(GitHub returned HTTP {comparison.status_code})."
         )
 
-    try:
-        compare_status = comparison.json().get("status")
-    except ValueError as exc:
+    comparison_payload = _response_json_object(comparison)
+    if comparison_payload is None:
         raise UpdateCheckError(
             "GitHub returned malformed commit-comparison data."
-        ) from exc
+        )
+    compare_status = comparison_payload.get("status")
+    if not isinstance(compare_status, str):
+        raise UpdateCheckError(
+            "GitHub returned malformed commit-comparison data."
+        )
 
     decision = decide_release_update(
         installed_version,
@@ -304,9 +325,14 @@ def check_for_update():
 
 
 def stage_update(custom_dir, release_tag):
-    """Download the exact release tag without touching the installation."""
+    """Download the exact stable release tag without touching the installation."""
 
-    source_dir = new_staging_destination(custom_dir)
+    try:
+        source_dir = new_staging_destination(custom_dir)
+    except OSError as exc:
+        print(f"Error: Unable to create the update staging workspace: {exc}")
+        print("The current auto-cpufreq installation was not changed.")
+        return None
 
     print(
         f"Staging stable release {release_tag} "
@@ -337,12 +363,10 @@ def stage_update(custom_dir, release_tag):
         print(
             "The current auto-cpufreq installation was not changed."
         )
-        try:
-            rmtree(staged_source)
-        except OSError as exc:
+        if not cleanup_staging_workspace(staged_source):
             print(
-                "Warning: The rejected update staging directory "
-                f"could not be removed: {exc}"
+                "Warning: The rejected update staging workspace "
+                "could not be removed."
             )
         return None
 
@@ -625,6 +649,40 @@ def _run_daemon_helper(helper: Path, action: str) -> bool:
     return True
 
 
+def _remove_owned_cpufreqctl() -> bool:
+    if not CPUFREQCTL_PATH.exists() and not CPUFREQCTL_PATH.is_symlink():
+        return True
+
+    source = SCRIPTS_DIR / "cpufreqctl.sh"
+    if (
+        CPUFREQCTL_PATH.is_symlink()
+        or not CPUFREQCTL_PATH.is_file()
+        or not source.is_file()
+    ):
+        print(
+            f"\nWarning: Preserving {CPUFREQCTL_PATH}; its ownership "
+            "can no longer be verified."
+        )
+        return True
+
+    try:
+        if CPUFREQCTL_PATH.read_bytes() != source.read_bytes():
+            print(
+                f"\nWarning: Preserving {CPUFREQCTL_PATH}; it no longer "
+                "matches the source-installed helper."
+            )
+            return True
+        CPUFREQCTL_PATH.unlink()
+    except OSError as exc:
+        print(
+            f"\nERROR: Unable to remove cpufreqctl helper "
+            f"{CPUFREQCTL_PATH}: {exc}"
+        )
+        return False
+
+    return True
+
+
 def _cleanup_daemon_artifacts(
     *,
     remove_override: bool,
@@ -657,14 +715,7 @@ def _cleanup_daemon_artifacts(
             success = False
 
     if remove_cpufreqctl and not IS_INSTALLED_WITH_SNAP:
-        try:
-            CPUFREQCTL_PATH.unlink(missing_ok=True)
-        except OSError as exc:
-            print(
-                f"\nERROR: Unable to remove cpufreqctl helper "
-                f"{CPUFREQCTL_PATH}: {exc}"
-            )
-            success = False
+        success = _remove_owned_cpufreqctl() and success
 
     return success
 
@@ -758,7 +809,13 @@ def _prepare_power_state_snapshot() -> bool:
         )
         return False
 
-    if not save_power_state():
+    transaction = {
+        "bluetooth_managed": bool(bluetoothctl_exists),
+        "cpufreqctl_preexisting": (
+            CPUFREQCTL_PATH.exists() or CPUFREQCTL_PATH.is_symlink()
+        ),
+    }
+    if not save_power_state(transaction=transaction):
         print(
             "\nERROR: Unable to save the current power-management state."
         )
@@ -892,6 +949,7 @@ def deploy_daemon_performance():
 def remove_daemon():
     daemon_present = DAEMON_REMOVE_HELPER.exists()
     saved_power_state = power_state_exists()
+    transaction = get_power_state_transaction() if saved_power_state else None
 
     if not daemon_present and not saved_power_state:
         print("\nauto-cpufreq daemon is not installed.\n")
@@ -915,13 +973,18 @@ def remove_daemon():
             "retrying saved cleanup and power-state restoration.\n"
         )
 
+    remove_cpufreqctl = not saved_power_state or (
+        transaction is not None
+        and transaction.get("cpufreqctl_preexisting") is False
+    )
+
     # Recovery state remains intact until every daemon-owned artifact has been
     # handled. A filesystem error can therefore be retried with --remove
     # instead of leaving an incomplete cleanup with no marker to resume from.
     if not _cleanup_daemon_artifacts(
         remove_override=True,
         remove_stats=True,
-        remove_cpufreqctl=True,
+        remove_cpufreqctl=remove_cpufreqctl,
     ):
         print(
             "\nDaemon filesystem cleanup is incomplete. Lifecycle helpers "
