@@ -240,7 +240,8 @@ PYGTK
 function source_install_preflight {
   local daemon_remove="$AUTO_CPUFREQ_FILE-remove"
 
-  if [ -f "$daemon_remove" ] || [ -f "$POWER_STATE_SNAPSHOT" ]; then
+  if [ -e "$daemon_remove" ] || [ -L "$daemon_remove" ] \
+    || [ -e "$POWER_STATE_SNAPSHOT" ] || [ -L "$POWER_STATE_SNAPSHOT" ]; then
     echo "Error: An auto-cpufreq daemon installation or recovery snapshot is still present."
     echo "Remove the daemon first with 'sudo auto-cpufreq --remove', then rerun the source installer."
     echo "For normal stable source upgrades, prefer 'sudo auto-cpufreq --update'."
@@ -592,7 +593,8 @@ function tool_remove {
   venv_python="$VENV_PATH/venv/bin/python"
   venv_entrypoint="$VENV_PATH/venv/bin/auto-cpufreq"
 
-  if [ -f "$daemon_remove" ] || [ -f "$POWER_STATE_SNAPSHOT" ]; then
+  if [ -e "$daemon_remove" ] || [ -L "$daemon_remove" ] \
+    || [ -e "$POWER_STATE_SNAPSHOT" ] || [ -L "$POWER_STATE_SNAPSHOT" ]; then
     if [ -x "$AUTO_CPUFREQ_FILE" ]; then
       if ! "$AUTO_CPUFREQ_FILE" --remove; then
         echo "Error: Failed to remove the installed auto-cpufreq daemon or restore its saved power state."

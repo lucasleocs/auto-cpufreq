@@ -882,7 +882,12 @@ def _prepare_power_state_snapshot() -> bool:
     # The removal helper is the installed-daemon marker for source installs.
     # A stopped legacy daemon may not have a snapshot, but installing over it
     # would capture already-modified host state as if it were the original.
-    if DAEMON_REMOVE_HELPER.exists() or DAEMON_INSTALL_HELPER.exists():
+    if (
+        DAEMON_REMOVE_HELPER.exists()
+        or DAEMON_REMOVE_HELPER.is_symlink()
+        or DAEMON_INSTALL_HELPER.exists()
+        or DAEMON_INSTALL_HELPER.is_symlink()
+    ):
         print("\nERROR: An auto-cpufreq daemon installation is already present.")
         print(
             "Remove it first with `sudo auto-cpufreq --remove` before "
@@ -1041,7 +1046,9 @@ def deploy_daemon_performance():
     call("/usr/local/bin/auto-cpufreq-install", shell=True)
 
 def remove_daemon():
-    daemon_present = DAEMON_REMOVE_HELPER.exists()
+    daemon_present = (
+        DAEMON_REMOVE_HELPER.exists() or DAEMON_REMOVE_HELPER.is_symlink()
+    )
     saved_power_state = power_state_exists()
     transaction = get_power_state_transaction() if saved_power_state else None
 

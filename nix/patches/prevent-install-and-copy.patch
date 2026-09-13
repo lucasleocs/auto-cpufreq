@@ -108,11 +108,13 @@ diff --git a/auto_cpufreq/core.py b/auto_cpufreq/core.py
 
 
  def deploy_daemon_performance():
-@@ -947,86 +877,8 @@
+@@ -1046,88 +877,8 @@
      call("/usr/local/bin/auto-cpufreq-install", shell=True)
 
  def remove_daemon():
--    daemon_present = DAEMON_REMOVE_HELPER.exists()
+-    daemon_present = (
+-        DAEMON_REMOVE_HELPER.exists() or DAEMON_REMOVE_HELPER.is_symlink()
+-    )
 -    saved_power_state = power_state_exists()
 -    transaction = get_power_state_transaction() if saved_power_state else None
 -

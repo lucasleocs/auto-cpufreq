@@ -368,7 +368,10 @@ def update_source_install(custom_dir: str) -> bool:
                         "current auto-cpufreq installation was not changed."
                     )
 
-                daemon_was_installed = core.DAEMON_REMOVE_HELPER.exists()
+                daemon_was_installed = (
+                    core.DAEMON_REMOVE_HELPER.exists()
+                    or core.DAEMON_REMOVE_HELPER.is_symlink()
+                )
                 power_state_pending = core.power_state_exists()
 
                 # Only after staging is trusted may the old daemon be removed.
