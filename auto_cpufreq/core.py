@@ -576,7 +576,7 @@ def cpufreqctl():
     if CPUFREQCTL_PATH.is_symlink():
         raise OSError(f"Refusing to replace symlink {CPUFREQCTL_PATH}")
     if not CPUFREQCTL_PATH.exists():
-        _publish_new_daemon_helper(
+        _publish_new_owned_helper(
             SCRIPTS_DIR / "cpufreqctl.sh",
             CPUFREQCTL_PATH,
         )
@@ -603,7 +603,7 @@ def remove_complete_msg():
     print("auto-cpufreq successfully removed.")
     footer()
 
-def _publish_new_daemon_helper(source: Path, destination: Path) -> None:
+def _publish_new_owned_helper(source: Path, destination: Path) -> None:
     directory = None
     source_descriptor = None
     destination_descriptor = None
@@ -620,7 +620,7 @@ def _publish_new_daemon_helper(source: Path, destination: Path) -> None:
             or directory_metadata.st_uid != 0
             or directory_mode & 0o022
         ):
-            raise OSError("daemon helper directory is not securely root-owned")
+            raise OSError("helper directory is not securely root-owned")
 
         source_descriptor = os.open(
             source,
@@ -628,7 +628,7 @@ def _publish_new_daemon_helper(source: Path, destination: Path) -> None:
         )
         source_metadata = os.fstat(source_descriptor)
         if not stat.S_ISREG(source_metadata.st_mode) or source_metadata.st_uid != 0:
-            raise OSError("daemon helper source is not a root-owned regular file")
+            raise OSError("helper source is not a root-owned regular file")
 
         destination_descriptor = os.open(
             temporary,
@@ -648,9 +648,9 @@ def _publish_new_daemon_helper(source: Path, destination: Path) -> None:
             destination_handle.flush()
             os.fsync(destination_handle.fileno())
 
-        # The canonical path is the lifecycle marker. link() refuses to
-        # replace an artifact that appeared after preflight, and it exposes
-        # only a fully written, durable helper.
+        # link() refuses to replace an artifact that appeared after preflight
+        # and exposes only a fully written, durable helper at the canonical
+        # pathname.
         os.link(
             temporary,
             destination.name,
@@ -680,7 +680,7 @@ def _deploy_daemon_helpers():
 
     for label, source, destination in helpers:
         print(f"\n* Deploy auto-cpufreq {label} script")
-        _publish_new_daemon_helper(source, destination)
+        _publish_new_owned_helper(source, destination)
 
 
 def _owned_file_matches(destination: Path, source: Path) -> bool:

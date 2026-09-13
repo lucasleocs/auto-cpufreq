@@ -10,7 +10,7 @@ diff --git a/auto_cpufreq/core.py b/auto_cpufreq/core.py
 -    if CPUFREQCTL_PATH.is_symlink():
 -        raise OSError(f"Refusing to replace symlink {CPUFREQCTL_PATH}")
 -    if not CPUFREQCTL_PATH.exists():
--        _publish_new_daemon_helper(
+-        _publish_new_owned_helper(
 -            SCRIPTS_DIR / "cpufreqctl.sh",
 -            CPUFREQCTL_PATH,
 -        )

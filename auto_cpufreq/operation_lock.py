@@ -36,7 +36,10 @@ def _open_lock_handle(path: Path, *, create: bool):
         if (
             not stat.S_ISDIR(parent_metadata.st_mode)
             or parent_metadata.st_uid != 0
-            or (parent_mode & 0o022 and not parent_metadata.st_mode & stat.S_ISVTX)
+            or (
+                parent_mode & 0o022
+                and not (parent_metadata.st_mode & stat.S_ISVTX)
+            )
         ):
             raise OSError("the lock directory is not a root-owned directory")
 
