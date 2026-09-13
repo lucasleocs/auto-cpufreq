@@ -329,7 +329,7 @@ auto-cpufreq makes all decisions automatically based on various factors such as 
 
 ### 1: power_helper.py script (Snap package install **only**)
 
-When installing auto-cpufreq via [auto-cpufreq-installer](#auto-cpufreq-installer), if it detects the [GNOME Power Profiles service](https://twitter.com/fooctrl/status/1467469508373884933) is running, it will automatically disable it. Otherwise, that daemon will cause conflicts and various other performance issues. 
+When installing the auto-cpufreq daemon from a source installation, a detected [GNOME Power Profiles service](https://twitter.com/fooctrl/status/1467469508373884933) is stopped and masked to prevent conflicts. On systemd, its existing boot-enablement links are left intact so removing auto-cpufreq can unmask the service without reconstructing host-owned enablement configuration.
 
 However, when auto-cpufreq is installed as a Snap package it's running as part of a container with limited permissions, hence it's *highly recommended* to disable the GNOME Power Profiles daemon using the `power_helper.py` script.
 
@@ -650,6 +650,8 @@ The auto-cpufreq daemon, its service integration, and the persistent system chan
 `sudo auto-cpufreq --remove`
 
 Removal uses the detected service manager, cleans daemon-owned artifacts, and restores saved power-management state only after the auto-cpufreq service is no longer active. This can include GNOME Power Profiles, TuneD, the previously active power profile, and Bluetooth boot policy state that was changed during daemon installation. If cleanup or restoration fails, the recovery snapshot/marker is kept so `sudo auto-cpufreq --remove` can be retried. Bluetooth restoration is conservative: if `AutoEnable` was changed after daemon installation, that newer value is preserved instead of being overwritten.
+
+On systemd, installation masks conflicting Power Profiles/TuneD services without deleting their existing enablement links. Removal clears the auto-cpufreq mask and restores the captured runtime state while leaving those host-owned links unchanged.
 
 Use `auto-cpufreq --remove` instead of stopping or disabling the service directly so the full cleanup and restoration sequence can run. This command removes the daemon integration; it does not uninstall the source installation itself. To remove a source installation completely, run the following from an auto-cpufreq source tree:
 

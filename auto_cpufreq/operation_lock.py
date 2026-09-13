@@ -99,10 +99,13 @@ def _inherited_lock_handle(path: Path):
 
     # dup() references the same open file description, so this process can own
     # a Python file object without changing the lock lifetime of its parent.
+    handle = None
     try:
         handle = os.fdopen(os.dup(fd), "a+")
         fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
     except (OSError, BlockingIOError) as exc:
+        if handle is not None:
+            handle.close()
         raise OperationLockError(
             "The inherited auto-cpufreq operation lock is not held."
         ) from exc
@@ -129,10 +132,9 @@ def operation_lock(
 
     handle = _open_lock_handle(path, create=True)
     try:
-        path.chmod(0o600)
         try:
             fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError as exc:
+        except OSError as exc:
             raise OperationLockError(
                 f"Another auto-cpufreq {operation} operation is already in progress."
             ) from exc

@@ -1,13 +1,19 @@
 diff --git a/auto_cpufreq/core.py b/auto_cpufreq/core.py
 --- a/auto_cpufreq/core.py
 +++ b/auto_cpufreq/core.py
-@@ -551,16 +551,15 @@
+@@ -570,22 +570,15 @@
      """
      deploy cpufreqctl.auto-cpufreq script
      """
--    if not IS_INSTALLED_WITH_SNAP and not CPUFREQCTL_PATH.exists():
--        copy(SCRIPTS_DIR / "cpufreqctl.sh", CPUFREQCTL_PATH)
--        CPUFREQCTL_PATH.chmod(0o755)
+-    if IS_INSTALLED_WITH_SNAP:
+-        return
+-    if CPUFREQCTL_PATH.is_symlink():
+-        raise OSError(f"Refusing to replace symlink {CPUFREQCTL_PATH}")
+-    if not CPUFREQCTL_PATH.exists():
+-        _publish_new_daemon_helper(
+-            SCRIPTS_DIR / "cpufreqctl.sh",
+-            CPUFREQCTL_PATH,
+-        )
 +    # Nix installs cpufreqctl in the immutable package output.
 +    pass
 

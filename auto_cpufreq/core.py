@@ -571,9 +571,15 @@ def cpufreqctl():
     """
     deploy cpufreqctl.auto-cpufreq script
     """
-    if not IS_INSTALLED_WITH_SNAP and not CPUFREQCTL_PATH.exists():
-        copy(SCRIPTS_DIR / "cpufreqctl.sh", CPUFREQCTL_PATH)
-        CPUFREQCTL_PATH.chmod(0o755)
+    if IS_INSTALLED_WITH_SNAP:
+        return
+    if CPUFREQCTL_PATH.is_symlink():
+        raise OSError(f"Refusing to replace symlink {CPUFREQCTL_PATH}")
+    if not CPUFREQCTL_PATH.exists():
+        _publish_new_daemon_helper(
+            SCRIPTS_DIR / "cpufreqctl.sh",
+            CPUFREQCTL_PATH,
+        )
 
 def cpufreqctl_restore():
     """
@@ -608,11 +614,13 @@ def _publish_new_daemon_helper(source: Path, destination: Path) -> None:
             os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC | os.O_NOFOLLOW,
         )
         directory_metadata = os.fstat(directory)
+        directory_mode = stat.S_IMODE(directory_metadata.st_mode)
         if (
             not stat.S_ISDIR(directory_metadata.st_mode)
             or directory_metadata.st_uid != 0
+            or directory_mode & 0o022
         ):
-            raise OSError("daemon helper directory is not root-owned")
+            raise OSError("daemon helper directory is not securely root-owned")
 
         source_descriptor = os.open(
             source,
