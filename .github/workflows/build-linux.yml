@@ -25,76 +25,61 @@ jobs:
           path = Path("auto_cpufreq/modules/system_info.py")
           text = path.read_text()
 
-          marker = '''    @staticmethod
-          def battery_info() -> BatteryInfo:
-          '''
-          helper = '''    @staticmethod
-          def _battery_power_watts(battery_path: str) -> float | None:
-              """Return instantaneous battery power magnitude in watts when available."""
-              power_now = SystemInfo.read_file(os.path.join(battery_path, "power_now"))
-              if power_now is not None:
-                  try:
-                      return abs(int(power_now)) / 1_000_000
-                  except ValueError:
-                      return None
-
-              current_now = SystemInfo.read_file(os.path.join(battery_path, "current_now"))
-              voltage_now = SystemInfo.read_file(os.path.join(battery_path, "voltage_now"))
-              if current_now is None or voltage_now is None:
-                  return None
-
-              try:
-                  return abs(int(current_now) * int(voltage_now)) / 1_000_000_000_000
-              except ValueError:
-                  return None
-
-              @staticmethod
-              def battery_info() -> BatteryInfo:
-          '''
-
-          # The triple-quoted replacement above is deliberately de-indented below;
-          # keep the production source indentation exact.
-          helper = helper.replace("              @staticmethod\n              def battery_info", "    @staticmethod\n    def battery_info")
+          marker = "    @staticmethod\n    def battery_info() -> BatteryInfo:\n"
+          helper = (
+              "    @staticmethod\n"
+              "    def _battery_power_watts(battery_path: str) -> float | None:\n"
+              "        \"\"\"Return instantaneous battery power magnitude in watts when available.\"\"\"\n"
+              "        power_now = SystemInfo.read_file(os.path.join(battery_path, \"power_now\"))\n"
+              "        if power_now is not None:\n"
+              "            try:\n"
+              "                return abs(int(power_now)) / 1_000_000\n"
+              "            except ValueError:\n"
+              "                return None\n"
+              "\n"
+              "        current_now = SystemInfo.read_file(os.path.join(battery_path, \"current_now\"))\n"
+              "        voltage_now = SystemInfo.read_file(os.path.join(battery_path, \"voltage_now\"))\n"
+              "        if current_now is None or voltage_now is None:\n"
+              "            return None\n"
+              "\n"
+              "        try:\n"
+              "            return abs(int(current_now) * int(voltage_now)) / 1_000_000_000_000\n"
+              "        except ValueError:\n"
+              "            return None\n"
+              "\n"
+              + marker
+          )
 
           if "def _battery_power_watts" not in text:
               if marker not in text:
                   raise SystemExit("battery_info marker not found")
               text = text.replace(marker, helper, 1)
 
-          old_collection = '''        # first check for wattage in power_now
-                  # this is not found on all laptops
-                  energy_rate = (
-                      SystemInfo.read_file(os.path.join(battery_path, "power_now"))
-                  )
-
-                  # if power_now wasn't found, try calculating wattage using current and voltage
-                  if energy_rate is None:
-                      current = SystemInfo.read_file(os.path.join(battery_path, "current_now"))
-                      voltage = SystemInfo.read_file(os.path.join(battery_path, "voltage_now"))
-
-                      if (current and current.isdigit()) and (voltage and voltage.isdigit()):
-                          energy_rate = (int(current) * int(voltage)) / 1_000_000
-
-
-
-          '''
-          old_collection = old_collection.replace("                  ", "        ")
-          if old_collection in text:
-              text = text.replace(
-                  old_collection,
-                  '        power_consumption = SystemInfo._battery_power_watts(battery_path)\n\n',
-                  1,
+          legacy_start = "        # first check for wattage in power_now\n"
+          collection_end = "        charge_start_threshold = (\n"
+          if legacy_start in text:
+              start = text.index(legacy_start)
+              end = text.index(collection_end, start)
+              text = (
+                  text[:start]
+                  + "        power_consumption = SystemInfo._battery_power_watts(battery_path)\n\n"
+                  + text[end:]
               )
 
-          old_conversion = '''        power_consumption = float(energy_rate) / 1_000_000 if energy_rate \\
-                      and str(energy_rate).replace('.', '', 1).isdigit() else None
-          '''
-          old_conversion = old_conversion.replace("                      ", "            ")
+          old_conversion = (
+              "        power_consumption = float(energy_rate) / 1_000_000 if energy_rate "
+              + "\\"
+              + "\n"
+              + "            and str(energy_rate).replace('.', '', 1).isdigit() else None\n"
+          )
           if old_conversion in text:
               text = text.replace(old_conversion, "", 1)
 
-          if "energy_rate" in text[text.index("def battery_info"):text.index("def turbo_on_suggestion")]:
+          battery_section = text[text.index("def battery_info"):text.index("def turbo_on_suggestion")]
+          if "energy_rate" in battery_section:
               raise SystemExit("legacy energy_rate logic still present")
+          if "power_consumption = SystemInfo._battery_power_watts(battery_path)" not in battery_section:
+              raise SystemExit("new battery power collection not installed")
 
           path.write_text(text)
           PY
