@@ -427,7 +427,7 @@ function build_release {
     return 1
   fi
   case "$version_output" in
-    *"${installed_version%%+*}"*) ;;
+    *"auto-cpufreq version: ${installed_version%%+*}"*) ;;
     *)
       echo "Error: The installed command does not report its package version."
       discard_release "$release_dir"

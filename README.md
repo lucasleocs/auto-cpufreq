@@ -145,6 +145,8 @@ For a stable source installation, download the `.zip` or `.tar.gz` source archiv
 sudo bash ./auto-cpufreq-installer
 ```
 
+Release archives published before this archive metadata support was added are not changed retroactively and may still require a Git checkout.
+
 For the current development version, clone the Git repository instead:
 
 ```bash
