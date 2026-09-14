@@ -22,10 +22,10 @@ fi
 
 # First argument is the init name, second argument is the start command, third argument is the enable command
 function auto_cpufreq_install {
-    echo -e "\n* Starting auto-cpufreq daemon ($1) service"
-    [ -z "${2:-}" ] || $2 || return $?
     echo -e "\n* Enabling auto-cpufreq daemon ($1) at boot"
     [ -z "${3:-}" ] || $3 || return $?
+    echo -e "\n* Starting auto-cpufreq daemon ($1) service"
+    [ -z "${2:-}" ] || $2 || return $?
 }
 
 case "$(ps h -o comm 1)" in
@@ -45,18 +45,34 @@ case "$(ps h -o comm 1)" in
   runit)
     # First argument is the "sv" path, second argument is the "service" path
     runit_ln() {
+      local active_link="$2/service/auto-cpufreq"
+      local service_dir="$1/sv/auto-cpufreq"
+
       echo -e "\n* Deploying auto-cpufreq (runit) unit file"
-      mkdir "$1"/sv/auto-cpufreq || return $?
-      cp "$SHARE_DIR/scripts/auto-cpufreq-runit" "$1"/sv/auto-cpufreq/run || return $?
-      chmod +x "$1"/sv/auto-cpufreq/run || return $?
+      if [ -L "$service_dir" ] || { [ -e "$service_dir" ] && [ ! -d "$service_dir" ]; }; then
+        echo "Error: Refusing to replace an unmanaged runit service path: $service_dir"
+        return 1
+      fi
+      mkdir -p "$service_dir" || return $?
+      cp "$SHARE_DIR/scripts/auto-cpufreq-runit" "$service_dir/run" || return $?
+      chmod +x "$service_dir/run" || return $?
 
-      echo -e "\n* Creating symbolic link ($2/service/auto-cpufreq -> $1/sv/auto-cpufreq)"
-      ln -s "$1"/sv/auto-cpufreq "$2"/service || return $?
+      echo -e "\n* Creating symbolic link ($active_link -> $service_dir)"
+      if [ -L "$active_link" ]; then
+        if [ "$(readlink "$active_link")" != "$service_dir" ]; then
+          echo "Error: Refusing to replace an unmanaged runit service link: $active_link"
+          return 1
+        fi
+      elif [ -e "$active_link" ]; then
+        echo "Error: Refusing to replace an unmanaged runit service path: $active_link"
+        return 1
+      else
+        ln -s "$service_dir" "$active_link" || return $?
+      fi
 
-      auto_cpufreq_install "runit"
-
-      sv start auto-cpufreq || return $?
-      sv up auto-cpufreq || return $?
+      # `sv start` is the documented waiting form of `sv up`; one command is
+      # sufficient both to request and verify that the service reached "up".
+      sv start "$active_link" || return $?
     }
 
     if [ -f /etc/os-release ];then
@@ -69,6 +85,9 @@ case "$(ps h -o comm 1)" in
           echo -e "\n* Please open an issue on https://github.com/AdnanHodzic/auto-cpufreq\n"
           exit 1
       esac
+    else
+      echo -e "\n* Runit init detected but /etc/os-release is unavailable\n"
+      exit 1
     fi
   ;;
   systemd)
@@ -81,16 +100,26 @@ case "$(ps h -o comm 1)" in
     auto_cpufreq_install "systemd" "systemctl start auto-cpufreq" "systemctl enable auto-cpufreq" || exit $?
   ;;
   s6-svscan)
-	  echo -e "\n* Deploying auto-cpufreq (s6) unit file"
-    cp -r "$SHARE_DIR/scripts/auto-cpufreq-s6" /etc/s6/sv/auto-cpufreq || exit $?
+    s6_service_dir=/etc/s6/sv/auto-cpufreq
+    s6_bundle_entry=/etc/s6/adminsv/default/contents.d/auto-cpufreq
+    echo -e "\n* Deploying auto-cpufreq (s6) unit file"
+    if [ -L "$s6_service_dir" ] \
+      || { [ -e "$s6_service_dir" ] && [ ! -d "$s6_service_dir" ]; }; then
+      echo "Error: Refusing to replace an unmanaged s6 service path: $s6_service_dir"
+      exit 1
+    fi
+    mkdir -p "$s6_service_dir" || exit $?
+    cp -r "$SHARE_DIR/scripts/auto-cpufreq-s6/." "$s6_service_dir/" || exit $?
 
     echo -e "\n* Add auto-cpufreq service (s6) to default bundle"
-    s6-service add default auto-cpufreq || exit $?
-
-    auto_cpufreq_install "s6" "s6-rc -u change auto-cpufreq default" || exit $?
+    if [ ! -e "$s6_bundle_entry" ] && [ ! -L "$s6_bundle_entry" ]; then
+      s6-service add default auto-cpufreq || exit $?
+    fi
 
     echo -e "\n* Update daemon service bundle (s6)"
     s6-db-reload || exit $?
+
+    auto_cpufreq_install "s6" "s6-rc -u change auto-cpufreq default" || exit $?
   ;;
   *)
     echo -e "\n* Unsupported init system detected, could not install the daemon\n"
