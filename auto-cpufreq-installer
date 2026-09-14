@@ -327,13 +327,27 @@ function publish_file {
   fi
 }
 
+function verify_command_version {
+  local command_path="$1"
+  local installed_version="$2"
+  local version_output
+
+  if [ ! -x "$command_path" ] \
+    || ! version_output="$("$command_path" --version)"; then
+    return 1
+  fi
+  case "$version_output" in
+    *"auto-cpufreq version: ${installed_version%%+*}"*) return 0;;
+  esac
+  return 1
+}
+
 function build_release {
   local release_dir
   local revision
   local installed_version
   local venv_dir
   local venv_python
-  local version_output
 
   PREPARED_RELEASE=""
   ensure_install_layout || return 1
@@ -403,6 +417,11 @@ function build_release {
     discard_release "$release_dir"
     return 1
   fi
+  if ! "$venv_python" -m pip check; then
+    echo "Error: The prepared auto-cpufreq release has incompatible Python dependencies."
+    discard_release "$release_dir"
+    return 1
+  fi
 
   if ! mkdir -p "$release_dir/share" \
     || ! cp -r "$SOURCE_ROOT/scripts" "$SOURCE_ROOT/images" "$release_dir/share/" \
@@ -421,19 +440,11 @@ function build_release {
   if ! installed_version="$("$venv_python" -c \
     'from importlib.metadata import version; print(version("auto-cpufreq"))')" \
     || [ -z "$installed_version" ] \
-    || ! version_output="$("$venv_dir/bin/auto-cpufreq" --version)"; then
+    || ! verify_command_version "$venv_dir/bin/auto-cpufreq" "$installed_version"; then
     echo "Error: The prepared auto-cpufreq release has no usable version metadata."
     discard_release "$release_dir"
     return 1
   fi
-  case "$version_output" in
-    *"auto-cpufreq version: ${installed_version%%+*}"*) ;;
-    *)
-      echo "Error: The installed command does not report its package version."
-      discard_release "$release_dir"
-      return 1
-      ;;
-  esac
 
   # Activation only accepts candidates carrying this marker. It is written
   # after every executable and version-specific resource has been verified.
@@ -447,6 +458,8 @@ function build_release {
 }
 
 function tool_install {
+  local active_version
+
   echo
   if [ -e "$AUTO_CPUFREQ_FILE-remove" ] || [ -L "$AUTO_CPUFREQ_FILE-remove" ]; then
     echo "Error: Remove the installed auto-cpufreq daemon before replacing the source installation."
@@ -663,6 +676,16 @@ function tool_install {
     if ! update-desktop-database "$APPLICATIONS_PATH"; then
       echo "Warning: Failed to refresh the desktop application database."
     fi
+  fi
+
+  # Candidate checks do not exercise the stable command users invoke. Verify
+  # that the published wrapper resolves current before announcing success.
+  if ! active_version="$("$PREPARED_RELEASE/venv/bin/python" -c \
+    'from importlib.metadata import version; print(version("auto-cpufreq"))')" \
+    || [ -z "$active_version" ] \
+    || ! verify_command_version "$AUTO_CPUFREQ_FILE" "$active_version"; then
+    echo "Error: The installed auto-cpufreq command failed its final version check."
+    return 1
   fi
 
   # The legacy venv/share copies are no longer executable state once current
