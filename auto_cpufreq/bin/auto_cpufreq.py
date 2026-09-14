@@ -199,19 +199,31 @@ def main(monitor, live, daemon, install, update, remove, force, turbo, config, s
                 #check for AUR 
             elif IS_INSTALLED_WITH_AUR: print("Arch-based distribution with AUR support detected. Please refresh auto-cpufreq using your AUR helper.")
             else:
-                is_new_update = check_for_update()
-                if not is_new_update: return
+                target_tag = check_for_update()
+                if not target_tag: return
                 ans = input("Do you want to update auto-cpufreq to the latest release? [Y/n]: ").strip().lower()
-                if not os.path.exists(custom_dir): os.makedirs(custom_dir)
-                if os.path.exists(os.path.join(custom_dir, "auto-cpufreq")): rmtree(os.path.join(custom_dir, "auto-cpufreq"))
                 if ans in ['', 'y', 'yes']:
+                    if not os.path.exists(custom_dir): os.makedirs(custom_dir)
+                    source_dir = os.path.join(custom_dir, "auto-cpufreq")
+                    if os.path.exists(source_dir): rmtree(source_dir)
                     remove_daemon()
                     remove_complete_msg()
-                    new_update(custom_dir)
+                    if not new_update(custom_dir, target_tag):
+                        print("Update failed. Reinstalling the daemon from the active source generation.")
+                        daemon_restore = run(["auto-cpufreq", "--install"])
+                        if daemon_restore.returncode != 0:
+                            print("The daemon could not be restored automatically; run `sudo auto-cpufreq --install` after resolving the reported error.")
+                        sys.exit(1)
                     print("enabling daemon")
-                    run(["auto-cpufreq", "--install"])
-                    print("auto-cpufreq is installed with the latest version")
-                    run(["auto-cpufreq", "--version"])
+                    daemon_install = run(["auto-cpufreq", "--install"])
+                    if daemon_install.returncode != 0:
+                        print("The source release was updated, but the daemon could not be installed.")
+                        sys.exit(1)
+                    version_result = run(["auto-cpufreq", "--version"])
+                    if version_result.returncode != 0:
+                        print("The updated auto-cpufreq command failed its final version check.")
+                        sys.exit(1)
+                    print(f"auto-cpufreq is installed with the latest release ({target_tag})")
                 else: print("Aborted")
         elif remove:
             root_check()
