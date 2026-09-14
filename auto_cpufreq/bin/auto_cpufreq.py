@@ -176,7 +176,9 @@ def main(monitor, live, daemon, install, update, remove, force, turbo, config, s
             root_check()
             running_daemon_check()
             gov_check()
-            deploy_daemon()
+            if deploy_daemon() != 0:
+                print("Failed to install the auto-cpufreq daemon.")
+                sys.exit(1)
             deploy_complete_msg()
         elif update:
             root_check()
