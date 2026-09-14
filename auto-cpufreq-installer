@@ -15,6 +15,8 @@ RELEASES_PATH="$INSTALL_ROOT/releases"
 CURRENT_PATH="$INSTALL_ROOT/current"
 OPERATION_LOCK_DIR="/run/auto-cpufreq"
 PREPARED_RELEASE=""
+PYTHON_BIN="/usr/bin/python3"
+PYGOBJECT_INSTALL="pypi"
 
 SHARE_DIR="$CURRENT_PATH/share"
 LEGACY_SHARE_DIR="/usr/local/share/auto-cpufreq"
@@ -91,6 +93,32 @@ function os_release_matches {
   return 1
 }
 
+function is_enterprise_linux {
+  case "${PLATFORM_ID:-}" in
+    platform:el[0-9]*) return 0;;
+  esac
+
+  os_release_matches rhel
+}
+
+function enterprise_linux_major {
+  case "${PLATFORM_ID:-}" in
+    platform:el[0-9]*)
+      printf '%s\n' "${PLATFORM_ID#platform:el}" | sed 's/[^0-9].*$//'
+      return 0
+      ;;
+  esac
+
+  printf '%s\n' "${VERSION_ID%%.*}"
+}
+
+function verify_python_version {
+  "$1" - <<'PYVERSION'
+import sys
+raise SystemExit(0 if sys.version_info >= (3, 9) else 1)
+PYVERSION
+}
+
 function verify_gtk3_runtime {
   # Debian/Ubuntu provide PyGObject as python3-gi. The GTK3 introspection
   # package supplies the typelibs used by the auto-cpufreq GUI.
@@ -104,6 +132,40 @@ gi.require_version("GdkPixbuf", "2.0")
 
 from gi.repository import Gdk, GdkPixbuf, Gio, GLib, Gtk, Pango
 PYGTK
+}
+
+function el_pygobject_spec {
+  local glib_version="$1"
+
+  if printf '%s\n%s\n' "2.80" "$glib_version" | sort -V -C; then
+    printf '%s\n' 'PyGObject>=3.50'
+  elif printf '%s\n%s\n' "2.64" "$glib_version" | sort -V -C; then
+    printf '%s\n' 'PyGObject>=3.46,<3.50'
+  elif printf '%s\n%s\n' "2.56" "$glib_version" | sort -V -C; then
+    printf '%s\n' 'PyGObject>=3.44.2,<3.46'
+  else
+    return 1
+  fi
+}
+
+function install_el_pygobject {
+  local venv_python="$1"
+  local glib_version
+  local pygobject_spec
+
+  glib_version="$(pkg-config --modversion glib-2.0 2>/dev/null)" || {
+    echo "Error: Unable to determine the installed GLib version."
+    return 1
+  }
+  pygobject_spec="$(el_pygobject_spec "$glib_version")" || {
+    echo "Error: GLib $glib_version is too old for the supported PyGObject compatibility path."
+    return 1
+  }
+
+  if ! "$venv_python" -m pip install pycairo "$pygobject_spec"; then
+    echo "Error: Failed to install a PyGObject build compatible with GLib $glib_version."
+    return 1
+  fi
 }
 
 function acquire_operation_lock {
@@ -170,7 +232,7 @@ function source_revision {
   fi
 
   if [ -z "${revision:-}" ] && [ -r "$SOURCE_ROOT/.git_archival.json" ]; then
-    revision="$(python3 - "$SOURCE_ROOT/.git_archival.json" <<'PYREVISION'
+    revision="$("$PYTHON_BIN" - "$SOURCE_ROOT/.git_archival.json" <<'PYREVISION'
 import json
 import re
 import sys
@@ -289,7 +351,7 @@ function build_release {
   # the final generation path avoids an apparently successful activation whose
   # entry points still refer to a discarded staging directory.
   venv_dir="$release_dir/venv"
-  if ! python3 -m venv --system-site-packages "$venv_dir"; then
+  if ! "$PYTHON_BIN" -m venv --system-site-packages "$venv_dir"; then
     echo "Error: Failed to create the Python virtual environment."
     discard_release "$release_dir"
     return 1
@@ -301,12 +363,8 @@ function build_release {
     discard_release "$release_dir"
     return 1
   fi
-
-  # Debian/Ubuntu intentionally use the distro-provided PyGObject runtime.
-  # Confirm that --system-site-packages made it visible inside the venv before
-  # installing the rest of auto-cpufreq.
-  if [ "$DISTRO_FAMILY" = "debian" ] && ! verify_gtk3_runtime "$venv_python"; then
-    echo "Error: The virtual environment cannot access the system PyGObject GTK3 runtime."
+  if ! "$venv_python" -m pip --version > /dev/null; then
+    echo "Error: pip is unavailable inside the Python virtual environment."
     discard_release "$release_dir"
     return 1
   fi
@@ -317,15 +375,26 @@ function build_release {
     return 1
   fi
 
-  # Debian/Ubuntu use python3-gi from the distribution through
-  # --system-site-packages. Other supported families retain their existing
-  # PyPI PyGObject installation path.
-  if [ "$DISTRO_FAMILY" != "debian" ]; then
-    if ! "$venv_python" -m pip install PyGObject; then
-      echo "Error: Failed to install PyGObject."
-      discard_release "$release_dir"
-      return 1
-    fi
+  case "$PYGOBJECT_INSTALL" in
+    system) ;;
+    el-compatible)
+      if ! install_el_pygobject "$venv_python"; then
+        discard_release "$release_dir"
+        return 1
+      fi
+      ;;
+    pypi)
+      if ! "$venv_python" -m pip install PyGObject; then
+        echo "Error: Failed to install PyGObject."
+        discard_release "$release_dir"
+        return 1
+      fi
+      ;;
+  esac
+  if ! verify_gtk3_runtime "$venv_python"; then
+    echo "Error: The virtual environment cannot load the PyGObject GTK3 runtime."
+    discard_release "$release_dir"
+    return 1
   fi
 
   header "Installing auto-cpufreq tool"
@@ -389,6 +458,11 @@ function tool_install {
     return 1
   fi
 
+  # Distro-provided Python modules are installed for /usr/bin/python3 (or the
+  # selected EL stream), not for an unrelated python3 earlier in root's PATH.
+  PYTHON_BIN="/usr/bin/python3"
+  PYGOBJECT_INSTALL="pypi"
+
   # First argument is the distro
   function detected_distro {
     header "Detected $1 distribution"
@@ -415,7 +489,7 @@ function tool_install {
   # packaging interface as recommended by os-release(5).
   elif [ -f /etc/debian_version ] || os_release_matches debian; then
     detected_distro "Debian based"
-    DISTRO_FAMILY="debian"
+    PYGOBJECT_INSTALL="system"
     VERSION="${VERSION_ID:-unknown}"
     [ -r /etc/debian_version ] && VERSION="$(cat /etc/debian_version)"
 
@@ -443,13 +517,13 @@ function tool_install {
     echo "Installing Debian/Ubuntu dependencies for version $VERSION..."
     echo '---- '
     if ! apt-get install -y \
-      python3-dev python3-venv python3-setuptools \
+      python3 python3-dev python3-venv python3-setuptools \
       dmidecode gcc git python3-gi gir1.2-gtk-3.0; then
       echo "Error: Failed to install required system dependencies."
       return 1
     fi
 
-    if ! verify_gtk3_runtime python3; then
+    if ! verify_gtk3_runtime "$PYTHON_BIN"; then
       echo "Error: The Debian/Ubuntu PyGObject GTK3 runtime could not be loaded."
       echo "Verify that python3-gi and gir1.2-gtk-3.0 are correctly installed."
       return 1
@@ -457,7 +531,6 @@ function tool_install {
 
   elif [ -f /etc/redhat-release ] || os_release_matches rhel || os_release_matches fedora; then
     detected_distro "RedHat based"
-    DISTRO_FAMILY="redhat"
 
     if command -v dnf > /dev/null 2>&1; then
       RPM_PM="dnf"
@@ -468,23 +541,39 @@ function tool_install {
       return 1
     fi
 
-    # Preserve the existing CentOS platform-python compatibility path, while
-    # Fedora and current RHEL releases use the Python 3 development package.
-    if [ -f /etc/centos-release ]; then
-      RPM_PYTHON_DEVEL="platform-python-devel"
+    if is_enterprise_linux; then
+      PYGOBJECT_INSTALL="el-compatible"
+      EL_MAJOR="$(enterprise_linux_major)"
+      case "$EL_MAJOR" in
+        8)
+          PYTHON_BIN="/usr/bin/python3.9"
+          RPM_PYTHON_PACKAGES=(python39 python39-devel python39-pip)
+          ;;
+        9|10)
+          RPM_PYTHON_PACKAGES=(python3 python3-devel python3-pip)
+          ;;
+        *)
+          echo "Error: Unsupported Enterprise Linux major version '$EL_MAJOR'."
+          return 1
+          ;;
+      esac
     else
-      RPM_PYTHON_DEVEL="python3-devel"
+      PYGOBJECT_INSTALL="system"
+      RPM_PYTHON_PACKAGES=(python3 python3-devel python3-pip)
     fi
 
-    if ! "$RPM_PM" install -y "$RPM_PYTHON_DEVEL" \
-      dmidecode gcc git cairo-devel gobject-introspection-devel cairo-gobject-devel gtk3-devel; then
+    if [ "$PYGOBJECT_INSTALL" = "system" ]; then
+      RPM_PYTHON_PACKAGES+=(python3-gobject)
+    fi
+    if ! "$RPM_PM" install -y "${RPM_PYTHON_PACKAGES[@]}" \
+      dmidecode gcc git pkgconf-pkg-config cairo-devel \
+      gobject-introspection-devel cairo-gobject-devel gtk3-devel; then
       echo "Error: Failed to install required system dependencies."
       return 1
     fi
 
   elif [ -f /etc/solus-release ] || [ "${ID:-}" = "solus" ]; then
     detected_distro "Solus"
-    DISTRO_FAMILY="solus"
     if ! eopkg install pip python3 python3-devel dmidecode gobject-introspection-devel libcairo-devel gcc git libgtk-3; then
       echo "Error: Failed to install required system dependencies."
       return 1
@@ -496,7 +585,6 @@ function tool_install {
 
   elif [ -f /etc/arch-release ] || [ "${ID:-}" = "artix" ] || os_release_matches arch; then
     detected_distro "Arch Linux based"
-    DISTRO_FAMILY="arch"
     if ! pacman -S --noconfirm --needed python python-pip python-setuptools base-devel dmidecode gobject-introspection gtk3 gcc git; then
       echo "Error: Failed to install required system dependencies."
       return 1
@@ -504,7 +592,6 @@ function tool_install {
 
   elif [ "${ID:-}" = "opensuse-leap" ] || [ "${ID:-}" = "opensuse-tumbleweed" ] || os_release_matches suse || os_release_matches opensuse; then
     detected_distro "OpenSUSE"
-    DISTRO_FAMILY="suse"
     if ! zypper install -y python3 python3-pip python311-setuptools python3-devel gcc git dmidecode gobject-introspection-devel python3-cairo-devel gtk3 gtk3-devel; then
       echo "Error: Failed to install required system dependencies."
       return 1
@@ -512,7 +599,6 @@ function tool_install {
 
   elif [ "${ID:-}" = "void" ]; then
     detected_distro "Void Linux"
-    DISTRO_FAMILY="void"
     if ! xbps-install -Sy python3 python3-pip python3-devel python3-setuptools base-devel dmidecode cairo-devel gobject-introspection gcc git gtk+3; then
       echo "Error: Failed to install required system dependencies."
       return 1
@@ -520,6 +606,15 @@ function tool_install {
 
   else
     manual_install
+  fi
+
+  if [ ! -x "$PYTHON_BIN" ]; then
+    echo "Error: The distribution Python interpreter is unavailable at $PYTHON_BIN."
+    return 1
+  fi
+  if ! verify_python_version "$PYTHON_BIN"; then
+    echo "Error: auto-cpufreq requires Python 3.9 or newer."
+    return 1
   fi
 
   header "Installing necessary Python packages"

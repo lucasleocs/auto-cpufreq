@@ -133,6 +133,8 @@ Only devices with an Intel, AMD, or ARM CPU are supported. This tool was develop
 
 The source installer automatically handles several major Linux distribution families, including Debian/Ubuntu (and derivatives such as Linux Mint), Fedora/RHEL, Arch-based distributions, openSUSE, Void Linux, and Solus. Other recognized derivatives can use the installation path of their declared base distribution.
 
+Source installation requires a distribution-provided Python 3.9 or newer. Enterprise Linux 8 uses its Python 3.9 stream; newer Enterprise Linux releases use the distribution's default Python 3.
+
 The installer automatically installs system dependencies and creates each source installation in a dedicated virtual environment under `/opt/auto-cpufreq/releases`. It verifies a new installation before atomically selecting it through `/opt/auto-cpufreq/current`; an incomplete installation does not replace the working one.
 
 NixOS uses the native Nix integration described below instead of the source installer.
