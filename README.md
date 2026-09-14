@@ -133,18 +133,24 @@ Only devices with an Intel, AMD, or ARM CPU are supported. This tool was develop
 
 The source installer automatically handles several major Linux distribution families, including Debian/Ubuntu (and derivatives such as Linux Mint), Fedora/RHEL, Arch-based distributions, openSUSE, Void Linux, and Solus. Other recognized derivatives can use the installation path of their declared base distribution.
 
-The installer automatically installs system dependencies and manages a dedicated Python virtual environment in `/opt/auto-cpufreq`.
+The installer automatically installs system dependencies and creates each source installation in a dedicated virtual environment under `/opt/auto-cpufreq/releases`. It verifies a new installation before atomically selecting it through `/opt/auto-cpufreq/current`; an incomplete installation does not replace the working one.
 
 NixOS uses the native Nix integration described below instead of the source installer.
 
-> As auto-cpufreq relies on git based versioning, users are advised to install `auto-cpufreq`  using `git clone` method only. Downloading source code as a zip/from release will emit build error like [these](https://github.com/AdnanHodzic/auto-cpufreq/issues/623).
+For a stable source installation, download the `.zip` or `.tar.gz` source archive for the desired version from [GitHub Releases](https://github.com/AdnanHodzic/auto-cpufreq/releases), extract it, enter the extracted directory, and run:
 
-Get source code, run installer, and follow on-screen instructions:
-
+```bash
+sudo ./auto-cpufreq-installer
 ```
+
+For the current development version, clone the Git repository instead:
+
+```bash
 git clone https://github.com/AdnanHodzic/auto-cpufreq.git
 cd auto-cpufreq && sudo ./auto-cpufreq-installer
 ```
+
+When replacing an existing source installation, remove its auto-cpufreq daemon first if the installer asks you to do so. The previous source generation is retained until the source installation is removed.
 
 ### Snap Store
 
