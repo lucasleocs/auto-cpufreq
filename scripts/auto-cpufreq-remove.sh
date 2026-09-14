@@ -80,10 +80,10 @@ case "$(ps h -o comm 1)" in
     if [ -e "$systemd_unit" ] || [ -L "$systemd_unit" ]; then
       echo -e "\n* Stopping auto-cpufreq daemon (systemd) service"
       systemctl stop auto-cpufreq || exit $?
+      # disable reloads systemd, which may unload the now-inactive unit.
+      # stop already clears its failed state, so no reset-failed is needed.
       echo -e "\n* Disabling auto-cpufreq daemon (systemd) at boot"
       systemctl disable auto-cpufreq || exit $?
-      echo -e "\n* Resetting auto-cpufreq daemon (systemd) failure state"
-      systemctl reset-failed auto-cpufreq || exit $?
       echo -e "\n* Removing auto-cpufreq daemon (systemd) unit file"
       rm -f -- "$systemd_unit" || exit $?
     else
