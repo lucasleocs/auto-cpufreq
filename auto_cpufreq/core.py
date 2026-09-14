@@ -157,7 +157,7 @@ def check_for_update():
         return None
 
     try:
-        output = check_output(["auto-cpufreq", "--version"]).decode("utf-8")
+        output = check_output(["/usr/local/bin/auto-cpufreq", "--version"]).decode("utf-8")
     except (CalledProcessError, OSError, UnicodeDecodeError):
         print("Error retrieving current version!")
         return None
