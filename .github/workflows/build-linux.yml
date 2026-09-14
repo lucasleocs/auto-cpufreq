@@ -27,4 +27,4 @@ jobs:
         run: sudo ./auto-cpufreq-installer --install
 
       - name: "Battery power regression tests"
-        run: python -m unittest scripts/test_battery_power_reporting.py -v
+        run: /opt/auto-cpufreq/venv/bin/python -m unittest scripts/test_battery_power_reporting.py -v
