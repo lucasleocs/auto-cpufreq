@@ -209,11 +209,11 @@ def main(monitor, live, daemon, install, update, remove, force, turbo, config, s
                 if ans in ['', 'y', 'yes']:
                     if not os.path.exists(custom_dir): os.makedirs(custom_dir)
                     source_dir = os.path.join(custom_dir, "auto-cpufreq")
-                    if os.path.exists(source_dir): rmtree(source_dir)
                     if remove_daemon() != 0:
                         print("The existing auto-cpufreq daemon could not be removed; update aborted.")
                         sys.exit(1)
                     remove_complete_msg()
+                    if os.path.exists(source_dir): rmtree(source_dir)
                     if not new_update(custom_dir, target_tag):
                         print("Update failed. Reinstalling the daemon from the active source generation.")
                         daemon_restore = run(["/usr/local/bin/auto-cpufreq", "--install"])
