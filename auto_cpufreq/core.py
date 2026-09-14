@@ -128,7 +128,8 @@ def app_version():
 
 def check_for_update():
     # Return the exact published tag so the artifact installed below cannot
-    # drift from the release that was presented to the user.
+    # drift from the release that was presented to the user. False means the
+    # active version is current; None means the check itself could not finish.
 
     # Specify the repository and package name
     # IT IS IMPORTANT TO  THAT IF THE REPOSITORY STRUCTURE IS CHANGED, THE FOLLOWING FUNCTION NEEDS TO BE UPDATED ACCORDINGLY
@@ -143,28 +144,28 @@ def check_for_update():
             if message is not None and message.startswith("API rate limit exceeded"):
                 print("GitHub Rate limit exceeded. Please try again later within 1 hour or use different network/VPN.")
             else: print("Unexpected status code:", response.status_code)
-            return False
+            return None
     except (exceptions.ConnectionError, exceptions.Timeout,
             exceptions.RequestException, exceptions.HTTPError):
         print("Error Connecting to server!")
-        return False
+        return None
 
     latest_tag = latest_release.get("tag_name")
     latest_match = search(r"^v?(\d+)\.(\d+)\.(\d+)$", latest_tag or "")
     if latest_match is None:
         print("Malformed release data!\nReinstall manually or open an issue on GitHub for help!")
-        return False
+        return None
 
     try:
         output = check_output(["auto-cpufreq", "--version"]).decode("utf-8")
-    except (CalledProcessError, FileNotFoundError, UnicodeDecodeError):
+    except (CalledProcessError, OSError, UnicodeDecodeError):
         print("Error retrieving current version!")
-        return False
+        return None
 
     installed_match = search(r"auto-cpufreq version:\s*(\d+)\.(\d+)\.(\d+)", output)
     if installed_match is None:
         print("Error retrieving current version!")
-        return False
+        return None
 
     latest_release_version = tuple(map(int, latest_match.groups()))
     installed_release = tuple(map(int, installed_match.groups()))
@@ -180,11 +181,18 @@ def check_for_update():
 def new_update(custom_dir, target_tag):
     source_dir = os.path.join(custom_dir, "auto-cpufreq")
     print(f"Cloning release {target_tag} to {source_dir}")
-    clone = run([
-        "git", "clone", "--depth", "1", "--branch", target_tag,
-        "--single-branch", GITHUB + ".git", source_dir,
-    ])
-    if clone.returncode != 0:
+    # A branch and a tag may share the same short name. Fetching the fully
+    # qualified tag ref prevents a branch from being installed by mistake.
+    git_commands = [
+        ["git", "init", "--quiet", source_dir],
+        ["git", "-C", source_dir, "remote", "add", "origin", GITHUB + ".git"],
+        [
+            "git", "-C", source_dir, "fetch", "--depth", "1", "--no-tags",
+            "origin", f"refs/tags/{target_tag}",
+        ],
+        ["git", "-C", source_dir, "checkout", "--detach", "--quiet", "FETCH_HEAD"],
+    ]
+    if any(run(command).returncode != 0 for command in git_commands):
         print(f"Failed to download auto-cpufreq release {target_tag}.")
         return False
 

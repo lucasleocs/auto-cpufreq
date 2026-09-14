@@ -6,6 +6,7 @@
 
 # core import
 import sys, time, os
+from re import search
 from subprocess import run
 from shutil import rmtree
 
@@ -200,7 +201,8 @@ def main(monitor, live, daemon, install, update, remove, force, turbo, config, s
             elif IS_INSTALLED_WITH_AUR: print("Arch-based distribution with AUR support detected. Please refresh auto-cpufreq using your AUR helper.")
             else:
                 target_tag = check_for_update()
-                if not target_tag: return
+                if target_tag is None: sys.exit(1)
+                if target_tag is False: return
                 ans = input("Do you want to update auto-cpufreq to the latest release? [Y/n]: ").strip().lower()
                 if ans in ['', 'y', 'yes']:
                     if not os.path.exists(custom_dir): os.makedirs(custom_dir)
@@ -210,18 +212,27 @@ def main(monitor, live, daemon, install, update, remove, force, turbo, config, s
                     remove_complete_msg()
                     if not new_update(custom_dir, target_tag):
                         print("Update failed. Reinstalling the daemon from the active source generation.")
-                        daemon_restore = run(["auto-cpufreq", "--install"])
+                        daemon_restore = run(["/usr/local/bin/auto-cpufreq", "--install"])
                         if daemon_restore.returncode != 0:
                             print("The daemon could not be restored automatically; run `sudo auto-cpufreq --install` after resolving the reported error.")
                         sys.exit(1)
                     print("enabling daemon")
-                    daemon_install = run(["auto-cpufreq", "--install"])
+                    daemon_install = run(["/usr/local/bin/auto-cpufreq", "--install"])
                     if daemon_install.returncode != 0:
                         print("The source release was updated, but the daemon could not be installed.")
                         sys.exit(1)
-                    version_result = run(["auto-cpufreq", "--version"])
-                    if version_result.returncode != 0:
-                        print("The updated auto-cpufreq command failed its final version check.")
+                    version_result = run(
+                        ["/usr/local/bin/auto-cpufreq", "--version"],
+                        capture_output=True,
+                        text=True,
+                    )
+                    installed_version = search(
+                        r"(?:^|\n)auto-cpufreq version:\s*(\d+\.\d+\.\d+)(?:\s|$)",
+                        version_result.stdout,
+                    )
+                    if version_result.returncode != 0 or installed_version is None \
+                        or installed_version.group(1) != target_tag.removeprefix("v"):
+                        print("The updated auto-cpufreq command did not report the selected release.")
                         sys.exit(1)
                     print(f"auto-cpufreq is installed with the latest release ({target_tag})")
                 else: print("Aborted")

@@ -330,19 +330,38 @@ function publish_file {
 function verify_command_version {
   local command_path="$1"
   local installed_version="$2"
+  local version_line
   local version_output
 
   if [ ! -x "$command_path" ] \
     || ! version_output="$("$command_path" --version)"; then
     return 1
   fi
-  case "$version_output" in
-    *"auto-cpufreq version: ${installed_version%%+*}"*) return 0;;
-  esac
+  while IFS= read -r version_line; do
+    case "$version_line" in
+      "auto-cpufreq version: ${installed_version%%+*}"|"auto-cpufreq version: ${installed_version%%+*} (git: "*) return 0;;
+    esac
+  done <<< "$version_output"
+  return 1
+}
+
+function has_new_dependency_issues {
+  local existing_issues="$1"
+  local candidate_issues="$2"
+  local issue
+
+  while IFS= read -r issue; do
+    [ -z "$issue" ] && continue
+    if ! printf '%s\n' "$existing_issues" | grep -F -x -- "$issue" > /dev/null; then
+      return 0
+    fi
+  done <<< "$candidate_issues"
   return 1
 }
 
 function build_release {
+  local existing_dependency_issues
+  local candidate_dependency_issues
   local release_dir
   local revision
   local installed_version
@@ -389,6 +408,13 @@ function build_release {
     return 1
   fi
 
+  # A system-site-packages venv can expose unrelated broken host packages.
+  # Retain that baseline so only incompatibilities introduced by this
+  # candidate can reject an otherwise usable release.
+  if existing_dependency_issues="$("$venv_python" -m pip check 2>&1)"; then
+    existing_dependency_issues=""
+  fi
+
   case "$PYGOBJECT_INSTALL" in
     system) ;;
     el-compatible)
@@ -417,10 +443,13 @@ function build_release {
     discard_release "$release_dir"
     return 1
   fi
-  if ! "$venv_python" -m pip check; then
-    echo "Error: The prepared auto-cpufreq release has incompatible Python dependencies."
-    discard_release "$release_dir"
-    return 1
+  if ! candidate_dependency_issues="$("$venv_python" -m pip check 2>&1)"; then
+    if has_new_dependency_issues "$existing_dependency_issues" "$candidate_dependency_issues"; then
+      echo "Error: The prepared auto-cpufreq release has incompatible Python dependencies."
+      printf '%s\n' "$candidate_dependency_issues"
+      discard_release "$release_dir"
+      return 1
+    fi
   fi
 
   if ! mkdir -p "$release_dir/share" \
