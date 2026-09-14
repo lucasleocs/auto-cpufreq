@@ -142,7 +142,7 @@ NixOS uses the native Nix integration described below instead of the source inst
 For a stable source installation, download the `.zip` or `.tar.gz` source archive for the desired version from [GitHub Releases](https://github.com/AdnanHodzic/auto-cpufreq/releases), extract it, enter the extracted directory, and run:
 
 ```bash
-sudo ./auto-cpufreq-installer
+sudo bash ./auto-cpufreq-installer
 ```
 
 For the current development version, clone the Git repository instead:

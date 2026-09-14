@@ -18,6 +18,6 @@ venv_python="$venv_bin_dir/python"
 venv_entrypoint="$venv_bin_dir/auto-cpufreq"
 
 [ -x "$venv_python" ] || err_exit "virtual environment Python is unavailable. reinstall auto-cpufreq."
-[ -f "$venv_entrypoint" ] || err_exit "auto-cpufreq entry point is unavailable. reinstall auto-cpufreq."
+[ -x "$venv_entrypoint" ] || err_exit "auto-cpufreq entry point is unavailable. reinstall auto-cpufreq."
 
 PYTHONPATH="$opt_path" "$venv_python" "$venv_entrypoint" "$@"
