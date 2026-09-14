@@ -583,10 +583,12 @@ function tool_install {
 }
 
 function tool_remove {
-  if [ ! -L "$CURRENT_PATH" ] \
-    && [ ! -d "$RELEASES_PATH" ] \
-    && [ ! -d "$INSTALL_ROOT/venv" ] \
-    && [ ! -d "$LEGACY_SHARE_DIR" ]; then
+  if [ -L "$INSTALL_ROOT" ]; then
+    echo "Error: Refusing to remove a symbolic-link source installation root."
+    return 1
+  fi
+  if [ ! -d "$RELEASES_PATH" ] \
+    && [ ! -d "$INSTALL_ROOT/venv" ]; then
     echo; echo "No auto-cpufreq source installation was found."; echo
     return 0
   fi

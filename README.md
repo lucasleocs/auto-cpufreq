@@ -150,7 +150,7 @@ git clone https://github.com/AdnanHodzic/auto-cpufreq.git
 cd auto-cpufreq && sudo ./auto-cpufreq-installer
 ```
 
-When replacing an existing source installation, remove its auto-cpufreq daemon first if the installer asks you to do so. The previous source generation is retained until the source installation is removed.
+When replacing an existing source installation, remove its auto-cpufreq daemon first if the installer asks you to do so. Earlier versioned generations are retained until the source installation is removed.
 
 ### Snap Store
 
