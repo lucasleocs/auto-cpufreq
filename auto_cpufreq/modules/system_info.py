@@ -683,6 +683,26 @@ class SystemInfo:
         return None
 
     @staticmethod
+    def _battery_power_watts(battery_path: str) -> float | None:
+        """Return instantaneous battery power magnitude in watts when available."""
+        power_now = SystemInfo.read_file(os.path.join(battery_path, "power_now"))
+        if power_now is not None:
+            try:
+                return abs(int(power_now)) / 1_000_000
+            except ValueError:
+                return None
+
+        current_now = SystemInfo.read_file(os.path.join(battery_path, "current_now"))
+        voltage_now = SystemInfo.read_file(os.path.join(battery_path, "voltage_now"))
+        if current_now is None or voltage_now is None:
+            return None
+
+        try:
+            return abs(int(current_now) * int(voltage_now)) / 1_000_000_000_000
+        except ValueError:
+            return None
+
+    @staticmethod
     def battery_info() -> BatteryInfo:
 
         battery_path = SystemInfo.get_battery_path()
@@ -713,21 +733,7 @@ class SystemInfo:
 
         is_ac_plugged = SystemInfo.external_power_state(battery_path)
 
-        # first check for wattage in power_now
-        # this is not found on all laptops
-        energy_rate = (
-            SystemInfo.read_file(os.path.join(battery_path, "power_now"))
-        )
-
-        # if power_now wasn't found, try calculating wattage using current and voltage
-        if energy_rate is None:
-            current = SystemInfo.read_file(os.path.join(battery_path, "current_now"))
-            voltage = SystemInfo.read_file(os.path.join(battery_path, "voltage_now"))
-
-            if (current and current.isdigit()) and (voltage and voltage.isdigit()):
-                energy_rate = (int(current) * int(voltage)) / 1_000_000
-
-
+        power_consumption = SystemInfo._battery_power_watts(battery_path)
 
         charge_start_threshold = (
             SystemInfo.read_file(os.path.join(battery_path, "charge_start_threshold"))
@@ -739,8 +745,6 @@ class SystemInfo:
         )
         is_charging = battery_status.lower() == "charging" if battery_status else None
         battery_level = int(battery_capacity) if battery_capacity and battery_capacity.isdigit() else None
-        power_consumption = float(energy_rate) / 1_000_000 if energy_rate \
-            and str(energy_rate).replace('.', '', 1).isdigit() else None
         charging_start_threshold = int(charge_start_threshold) if charge_start_threshold \
             and charge_start_threshold.isdigit() else None
         charging_stop_threshold = int(charge_stop_threshold) if charge_stop_threshold \
