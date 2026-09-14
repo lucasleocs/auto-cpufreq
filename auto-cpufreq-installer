@@ -9,13 +9,16 @@ COLOUMNS="`tput cols`"
 MID="$((COLOUMNS / 2))"
 
 APPLICATIONS_PATH="/usr/share/applications"
-VENV_PATH="/opt/auto-cpufreq"
+INSTALL_ROOT="/opt/auto-cpufreq"
+RELEASES_PATH="$INSTALL_ROOT/releases"
+CURRENT_PATH="$INSTALL_ROOT/current"
+LEGACY_VENV_PATH="$INSTALL_ROOT/venv"
 POWER_STATE_SNAPSHOT="/var/lib/auto-cpufreq/power-state.json"
 OPERATION_LOCK_PATH="/run/lock/auto-cpufreq.lock"
 CPUFREQCTL_FILE="/usr/local/bin/cpufreqctl.auto-cpufreq"
 AUTO_CPUFREQ_STATS_FILE="/var/run/auto-cpufreq.stats"
 
-SHARE_DIR="/usr/local/share/auto-cpufreq/"
+LEGACY_SHARE_DIR="/usr/local/share/auto-cpufreq"
 
 AUTO_CPUFREQ_FILE="/usr/local/bin/auto-cpufreq"
 AUTO_CPUFREQ_GTK_FILE=$AUTO_CPUFREQ_FILE-gtk
@@ -238,8 +241,13 @@ PYGTK
 }
 
 function source_install_preflight {
+  local install_mode="${1:-activate}"
   local daemon_install="$AUTO_CPUFREQ_FILE-install"
   local daemon_remove="$AUTO_CPUFREQ_FILE-remove"
+
+  # Preparing an immutable candidate does not touch the running release or
+  # daemon artifacts. Activation performs the lifecycle-sensitive checks.
+  [ "$install_mode" = "prepare" ] && return 0
 
   if [ -e "$daemon_install" ] || [ -L "$daemon_install" ] \
     || [ -e "$daemon_remove" ] || [ -L "$daemon_remove" ] \
@@ -285,7 +293,316 @@ function install_el_pygobject {
   return 0
 }
 
+function ensure_source_layout {
+  local path
+
+  for path in "$INSTALL_ROOT" "$RELEASES_PATH"; do
+    if [ -L "$path" ]; then
+      echo "Error: Refusing to use a symbolic link as a source installation directory: $path"
+      return 1
+    fi
+    if ! mkdir -p "$path" || [ ! -d "$path" ]; then
+      echo "Error: Unable to create the source installation directory: $path"
+      return 1
+    fi
+    if [ "$(stat -Lc '%u' "$path" 2>/dev/null)" != "0" ]; then
+      echo "Error: The source installation directory is not root-owned: $path"
+      return 1
+    fi
+    if ! chmod 755 "$path"; then
+      echo "Error: Unable to secure the source installation directory: $path"
+      return 1
+    fi
+  done
+}
+
+function source_revision {
+  local revision="${AUTO_CPUFREQ_INSTALL_REVISION:-}"
+
+  if [ -n "$revision" ]; then
+    case "$revision" in
+      *[!0-9a-fA-F]*|???????????????????????????????????????|?????????????????????????????????????????*)
+        echo "Error: The requested source revision must be an exact 40-character Git SHA." >&2
+        return 1
+        ;;
+    esac
+    printf '%s\n' "${revision,,}"
+    return 0
+  fi
+
+  revision="$(git rev-parse --verify HEAD 2>/dev/null || true)"
+  case "$revision" in
+    [0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]*)
+      if [ "${#revision}" -eq 40 ]; then
+        printf '%s\n' "${revision,,}"
+        return 0
+      fi
+      ;;
+  esac
+
+  revision="$($PYTHON_BIN - .git_archival.json 2>/dev/null <<'PYREVISION'
+import json
+import re
+import sys
+
+try:
+    with open(sys.argv[1], encoding="utf-8") as source:
+        revision = json.load(source).get("hash-full", "")
+except (OSError, ValueError, AttributeError):
+    raise SystemExit(1)
+
+if not re.fullmatch(r"[0-9a-fA-F]{40}", revision):
+    raise SystemExit(1)
+print(revision.lower())
+PYREVISION
+  )" || revision=""
+
+  if [ -n "$revision" ]; then
+    printf '%s\n' "$revision"
+  else
+    # Unexpanded third-party source archives still receive an isolated,
+    # immutable generation; only the human-readable directory prefix differs.
+    printf '%s\n' "source"
+  fi
+}
+
+function remove_prepared_release {
+  local release_dir="$1"
+
+  if [ "$(dirname "$release_dir")" != "$RELEASES_PATH" ] \
+    || [ -L "$release_dir" ]; then
+    echo "Error: Refusing to remove an unmanaged release path: $release_dir"
+    return 1
+  fi
+  rm -rf -- "$release_dir"
+}
+
+function build_source_release {
+  local revision
+  local release_dir
+  local release_share
+  local venv_dir
+  local venv_python
+
+  ensure_source_layout || return 1
+  revision="$(source_revision)" || return 1
+  release_dir="$(mktemp -d "$RELEASES_PATH/$revision.XXXXXXXX")" || {
+    echo "Error: Failed to allocate an immutable source release directory."
+    return 1
+  }
+  chmod 755 "$release_dir" || {
+    remove_prepared_release "$release_dir"
+    return 1
+  }
+
+  venv_dir="$release_dir/venv"
+  if [ "$USE_SYSTEM_PYGOBJECT" -eq 1 ]; then
+    if ! "$PYTHON_BIN" -m venv --system-site-packages "$venv_dir"; then
+      echo "Error: Failed to create the Python virtual environment."
+      remove_prepared_release "$release_dir"
+      return 1
+    fi
+  else
+    if ! "$PYTHON_BIN" -m venv "$venv_dir"; then
+      echo "Error: Failed to create the Python virtual environment."
+      remove_prepared_release "$release_dir"
+      return 1
+    fi
+  fi
+
+  venv_python="$venv_dir/bin/python"
+  if [ ! -x "$venv_python" ]; then
+    echo "Error: Python executable was not created in the virtual environment."
+    remove_prepared_release "$release_dir"
+    return 1
+  fi
+  if ! "$venv_python" -m pip --version > /dev/null 2>&1; then
+    echo "Error: pip is unavailable in the Python virtual environment."
+    remove_prepared_release "$release_dir"
+    return 1
+  fi
+  if ! "$venv_python" -m pip install --upgrade pip wheel; then
+    echo "Error: Failed to install Python build dependencies."
+    remove_prepared_release "$release_dir"
+    return 1
+  fi
+
+  if [ "$USE_SYSTEM_PYGOBJECT" -eq 0 ] \
+    && ! install_el_pygobject "$venv_python"; then
+    remove_prepared_release "$release_dir"
+    return 1
+  fi
+  if ! verify_gtk3_runtime "$venv_python"; then
+    echo "Error: The virtual environment cannot load the required PyGObject GTK3 runtime."
+    remove_prepared_release "$release_dir"
+    return 1
+  fi
+
+  # A venv contains absolute interpreter paths. Build it at its final release
+  # path and never rename it after package installation.
+  if ! "$venv_python" -m pip install .; then
+    echo "Error: Failed to install auto-cpufreq into the virtual environment."
+    remove_prepared_release "$release_dir"
+    return 1
+  fi
+
+  release_share="$release_dir/share"
+  if ! mkdir -p "$release_share" \
+    || ! cp -r scripts/ "$release_share" \
+    || ! cp -r images/ "$release_share"; then
+    echo "Error: Failed to install auto-cpufreq release resources."
+    remove_prepared_release "$release_dir"
+    return 1
+  fi
+
+  PREPARED_RELEASE="$release_dir"
+  return 0
+}
+
+function install_file_atomically {
+  local source="$1"
+  local destination="$2"
+  local mode="$3"
+  local directory
+  local temporary
+
+  directory="$(dirname "$destination")"
+  if ! mkdir -p "$directory"; then
+    return 1
+  fi
+  temporary="$(mktemp "$directory/.$(basename "$destination").XXXXXXXX")" \
+    || return 1
+  if ! install -m "$mode" "$source" "$temporary" \
+    || ! mv -fT -- "$temporary" "$destination"; then
+    rm -f -- "$temporary"
+    return 1
+  fi
+}
+
+function deploy_source_integration {
+  local release_dir="$1"
+  local release_share="$release_dir/share"
+
+  if ! install_file_atomically \
+    "$release_share/images/icon.png" "$IMG_FILE" 644; then
+    echo "Error: Failed to install the auto-cpufreq icon."
+    return 1
+  fi
+  if ! install_file_atomically \
+    "$release_share/scripts/$(basename "$ORG_FILE")" "$ORG_FILE" 644; then
+    echo "Error: Failed to install the auto-cpufreq PolicyKit policy."
+    return 1
+  fi
+  if ! install_file_atomically \
+    "$release_share/scripts/auto-cpufreq-venv-wrapper" "$AUTO_CPUFREQ_FILE" 755; then
+    echo "Error: Failed to install the auto-cpufreq command wrapper."
+    return 1
+  fi
+  if ! install_file_atomically \
+    "$release_share/scripts/start_app" "$AUTO_CPUFREQ_GTK_FILE" 755; then
+    echo "Error: Failed to install the auto-cpufreq GTK launcher."
+    return 1
+  fi
+
+  if command -v desktop-file-install > /dev/null 2>&1; then
+    if ! desktop-file-install --dir="$APPLICATIONS_PATH" \
+      "$release_share/scripts/$AUTO_CPUFREQ_GTK_DESKTOP_FILE"; then
+      echo "Error: Failed to install the auto-cpufreq desktop entry."
+      return 1
+    fi
+  else
+    echo "Warning: desktop-file-install is not available; skipping desktop menu integration."
+    echo "The GTK interface can still be launched with auto-cpufreq-gtk."
+  fi
+
+  if [ -L "$CPUFREQCTL_FILE" ]; then
+    echo "Error: Refusing to replace symbolic link $CPUFREQCTL_FILE."
+    return 1
+  fi
+  if [ -f "$CPUFREQCTL_FILE" ] && ! install_file_atomically \
+    "$release_share/scripts/cpufreqctl.sh" "$CPUFREQCTL_FILE" 755; then
+    echo "Error: Failed to synchronize the auto-cpufreq cpufreqctl helper."
+    return 1
+  fi
+
+  return 0
+}
+
+function activate_prepared_release {
+  local release_dir="$1"
+  local venv_python="$release_dir/venv/bin/python"
+  local had_current=0
+
+  if [ "$(dirname "$release_dir")" != "$RELEASES_PATH" ] \
+    || [ -L "$release_dir" ] \
+    || [ ! -d "$release_dir/share/scripts" ] \
+    || [ ! -x "$venv_python" ] \
+    || [ ! -f "$release_dir/venv/bin/auto-cpufreq" ]; then
+    echo "Error: The prepared source release is incomplete or unmanaged."
+    return 1
+  fi
+
+  if ! "$venv_python" - "$LEGACY_SHARE_DIR" <<'PYMIGRATE'
+import sys
+from pathlib import Path
+from auto_cpufreq.installation import ensure_legacy_source_current
+
+ensure_legacy_source_current(legacy_share=Path(sys.argv[1]))
+PYMIGRATE
+  then
+    echo "Error: Failed to prepare the legacy source installation for migration."
+    return 1
+  fi
+
+  [ -L "$CURRENT_PATH" ] && had_current=1
+  if [ "$had_current" -eq 1 ] \
+    && ! deploy_source_integration "$release_dir"; then
+    return 1
+  fi
+
+  if ! "$venv_python" - "$release_dir" <<'PYACTIVATE'
+import sys
+from pathlib import Path
+from auto_cpufreq.installation import activate_source_release
+
+activate_source_release(Path(sys.argv[1]))
+PYACTIVATE
+  then
+    echo "Error: Failed to activate the prepared source release."
+    return 1
+  fi
+
+  # On a first installation there was no stable frontend to preserve. Publish
+  # it only after current names a complete release, so no wrapper can point at
+  # a missing environment even if deployment is interrupted.
+  if [ "$had_current" -eq 0 ] \
+    && ! deploy_source_integration "$release_dir"; then
+    return 1
+  fi
+
+  if command -v update-desktop-database > /dev/null 2>&1; then
+    if ! update-desktop-database "$APPLICATIONS_PATH"; then
+      echo "Warning: Failed to refresh the desktop application database."
+    fi
+  fi
+
+  return 0
+}
+
+function publish_prepared_release_path {
+  local result_file="${AUTO_CPUFREQ_PREPARED_RELEASE_FILE:-}"
+
+  if [ -z "$result_file" ] || [ -e "$result_file" ] || [ -L "$result_file" ]; then
+    echo "Error: A new private result file is required for prepared source releases."
+    return 1
+  fi
+  (umask 077; set -o noclobber; printf '%s\n' "$PREPARED_RELEASE" > "$result_file")
+}
+
 function tool_install {
+  local install_mode="${AUTO_CPUFREQ_INSTALL_MODE:-full}"
+  local requested_release="${AUTO_CPUFREQ_PREPARED_RELEASE:-}"
+
   echo
 
   function detected_distro {
@@ -293,7 +610,24 @@ function tool_install {
     header "Setting up Python environment"
   }
 
-  source_install_preflight || return 1
+  case "$install_mode" in
+    full|prepare|activate) ;;
+    *)
+      echo "Error: Unknown internal source installation mode: $install_mode"
+      return 1
+      ;;
+  esac
+
+  source_install_preflight "$install_mode" || return 1
+
+  if [ "$install_mode" = "activate" ]; then
+    ensure_source_layout || return 1
+    activate_prepared_release "$requested_release" || return 1
+    header "auto-cpufreq tool successfully installed"
+    echo "For list of options, run:"
+    echo "auto-cpufreq --help"; echo
+    return 0
+  fi
 
   # Distro-provided PyGObject bindings are tied to the distro interpreter.
   # Do not choose an unrelated python3 from PATH for these package paths.
@@ -458,107 +792,23 @@ function tool_install {
 
   header "Installing necessary Python packages"
 
-  venv_dir="$VENV_PATH/venv"
-  if ! mkdir -p "$VENV_PATH"; then
-    echo "Error: Failed to create the auto-cpufreq virtual environment directory."
-    return 1
-  fi
-
-  if [ "$USE_SYSTEM_PYGOBJECT" -eq 1 ]; then
-    if ! "$PYTHON_BIN" -m venv --system-site-packages "$venv_dir"; then
-      echo "Error: Failed to create the Python virtual environment."
-      return 1
-    fi
-  else
-    if ! "$PYTHON_BIN" -m venv "$venv_dir"; then
-      echo "Error: Failed to create the Python virtual environment."
-      return 1
-    fi
-  fi
-
-  venv_python="$venv_dir/bin/python"
-  if [ ! -x "$venv_python" ]; then
-    echo "Error: Python executable was not created in the virtual environment."
-    return 1
-  fi
-  if ! "$venv_python" -m pip --version > /dev/null 2>&1; then
-    echo "Error: pip is unavailable in the Python virtual environment."
-    return 1
-  fi
-  if ! "$venv_python" -m pip install --upgrade pip wheel; then
-    echo "Error: Failed to install Python build dependencies."
-    return 1
-  fi
-
-  if [ "$USE_SYSTEM_PYGOBJECT" -eq 0 ]; then
-    install_el_pygobject "$venv_python" || return 1
-  fi
-
-  if ! verify_gtk3_runtime "$venv_python"; then
-    echo "Error: The virtual environment cannot load the required PyGObject GTK3 runtime."
-    return 1
-  fi
-
   header "Installing auto-cpufreq tool"
 
   # Do not mutate global Git safe.directory here. Normal sudo invocations keep
   # SUDO_UID for Git's ownership check; unusual ownership should be fixed
   # explicitly rather than leaving a persistent global exception.
-  if ! "$venv_python" -m pip install .; then
-    echo "Error: Failed to install auto-cpufreq into the virtual environment."
-    return 1
-  fi
+  build_source_release || return 1
 
-  if ! mkdir -p "$SHARE_DIR"; then
-    echo "Error: Failed to create auto-cpufreq shared data directory."
-    return 1
-  fi
-  if ! cp -r scripts/ "$SHARE_DIR" || ! cp -r images/ "$SHARE_DIR"; then
-    echo "Error: Failed to install auto-cpufreq shared resources."
-    return 1
-  fi
-  if ! mkdir -p "$(dirname "$IMG_FILE")" || ! cp images/icon.png "$IMG_FILE"; then
-    echo "Error: Failed to install auto-cpufreq icon."
-    return 1
-  fi
-  if ! mkdir -p "$(dirname "$ORG_FILE")" || ! cp "scripts/$(basename "$ORG_FILE")" "$(dirname "$ORG_FILE")"; then
-    echo "Error: Failed to install auto-cpufreq PolicyKit policy."
-    return 1
-  fi
-
-  if ! cp scripts/auto-cpufreq-venv-wrapper "$AUTO_CPUFREQ_FILE" || ! chmod a+x "$AUTO_CPUFREQ_FILE"; then
-    echo "Error: Failed to install auto-cpufreq command wrapper."
-    return 1
-  fi
-  if ! cp scripts/start_app "$AUTO_CPUFREQ_GTK_FILE" || ! chmod a+x "$AUTO_CPUFREQ_GTK_FILE"; then
-    echo "Error: Failed to install auto-cpufreq GTK launcher."
-    return 1
-  fi
-
-  if command -v desktop-file-install > /dev/null 2>&1; then
-    if ! desktop-file-install --dir="$APPLICATIONS_PATH" "scripts/$AUTO_CPUFREQ_GTK_DESKTOP_FILE"; then
-      echo "Error: Failed to install the auto-cpufreq desktop entry."
+  if [ "$install_mode" = "prepare" ]; then
+    if ! publish_prepared_release_path; then
+      remove_prepared_release "$PREPARED_RELEASE"
       return 1
     fi
-  else
-    echo "Warning: desktop-file-install is not available; skipping desktop menu integration."
-    echo "The GTK interface can still be launched with auto-cpufreq-gtk."
+    echo "Prepared source release: $PREPARED_RELEASE"
+    return 0
   fi
 
-  if command -v update-desktop-database > /dev/null 2>&1; then
-    if ! update-desktop-database "$APPLICATIONS_PATH"; then
-      echo "Warning: Failed to refresh the desktop application database."
-    fi
-  fi
-
-  # If an old on-demand run left this helper behind, synchronize it with the
-  # newly installed source version. Daemon installs create the helper as needed.
-  if [ -f "$CPUFREQCTL_FILE" ]; then
-    if ! cp scripts/cpufreqctl.sh "$CPUFREQCTL_FILE" || ! chmod 755 "$CPUFREQCTL_FILE"; then
-      echo "Error: Failed to synchronize the auto-cpufreq cpufreqctl helper."
-      return 1
-    fi
-  fi
+  activate_prepared_release "$PREPARED_RELEASE" || return 1
 
   header "auto-cpufreq tool successfully installed"
   echo "For list of options, run:"
@@ -592,8 +842,12 @@ function tool_remove {
 
   daemon_install="$AUTO_CPUFREQ_FILE-install"
   daemon_remove="$AUTO_CPUFREQ_FILE-remove"
-  venv_python="$VENV_PATH/venv/bin/python"
-  venv_entrypoint="$VENV_PATH/venv/bin/auto-cpufreq"
+  venv_python="$CURRENT_PATH/venv/bin/python"
+  venv_entrypoint="$CURRENT_PATH/venv/bin/auto-cpufreq"
+  if [ ! -x "$venv_python" ] || [ ! -f "$venv_entrypoint" ]; then
+    venv_python="$LEGACY_VENV_PATH/bin/python"
+    venv_entrypoint="$LEGACY_VENV_PATH/bin/auto-cpufreq"
+  fi
 
   if [ -e "$daemon_remove" ] || [ -L "$daemon_remove" ] \
     || [ -e "$POWER_STATE_SNAPSHOT" ] || [ -L "$POWER_STATE_SNAPSHOT" ]; then
@@ -604,7 +858,8 @@ function tool_remove {
         return 1
       fi
     elif [ -x "$venv_python" ] && [ -f "$venv_entrypoint" ]; then
-      if ! PYTHONPATH="$VENV_PATH" "$venv_python" "$venv_entrypoint" --remove; then
+      if ! PYTHONPATH="$(dirname "$(dirname "$venv_python")")" \
+        "$venv_python" "$venv_entrypoint" --remove; then
         echo "Error: Failed to remove auto-cpufreq or restore its saved power state using the virtual environment."
         echo "The source installation was left in place so removal can be retried."
         return 1
@@ -619,7 +874,7 @@ function tool_remove {
     echo "auto-cpufreq daemon is not installed and no power-state restoration is pending; skipping daemon removal."
   fi
 
-  remove_directory "$SHARE_DIR" || cleanup_failed=1
+  remove_directory "$LEGACY_SHARE_DIR" || cleanup_failed=1
   remove_file "$daemon_install" || cleanup_failed=1
   remove_file "$daemon_remove" || cleanup_failed=1
   remove_file "$AUTO_CPUFREQ_FILE" || cleanup_failed=1
@@ -636,7 +891,7 @@ function tool_remove {
     fi
   fi
 
-  remove_directory "$VENV_PATH" || cleanup_failed=1
+  remove_directory "$INSTALL_ROOT" || cleanup_failed=1
 
   if [ "$cleanup_failed" -ne 0 ]; then
     echo

@@ -93,7 +93,7 @@ case "$(ps h -o comm 1)" in
 
     echo -e "\n* Deploying auto-cpufreq (dinit) unit file"
     publish_owned_file \
-      /usr/local/share/auto-cpufreq/scripts/auto-cpufreq-dinit \
+      /opt/auto-cpufreq/current/share/scripts/auto-cpufreq-dinit \
       /etc/dinit.d/auto-cpufreq 644 "dinit service definition"
 
     # Dinit caches loaded service descriptions. A stopped service from an
@@ -121,7 +121,7 @@ case "$(ps h -o comm 1)" in
 
     echo -e "\n* Deploying auto-cpufreq OpenRC unit file"
     publish_owned_file \
-      /usr/local/share/auto-cpufreq/scripts/auto-cpufreq-openrc \
+      /opt/auto-cpufreq/current/share/scripts/auto-cpufreq-openrc \
       /etc/init.d/auto-cpufreq 755 "OpenRC service definition"
 
     run_step "Starting auto-cpufreq daemon (OpenRC) service" rc-service auto-cpufreq start \
@@ -150,7 +150,7 @@ case "$(ps h -o comm 1)" in
       echo -e "\n* Deploying auto-cpufreq (runit) service directory"
       staged_service_dir="$(mktemp -d "${service_dir}.tmp.XXXXXX")" \
         || fail_install "Failed to stage the runit service directory."
-      if ! install -m 755 /usr/local/share/auto-cpufreq/scripts/auto-cpufreq-runit \
+      if ! install -m 755 /opt/auto-cpufreq/current/share/scripts/auto-cpufreq-runit \
         "$staged_service_dir/run"; then
         rm -rf -- "$staged_service_dir"
         fail_install "Failed to prepare the runit service definition."
@@ -196,7 +196,7 @@ case "$(ps h -o comm 1)" in
 
     echo -e "\n* Deploying auto-cpufreq systemd unit file"
     publish_owned_file \
-      /usr/local/share/auto-cpufreq/scripts/auto-cpufreq.service \
+      /opt/auto-cpufreq/current/share/scripts/auto-cpufreq.service \
       /etc/systemd/system/auto-cpufreq.service 644 \
       "systemd service definition"
 
@@ -225,7 +225,7 @@ case "$(ps h -o comm 1)" in
     echo -e "\n* Deploying auto-cpufreq (s6) service definition"
     staged_service_dir="$(mktemp -d /etc/s6/sv/auto-cpufreq.tmp.XXXXXX)" \
       || fail_install "Failed to stage the s6 service directory."
-    if ! cp -r /usr/local/share/auto-cpufreq/scripts/auto-cpufreq-s6/. \
+    if ! cp -r /opt/auto-cpufreq/current/share/scripts/auto-cpufreq-s6/. \
       "$staged_service_dir/"; then
       rm -rf -- "$staged_service_dir"
       fail_install "Failed to prepare the s6 service definition."

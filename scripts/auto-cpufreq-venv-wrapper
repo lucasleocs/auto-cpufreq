@@ -13,12 +13,13 @@ err_exit() {
 # invoked explicitly. Keeping the paths explicit also prevents an accidental
 # fallback to the system Python when the virtual environment is incomplete.
 opt_path=/opt/auto-cpufreq
-venv_bin_dir="$opt_path/venv/bin"
+release_path="$opt_path/current"
+venv_bin_dir="$release_path/venv/bin"
 venv_python="$venv_bin_dir/python"
 venv_entrypoint="$venv_bin_dir/auto-cpufreq"
 
 [ -x "$venv_python" ] || err_exit "virtual environment Python is unavailable. reinstall auto-cpufreq."
 [ -f "$venv_entrypoint" ] || err_exit "auto-cpufreq entry point is unavailable. reinstall auto-cpufreq."
 
-export PYTHONPATH="$opt_path"
+export PYTHONPATH="$release_path"
 exec "$venv_python" "$venv_entrypoint" "$@"

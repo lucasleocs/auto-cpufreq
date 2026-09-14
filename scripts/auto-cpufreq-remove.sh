@@ -64,7 +64,7 @@ case "$(ps h -o comm 1)" in
     command -v dinitctl > /dev/null 2>&1 || fail_remove "dinit detected but dinitctl is unavailable."
 
     dinit_unit=/etc/dinit.d/auto-cpufreq
-    dinit_source=/usr/local/share/auto-cpufreq/scripts/auto-cpufreq-dinit
+    dinit_source=/opt/auto-cpufreq/current/share/scripts/auto-cpufreq-dinit
     if [ -e "$dinit_unit" ] || [ -L "$dinit_unit" ]; then
       require_owned_file "$dinit_unit" "$dinit_source" "dinit service definition"
 
@@ -98,7 +98,7 @@ case "$(ps h -o comm 1)" in
     fi
 
     openrc_unit=/etc/init.d/auto-cpufreq
-    openrc_source=/usr/local/share/auto-cpufreq/scripts/auto-cpufreq-openrc
+    openrc_source=/opt/auto-cpufreq/current/share/scripts/auto-cpufreq-openrc
     if [ -e "$openrc_unit" ] || [ -L "$openrc_unit" ]; then
       require_owned_file "$openrc_unit" "$openrc_source" "OpenRC service definition"
 
@@ -135,7 +135,7 @@ case "$(ps h -o comm 1)" in
       local active_root="$2"
       local service_dir="$service_root/sv/auto-cpufreq"
       local active_link="$active_root/service/auto-cpufreq"
-      local source_run=/usr/local/share/auto-cpufreq/scripts/auto-cpufreq-runit
+      local source_run=/opt/auto-cpufreq/current/share/scripts/auto-cpufreq-runit
 
       if [ -e "$service_dir" ] || [ -L "$service_dir" ]; then
         [ -d "$service_dir" ] && [ ! -L "$service_dir" ] \
@@ -231,7 +231,7 @@ case "$(ps h -o comm 1)" in
       || fail_remove "Failed to inspect the systemd service state."
     load_state="$(systemd_property LoadState)"
     installed_unit="/etc/systemd/system/auto-cpufreq.service"
-    source_unit="/usr/local/share/auto-cpufreq/scripts/auto-cpufreq.service"
+    source_unit="/opt/auto-cpufreq/current/share/scripts/auto-cpufreq.service"
     installed_unit_present=0
 
     # The unit file is a filesystem artifact even if systemd has not loaded it
@@ -332,10 +332,10 @@ case "$(ps h -o comm 1)" in
         [ -d /etc/s6/sv/auto-cpufreq ] && [ ! -L /etc/s6/sv/auto-cpufreq ] \
           || fail_remove "Refusing to remove a replaced s6 service directory."
         require_owned_file /etc/s6/sv/auto-cpufreq/run \
-          /usr/local/share/auto-cpufreq/scripts/auto-cpufreq-s6/run \
+          /opt/auto-cpufreq/current/share/scripts/auto-cpufreq-s6/run \
           "s6 run definition"
         require_owned_file /etc/s6/sv/auto-cpufreq/type \
-          /usr/local/share/auto-cpufreq/scripts/auto-cpufreq-s6/type \
+          /opt/auto-cpufreq/current/share/scripts/auto-cpufreq-s6/type \
           "s6 type definition"
         if find /etc/s6/sv/auto-cpufreq -mindepth 1 -maxdepth 1 \
           ! -name run ! -name type -print -quit | grep -q .; then
@@ -390,10 +390,10 @@ case "$(ps h -o comm 1)" in
         [ -d /etc/s6/sv/auto-cpufreq ] && [ ! -L /etc/s6/sv/auto-cpufreq ] \
           || fail_remove "Refusing to remove a replaced legacy s6 service directory."
         require_owned_file /etc/s6/sv/auto-cpufreq/run \
-          /usr/local/share/auto-cpufreq/scripts/auto-cpufreq-s6/run \
+          /opt/auto-cpufreq/current/share/scripts/auto-cpufreq-s6/run \
           "legacy s6 run definition"
         require_owned_file /etc/s6/sv/auto-cpufreq/type \
-          /usr/local/share/auto-cpufreq/scripts/auto-cpufreq-s6/type \
+          /opt/auto-cpufreq/current/share/scripts/auto-cpufreq-s6/type \
           "legacy s6 type definition"
         if find /etc/s6/sv/auto-cpufreq -mindepth 1 -maxdepth 1 \
           ! -name run ! -name type -print -quit | grep -q .; then

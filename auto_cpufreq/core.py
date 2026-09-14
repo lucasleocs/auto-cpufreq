@@ -47,7 +47,7 @@ else:
 # ToDo:
 # - replace get system/CPU load from: psutil.getloadavg() | available in 5.6.2)
 
-SCRIPTS_DIR = Path("/usr/local/share/auto-cpufreq/scripts/")
+SCRIPTS_DIR = Path("/opt/auto-cpufreq/current/share/scripts/")
 DAEMON_INSTALL_HELPER = Path("/usr/local/bin/auto-cpufreq-install")
 DAEMON_REMOVE_HELPER = Path("/usr/local/bin/auto-cpufreq-remove")
 CPUFREQCTL_PATH = Path("/usr/local/bin/cpufreqctl.auto-cpufreq")

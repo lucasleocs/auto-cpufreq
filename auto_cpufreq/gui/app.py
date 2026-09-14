@@ -23,8 +23,8 @@ if IS_INSTALLED_WITH_SNAP:
     CSS_FILE = "/snap/auto-cpufreq/current/style.css"
     ICON_FILE = "/snap/auto-cpufreq/current/icon.png"
 else:
-    CSS_FILE = "/usr/local/share/auto-cpufreq/scripts/style.css"
-    ICON_FILE = "/usr/local/share/auto-cpufreq/images/icon.png"
+    CSS_FILE = "/opt/auto-cpufreq/current/share/scripts/style.css"
+    ICON_FILE = "/opt/auto-cpufreq/current/share/images/icon.png"
 
 HBOX_PADDING = 20
 CONTROL_OPTION_MARGIN = 8

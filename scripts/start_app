@@ -1,8 +1,7 @@
 #!/usr/bin/sh
 
-# load python virtual environment
-venv_dir=/opt/auto-cpufreq/venv
-. "$venv_dir/bin/activate"
+# Run the entry point from the atomically selected source release.
+venv_dir=/opt/auto-cpufreq/current/venv
 python_command="$venv_dir/bin/auto-cpufreq-gtk"
 
 # if [ "$XDG_SESSION_TYPE" = "wayland" ] ; then
@@ -15,4 +14,4 @@ python_command="$venv_dir/bin/auto-cpufreq-gtk"
 #     pkexec $python_command
 # fi
 
-$python_command
+exec "$venv_dir/bin/python" "$python_command"
