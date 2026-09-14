@@ -327,6 +327,19 @@ function publish_file {
   fi
 }
 
+function restore_public_file {
+  local backup_file="$1"
+  local target_file="$2"
+  local target_mode="$3"
+
+  if [ -n "$backup_file" ]; then
+    publish_file "$backup_file" "$target_file" "$target_mode" || return 1
+    rm -f -- "$backup_file"
+  else
+    rm -f -- "$target_file"
+  fi
+}
+
 function verify_command_version {
   local command_path="$1"
   local installed_version="$2"
@@ -492,8 +505,11 @@ function build_release {
 
 function tool_install {
   local active_version
+  local candidate_is_active
   local prepared_share_dir
   local previous_release=""
+  local previous_wrapper=""
+  local previous_wrapper_mode=""
 
   echo
   if [ -e "$AUTO_CPUFREQ_FILE-remove" ] || [ -L "$AUTO_CPUFREQ_FILE-remove" ]; then
@@ -689,13 +705,6 @@ function tool_install {
     return 1
   fi
 
-  # Public launchers always resolve the current link; no installed wrapper
-  # embeds a generation name that a later activation would make obsolete.
-  if ! publish_file "$prepared_share_dir/scripts/auto-cpufreq-venv-wrapper" "$AUTO_CPUFREQ_FILE" 755; then
-    echo "Error: Failed to install auto-cpufreq command wrapper."
-    discard_release "$PREPARED_RELEASE"
-    return 1
-  fi
   if ! publish_file "$prepared_share_dir/scripts/start_app" "$AUTO_CPUFREQ_GTK_FILE" 755; then
     echo "Error: Failed to install auto-cpufreq GTK launcher."
     discard_release "$PREPARED_RELEASE"
@@ -719,9 +728,41 @@ function tool_install {
     fi
   fi
 
+  # Publish the stable command last and retain its previous contents until the
+  # candidate has passed the only check that exercises current through it.
+  if [ -L "$AUTO_CPUFREQ_FILE" ] \
+    || { [ -e "$AUTO_CPUFREQ_FILE" ] && [ ! -f "$AUTO_CPUFREQ_FILE" ]; }; then
+    echo "Error: Refusing to replace an unmanaged auto-cpufreq command path."
+    discard_release "$PREPARED_RELEASE"
+    return 1
+  fi
+  if [ -f "$AUTO_CPUFREQ_FILE" ]; then
+    previous_wrapper="$(mktemp "$INSTALL_ROOT/.auto-cpufreq-wrapper.XXXXXXXX")" || {
+      discard_release "$PREPARED_RELEASE"
+      return 1
+    }
+    previous_wrapper_mode="$(stat -Lc '%a' "$AUTO_CPUFREQ_FILE")" \
+      || previous_wrapper_mode=""
+    if [ -z "$previous_wrapper_mode" ] \
+      || ! cp -p -- "$AUTO_CPUFREQ_FILE" "$previous_wrapper"; then
+      rm -f -- "$previous_wrapper"
+      discard_release "$PREPARED_RELEASE"
+      return 1
+    fi
+  fi
+  if ! publish_file "$prepared_share_dir/scripts/auto-cpufreq-venv-wrapper" "$AUTO_CPUFREQ_FILE" 755; then
+    echo "Error: Failed to install auto-cpufreq command wrapper."
+    [ -z "$previous_wrapper" ] || rm -f -- "$previous_wrapper"
+    discard_release "$PREPARED_RELEASE"
+    return 1
+  fi
+
   # current is the single activation point. Every fallible publication step
   # above uses the unreferenced candidate, so it cannot select a partial build.
   if ! activate_release "$PREPARED_RELEASE"; then
+    if ! restore_public_file "$previous_wrapper" "$AUTO_CPUFREQ_FILE" "$previous_wrapper_mode"; then
+      echo "Error: Failed to restore the previous auto-cpufreq command."
+    fi
     discard_release "$PREPARED_RELEASE"
     return 1
   fi
@@ -733,19 +774,25 @@ function tool_install {
     || [ -z "$active_version" ] \
     || ! verify_command_version "$AUTO_CPUFREQ_FILE" "$active_version"; then
     echo "Error: The installed auto-cpufreq command failed its final version check."
+    candidate_is_active=true
     if [ -n "$previous_release" ]; then
       if activate_release "$previous_release"; then
-        discard_release "$PREPARED_RELEASE"
+        candidate_is_active=false
       else
         echo "Error: Failed to restore the previous active source release."
       fi
     elif rm -f -- "$CURRENT_PATH"; then
-      discard_release "$PREPARED_RELEASE"
+      candidate_is_active=false
     else
       echo "Error: Failed to undo the first source release activation."
     fi
+    if ! restore_public_file "$previous_wrapper" "$AUTO_CPUFREQ_FILE" "$previous_wrapper_mode"; then
+      echo "Error: Failed to restore the previous auto-cpufreq command."
+    fi
+    $candidate_is_active || discard_release "$PREPARED_RELEASE"
     return 1
   fi
+  [ -z "$previous_wrapper" ] || rm -f -- "$previous_wrapper"
 
   # The legacy venv/share copies are no longer executable state once current
   # and every public entry point refer to the complete new generation.
