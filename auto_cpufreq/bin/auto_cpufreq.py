@@ -6,7 +6,6 @@
 
 # core import
 import sys, time, os
-from re import search
 from subprocess import run
 from shutil import rmtree
 
@@ -230,12 +229,9 @@ def main(monitor, live, daemon, install, update, remove, force, turbo, config, s
                         capture_output=True,
                         text=True,
                     )
-                    installed_version = search(
-                        r"(?:^|\n)auto-cpufreq version:\s*(\d+\.\d+\.\d+)(?:\s|$)",
-                        version_result.stdout,
-                    )
+                    installed_version = parse_version_output(version_result.stdout)
                     if version_result.returncode != 0 or installed_version is None \
-                        or installed_version.group(1) != target_tag.removeprefix("v"):
+                        or installed_version != target_tag.removeprefix("v"):
                         print("The updated auto-cpufreq command did not report the selected release.")
                         sys.exit(1)
                     print(f"auto-cpufreq is installed with the latest release ({target_tag})")

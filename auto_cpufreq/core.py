@@ -126,6 +126,15 @@ def app_version():
         try: print(get_formatted_version())
         except Exception as e: print(repr(e))
 
+def parse_version_output(output):
+    match = search(
+        r"(?m)^auto-cpufreq version:[ \t]*(0|[1-9]\d*)\."
+        r"(0|[1-9]\d*)\.(0|[1-9]\d*)"
+        r"(?: \(git: [^)\r\n]+\))?[ \t]*$",
+        output,
+    )
+    return None if match is None else ".".join(match.groups())
+
 def check_for_update():
     # Return the exact published tag so the artifact installed below cannot
     # drift from the release that was presented to the user. False means the
@@ -151,7 +160,10 @@ def check_for_update():
         return None
 
     latest_tag = latest_release.get("tag_name")
-    latest_match = search(r"^v?(\d+)\.(\d+)\.(\d+)$", latest_tag or "")
+    latest_match = search(
+        r"^v?(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$",
+        latest_tag or "",
+    )
     if latest_match is None:
         print("Malformed release data!\nReinstall manually or open an issue on GitHub for help!")
         return None
@@ -162,14 +174,14 @@ def check_for_update():
         print("Error retrieving current version!")
         return None
 
-    installed_match = search(r"auto-cpufreq version:\s*(\d+)\.(\d+)\.(\d+)", output)
-    if installed_match is None:
+    installed_version = parse_version_output(output)
+    if installed_version is None:
         print("Error retrieving current version!")
         return None
 
     latest_release_version = tuple(map(int, latest_match.groups()))
-    installed_release = tuple(map(int, installed_match.groups()))
-    installed_version = "v" + ".".join(installed_match.groups())
+    installed_release = tuple(map(int, installed_version.split(".")))
+    installed_version = "v" + installed_version
     if latest_release_version <= installed_release:
         print("auto-cpufreq is up to date")
         return False
