@@ -210,7 +210,9 @@ def main(monitor, live, daemon, install, update, remove, force, turbo, config, s
                     if not os.path.exists(custom_dir): os.makedirs(custom_dir)
                     source_dir = os.path.join(custom_dir, "auto-cpufreq")
                     if os.path.exists(source_dir): rmtree(source_dir)
-                    remove_daemon()
+                    if remove_daemon() != 0:
+                        print("The existing auto-cpufreq daemon could not be removed; update aborted.")
+                        sys.exit(1)
                     remove_complete_msg()
                     if not new_update(custom_dir, target_tag):
                         print("Update failed. Reinstalling the daemon from the active source generation.")
@@ -252,7 +254,9 @@ def main(monitor, live, daemon, install, update, remove, force, turbo, config, s
                 # {the following snippet also used in --update, update it there too(if required)}
                 # * undo bluetooth boot disable
                 gnome_power_rm_reminder_snap()
-            else: remove_daemon()
+            elif remove_daemon() != 0:
+                print("Failed to remove the auto-cpufreq daemon.")
+                sys.exit(1)
             remove_complete_msg()
         elif stats:
             not_running_daemon_check()

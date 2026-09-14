@@ -21,16 +21,16 @@ fi
 # First argument is the init name, second argument is the stop command, third argument is the disable command and the fourth is the "service" path
 function auto_cpufreq_remove {
     echo -e "\n* Stopping auto-cpufreq daemon ($1) service"
-    $2
+    [ -z "${2:-}" ] || $2 || return $?
     echo -e "\n* Disabling auto-cpufreq daemon ($1) at boot"
-    $3
+    [ -z "${3:-}" ] || $3 || return $?
     echo -e "\n* Removing auto-cpufreq daemon ($1) unit file"
-    rm $4
+    rm -f $4 || return $?
 }
 
 case "$(ps h -o comm 1)" in
-  dinit) auto_cpufreq_remove "dinit" "dinitctl stop auto-cpufreq" "dinitctl disable auto-cpufreq" "/etc/dinit.d/auto-cpufreq";;
-  init) auto_cpufreq_remove "openrc" "rc-service auto-cpufreq stop" "rc-update del auto-cpufreq" "/etc/init.d/auto-cpufreq";;
+  dinit) auto_cpufreq_remove "dinit" "dinitctl stop auto-cpufreq" "dinitctl disable auto-cpufreq" "/etc/dinit.d/auto-cpufreq" || exit $?;;
+  init) auto_cpufreq_remove "openrc" "rc-service auto-cpufreq stop" "rc-update del auto-cpufreq" "/etc/init.d/auto-cpufreq" || exit $?;;
   runit)
     # First argument is the "sv" path, second argument is the "service" path
     rm_sv() {
@@ -40,32 +40,37 @@ case "$(ps h -o comm 1)" in
     if [ -f /etc/os-release ]; then
       . /etc/os-release
       case $ID in
-        void) rm_sv /etc /var;;
-        artix) rm_sv /etc/runit /run/runit;;
+        void) rm_sv /etc /var || exit $?;;
+        artix) rm_sv /etc/runit /run/runit || exit $?;;
         *)
           echo -e "\n* Runit init detected but your distro is not supported\n"
           echo -e "\n* Please open an issue on https://github.com/AdnanHodzic/auto-cpufreq\n"
+          exit 1
         ;;
       esac
+    else
+      echo -e "\n* Runit init detected but /etc/os-release is unavailable\n"
+      exit 1
     fi
   ;;
   systemd)
-    auto_cpufreq_remove "systemd" "systemctl stop auto-cpufreq" "systemctl disable auto-cpufreq" "/etc/systemd/system/auto-cpufreq.service"
+    auto_cpufreq_remove "systemd" "systemctl stop auto-cpufreq" "systemctl disable auto-cpufreq" "/etc/systemd/system/auto-cpufreq.service" || exit $?
 
     echo -e "\n* Reloading systemd manager configuration"
-    systemctl daemon-reload
+    systemctl daemon-reload || exit $?
 
     echo "reset failed"
-    systemctl reset-failed
+    systemctl reset-failed || exit $?
   ;;
   s6-svscan)
-    auto_cpufreq_remove "s6" "" "s6-service delete default auto-cpufreq" "-rf /etc/s6/sv/auto-cpufreq"
-    
+    auto_cpufreq_remove "s6" "" "s6-service delete default auto-cpufreq" "-rf /etc/s6/sv/auto-cpufreq" || exit $?
+
     echo -e "\n* Update daemon service bundle (s6)"
-    s6-db-reload
+    s6-db-reload || exit $?
   ;;
   *)
     echo -e "\n* Unsupported init system detected, could not remove the daemon"
     echo -e "\n* Please open an issue on https://github.com/AdnanHodzic/auto-cpufreq\n"
+    exit 1
   ;;
 esac

@@ -405,8 +405,11 @@ def remove_daemon():
 
     tuned_svc_enable()
 
-    # run auto-cpufreq daemon remove script
-    call("/usr/local/bin/auto-cpufreq-remove", shell=True)
+    # Keep the removal entry point and local runtime state until the init
+    # system cleanup succeeds. A failed removal must remain retryable.
+    remove_status = call("/usr/local/bin/auto-cpufreq-remove", shell=True)
+    if remove_status != 0:
+        return remove_status
 
     # remove auto-cpufreq-remove
     os.remove("/usr/local/bin/auto-cpufreq-remove")
@@ -420,6 +423,7 @@ def remove_daemon():
         auto_cpufreq_stats_path.unlink()
 
     cpufreqctl_restore() # restore original cpufrectl script
+    return 0
 
 def gov_check():
     for gov in AVAILABLE_GOVERNORS:

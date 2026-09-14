@@ -626,7 +626,7 @@ If installed via Snap package, daemon status can be viewed as follows:
 
 For source installations, the updater checks the [latest published release](https://github.com/AdnanHodzic/auto-cpufreq/releases), clones that exact release tag, installs it through [auto-cpufreq-installer](#auto-cpufreq-installer), and then reinstalls the [auto-cpufreq daemon](#install---auto-cpufreq-daemon). It does not install the development `master` branch.
 
-The installer builds and verifies the new release as a separate generation before selecting it through `/opt/auto-cpufreq/current`. Download, installation, and final command failures stop the updater without reporting success; a candidate that fails before activation does not replace the active generation.
+The installer builds and verifies the new release as a separate generation before selecting it through `/opt/auto-cpufreq/current`. Download, daemon removal, installation, and final command failures stop the updater without reporting success; a candidate that fails before activation does not replace the active generation.
 
 Update auto-cpufreq by running: `sudo auto-cpufreq --update`. By default, the selected release tag is cloned to `/opt/auto-cpufreq/source`.
 
