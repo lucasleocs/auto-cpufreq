@@ -28,7 +28,7 @@ let
   });
 
 in
-python3Packages.buildPythonPackage {
+python3Packages.buildPythonPackage rec {
   # use pyproject.toml instead of setup.py
   format = "pyproject";
 
