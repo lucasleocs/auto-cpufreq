@@ -100,6 +100,12 @@ case "$(ps h -o comm 1)" in
     auto_cpufreq_install "systemd" "systemctl start auto-cpufreq" "systemctl enable auto-cpufreq" || exit $?
   ;;
   s6-svscan)
+    for required_command in s6-service s6-db-reload s6-rc; do
+      if ! command -v "$required_command" > /dev/null 2>&1; then
+        echo "Error: $required_command is required to install the auto-cpufreq s6 service."
+        exit 1
+      fi
+    done
     s6_service_dir=/etc/s6/sv/auto-cpufreq
     s6_bundle_entry=/etc/s6/adminsv/default/contents.d/auto-cpufreq
     echo -e "\n* Deploying auto-cpufreq (s6) unit file"
