@@ -636,13 +636,13 @@ Development checkouts are not advanced by `--update`. To update a development in
 
 ### Remove - auto-cpufreq daemon
 
-The auto-cpufreq daemon, its systemd service, and all its persistent changes can be removed by running:
+The auto-cpufreq daemon and its service can be removed by running:
 
 `sudo auto-cpufreq --remove`
 
 This does, in part, the equivalent of `systemctl stop auto-cpufreq && systemctl disable auto-cpufreq`, but the above command should be used instead of using `systemctl`.
 
-*Please note:* after the daemon is removed, the auto-cpufreq GUI and desktop entry (icon) are also removed.
+Removing the daemon does not uninstall the source-installed CLI or GUI. To remove the complete source installation, run `sudo bash ./auto-cpufreq-installer --remove` from an auto-cpufreq source directory.
 
 ### Stats
 

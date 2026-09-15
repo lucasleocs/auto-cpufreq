@@ -188,7 +188,7 @@ def check_for_update():
         return False
 
     print(f"Updates are available,\nCurrent version: {installed_version}\nLatest version: {latest_tag}")
-    print("Note that your previous custom settings might be erased with the following update")
+    print("If installed, the auto-cpufreq daemon will be stopped and reinstalled during this update")
     return latest_tag
 
 def new_update(custom_dir, target_tag):
