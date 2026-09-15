@@ -624,11 +624,15 @@ If installed via Snap package, daemon status can be viewed as follows:
 
 ### Update - auto-cpufreq update
 
-Update functionality works by cloning the auto-cpufreq repo, installing it via [auto-cpufreq-installer](#auto-cpufreq-installer), and performing a fresh [auto-cpufreq daemon install](#install---auto-cpufreq-daemon) to provide the [latest version's](https://github.com/AdnanHodzic/auto-cpufreq/releases) changes.
+For source installations, the updater checks the [latest published release](https://github.com/AdnanHodzic/auto-cpufreq/releases), clones that exact release tag, installs it through [auto-cpufreq-installer](#auto-cpufreq-installer), and then reinstalls the [auto-cpufreq daemon](#install---auto-cpufreq-daemon). It does not install the development `master` branch.
 
-Update auto-cpufreq by running: `sudo auto-cpufreq --update`. By default, the latest revision is cloned to `/opt/auto-cpufreq/source`, thus maintaining existing directory structure.
+The installer builds and verifies the new release as a separate generation before selecting it through `/opt/auto-cpufreq/current`. Download, installation, and final command failures stop the updater without reporting success; a candidate that fails before activation does not replace the active generation.
+
+Update auto-cpufreq by running: `sudo auto-cpufreq --update`. By default, the selected release tag is cloned to `/opt/auto-cpufreq/source`.
 
 Update and clone to a custom directory by running: `sudo auto-cpufreq --update=/path/to/directory`
+
+Development checkouts are not advanced by `--update`. To update a development installation, pull the desired Git revision and run `sudo ./auto-cpufreq-installer --install` from that checkout.
 
 ### Remove - auto-cpufreq daemon
 

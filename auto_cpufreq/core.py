@@ -9,7 +9,7 @@ from pickle import dump, load
 from re import search
 from requests import get, exceptions
 from shutil import copy
-from subprocess import call, check_output, DEVNULL, getoutput, run
+from subprocess import call, CalledProcessError, check_output, DEVNULL, getoutput, run
 from time import sleep
 from warnings import filterwarnings
 
@@ -127,7 +127,9 @@ def app_version():
         except Exception as e: print(repr(e))
 
 def check_for_update():
-    # returns True if a new release is available from the GitHub repo
+    # Return the exact published tag so the artifact installed below cannot
+    # drift from the release that was presented to the user. False means the
+    # active version is current; None means the check itself could not finish.
 
     # Specify the repository and package name
     # IT IS IMPORTANT TO  THAT IF THE REPOSITORY STRUCTURE IS CHANGED, THE FOLLOWING FUNCTION NEEDS TO BE UPDATED ACCORDINGLY
@@ -142,42 +144,66 @@ def check_for_update():
             if message is not None and message.startswith("API rate limit exceeded"):
                 print("GitHub Rate limit exceeded. Please try again later within 1 hour or use different network/VPN.")
             else: print("Unexpected status code:", response.status_code)
-            return False
+            return None
     except (exceptions.ConnectionError, exceptions.Timeout,
             exceptions.RequestException, exceptions.HTTPError):
         print("Error Connecting to server!")
+        return None
+
+    latest_tag = latest_release.get("tag_name")
+    latest_match = search(r"^v?(\d+)\.(\d+)\.(\d+)$", latest_tag or "")
+    if latest_match is None:
+        print("Malformed release data!\nReinstall manually or open an issue on GitHub for help!")
+        return None
+
+    try:
+        output = check_output(["auto-cpufreq", "--version"]).decode("utf-8")
+    except (CalledProcessError, OSError, UnicodeDecodeError):
+        print("Error retrieving current version!")
+        return None
+
+    installed_match = search(r"auto-cpufreq version:\s*(\d+)\.(\d+)\.(\d+)", output)
+    if installed_match is None:
+        print("Error retrieving current version!")
+        return None
+
+    latest_release_version = tuple(map(int, latest_match.groups()))
+    installed_release = tuple(map(int, installed_match.groups()))
+    installed_version = "v" + ".".join(installed_match.groups())
+    if latest_release_version <= installed_release:
+        print("auto-cpufreq is up to date")
         return False
 
-    latest_version = latest_release.get("tag_name")
+    print(f"Updates are available,\nCurrent version: {installed_version}\nLatest version: {latest_tag}")
+    print("Note that your previous custom settings might be erased with the following update")
+    return latest_tag
 
-    if latest_version is not None:
-        # Get the current version of auto-cpufreq
-        # Extract version number from the output string
-        output = check_output(['auto-cpufreq', '--version']).decode('utf-8')
-        try: version_line = next((search(r'\d+\.\d+\.\d+', line).group() for line in output.split('\n') if line.startswith('auto-cpufreq version')), None)
-        except AttributeError:
-            print("Error Retrieving Current Version!")
-            exit(1)
-        installed_version = "v" + version_line
-        #Check whether the same is installed or not
-        # Compare the latest version with the installed version and perform update if necessary
-        if latest_version == installed_version:
-            print("auto-cpufreq is up to date")
-            return False
-        else:
-            print(f"Updates are available,\nCurrent version: {installed_version}\nLatest version: {latest_version}")
-            print("Note that your previous custom settings might be erased with the following update")
-            return True
-    # Handle the case where "tag_name" key doesn't exist
-    else: print("Malformed Released data!\nReinstall manually or Open an issue on GitHub for help!")
+def new_update(custom_dir, target_tag):
+    source_dir = os.path.join(custom_dir, "auto-cpufreq")
+    print(f"Cloning release {target_tag} to {source_dir}")
+    # A branch and a tag may share the same short name. Fetching the fully
+    # qualified tag ref prevents a branch from being installed by mistake.
+    git_commands = [
+        ["git", "init", "--quiet", source_dir],
+        ["git", "-C", source_dir, "remote", "add", "origin", GITHUB + ".git"],
+        [
+            "git", "-C", source_dir, "fetch", "--depth", "1", "--no-tags",
+            "origin", f"refs/tags/{target_tag}",
+        ],
+        ["git", "-C", source_dir, "checkout", "--detach", "--quiet", "FETCH_HEAD"],
+    ]
+    if any(run(command).returncode != 0 for command in git_commands):
+        print(f"Failed to download auto-cpufreq release {target_tag}.")
+        return False
 
-def new_update(custom_dir):
-    os.chdir(custom_dir)
-    print(f"Cloning the latest release to {custom_dir}")
-    run(["git", "clone", GITHUB+".git"])
-    os.chdir("auto-cpufreq")
-    print(f"package cloned to directory {custom_dir}")
-    run(['./auto-cpufreq-installer'], input='i\n', encoding='utf-8')
+    print(f"Package cloned to directory {source_dir}")
+    installer = run([
+        "bash", "./auto-cpufreq-installer", "--install",
+    ], cwd=source_dir)
+    if installer.returncode != 0:
+        print(f"Failed to install auto-cpufreq release {target_tag}.")
+        return False
+    return True
 
 def get_literal_version(package_name):
     try:
