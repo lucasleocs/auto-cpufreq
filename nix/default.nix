@@ -28,12 +28,15 @@ let
   });
 
 in
-python3Packages.buildPythonPackage {
+python3Packages.buildPythonPackage rec {
   # use pyproject.toml instead of setup.py
   format = "pyproject";
 
   pname = "auto-cpufreq";
   version = "3.1.0";
+  # Flake source trees do not contain Git metadata. Use the release version
+  # already declared by this derivation instead of weakening strict source builds.
+  POETRY_DYNAMIC_VERSIONING_BYPASS = version;
   src = ../.;
 
   nativeBuildInputs = with pkgs; [wrapGAppsHook3 gobject-introspection];
