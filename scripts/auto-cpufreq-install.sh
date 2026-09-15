@@ -91,8 +91,18 @@ case "$(ps h -o comm 1)" in
     fi
   ;;
   systemd)
-    echo -e "Deploying auto-cpufreq systemd unit file"
-    cp "$SHARE_DIR/scripts/auto-cpufreq.service" /etc/systemd/system/auto-cpufreq.service || exit $?
+    systemd_unit=/etc/systemd/system/auto-cpufreq.service
+    managed_systemd_unit="$SHARE_DIR/scripts/auto-cpufreq.service"
+    if [ -L "$systemd_unit" ] \
+      || { [ -e "$systemd_unit" ] \
+        && ! cmp -s -- "$managed_systemd_unit" "$systemd_unit"; }; then
+      echo "Error: Refusing to replace an unmanaged systemd unit: $systemd_unit"
+      exit 1
+    fi
+    if [ ! -e "$systemd_unit" ]; then
+      echo -e "Deploying auto-cpufreq systemd unit file"
+      cp "$managed_systemd_unit" "$systemd_unit" || exit $?
+    fi
 
     echo -e "\n* Reloading systemd manager configuration"
     systemctl daemon-reload || exit $?

@@ -5,6 +5,8 @@
 # Thanks to https://github.com/errornonamer for openrc fix
 
 MID="$((`tput cols` / 2))"
+SHARE_DIR=/opt/auto-cpufreq/current/share
+[ -d "$SHARE_DIR/scripts" ] || SHARE_DIR=/usr/local/share/auto-cpufreq
 
 echo
 printf "%0.s─" $(seq $(( (MID-(${#1}/2)-2) / 2 )))
@@ -78,6 +80,13 @@ case "$(ps h -o comm 1)" in
   systemd)
     systemd_unit=/etc/systemd/system/auto-cpufreq.service
     if [ -e "$systemd_unit" ] || [ -L "$systemd_unit" ]; then
+      managed_systemd_unit="$SHARE_DIR/scripts/auto-cpufreq.service"
+      if [ -L "$systemd_unit" ] \
+        || [ ! -f "$managed_systemd_unit" ] \
+        || ! cmp -s -- "$managed_systemd_unit" "$systemd_unit"; then
+        echo "Error: Refusing to remove a replaced or unmanaged systemd unit: $systemd_unit"
+        exit 1
+      fi
       echo -e "\n* Stopping auto-cpufreq daemon (systemd) service"
       systemctl stop auto-cpufreq || exit $?
       # disable reloads systemd, which may unload the now-inactive unit.
