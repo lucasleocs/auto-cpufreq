@@ -199,10 +199,13 @@ def new_update(custom_dir, target_tag):
         ["git", "init", "--quiet", source_dir],
         ["git", "-C", source_dir, "remote", "add", "origin", GITHUB + ".git"],
         [
-            "git", "-C", source_dir, "fetch", "--depth", "1", "--no-tags",
-            "origin", f"refs/tags/{target_tag}",
+            "git", "-C", source_dir, "fetch", "--no-tags", "origin",
+            f"refs/tags/{target_tag}:refs/tags/{target_tag}",
         ],
-        ["git", "-C", source_dir, "checkout", "--detach", "--quiet", "FETCH_HEAD"],
+        [
+            "git", "-C", source_dir, "checkout", "--detach", "--quiet",
+            f"refs/tags/{target_tag}^{{commit}}",
+        ],
     ]
     if any(run(command).returncode != 0 for command in git_commands):
         print(f"Failed to download auto-cpufreq release {target_tag}.")
