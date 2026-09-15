@@ -60,7 +60,7 @@ index f03e7de..2dff5fb 100755
  
  def deploy_daemon_performance():
      print("\n" + "-" * 21 + " Deploying auto-cpufreq as a daemon (performance) " + "-" * 22 + "\n")
-@@ -363,41 +333,7 @@ def deploy_daemon_performance():
+@@ -363,43 +333,7 @@ def deploy_daemon_performance():
  
      call("/usr/local/bin/auto-cpufreq-install", shell=True)
  
@@ -72,6 +72,14 @@ index f03e7de..2dff5fb 100755
 -
 -    print("\n" + "-" * 21 + " Removing auto-cpufreq daemon " + "-" * 22 + "\n")
 -
+-    # Keep the removal entry point and local runtime state until the init
+-    # system cleanup succeeds. Restoring competing services before that point
+-    # could leave them running alongside an auto-cpufreq daemon that failed to
+-    # stop, and would make a failed removal unsafe to retry.
+-    remove_status = call("/usr/local/bin/auto-cpufreq-remove", shell=True)
+-    if remove_status != 0:
+-        return remove_status
+-
 -    bluetooth_enable() # turn on bluetooth on boot
 -
 -    # output warning if gnome power profile is stopped
@@ -79,12 +87,6 @@ index f03e7de..2dff5fb 100755
 -    gnome_power_svc_enable()
 -
 -    tuned_svc_enable()
--
--    # Keep the removal entry point and local runtime state until the init
--    # system cleanup succeeds. A failed removal must remain retryable.
--    remove_status = call("/usr/local/bin/auto-cpufreq-remove", shell=True)
--    if remove_status != 0:
--        return remove_status
 -
 -    # remove auto-cpufreq-remove
 -    os.remove("/usr/local/bin/auto-cpufreq-remove")

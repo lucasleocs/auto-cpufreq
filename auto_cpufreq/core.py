@@ -409,6 +409,14 @@ def remove_daemon():
 
     print("\n" + "-" * 21 + " Removing auto-cpufreq daemon " + "-" * 22 + "\n")
 
+    # Keep the removal entry point and local runtime state until the init
+    # system cleanup succeeds. Restoring competing services before that point
+    # could leave them running alongside an auto-cpufreq daemon that failed to
+    # stop, and would make a failed removal unsafe to retry.
+    remove_status = call("/usr/local/bin/auto-cpufreq-remove", shell=True)
+    if remove_status != 0:
+        return remove_status
+
     bluetooth_enable() # turn on bluetooth on boot
 
     # output warning if gnome power profile is stopped
@@ -416,12 +424,6 @@ def remove_daemon():
     gnome_power_svc_enable()
 
     tuned_svc_enable()
-
-    # Keep the removal entry point and local runtime state until the init
-    # system cleanup succeeds. A failed removal must remain retryable.
-    remove_status = call("/usr/local/bin/auto-cpufreq-remove", shell=True)
-    if remove_status != 0:
-        return remove_status
 
     # remove auto-cpufreq-remove
     os.remove("/usr/local/bin/auto-cpufreq-remove")
