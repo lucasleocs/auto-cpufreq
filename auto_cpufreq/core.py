@@ -195,7 +195,11 @@ def new_update(custom_dir, target_tag):
     # The parent directory is user-selected, but the checkout itself must be
     # updater-owned. A unique directory avoids deleting unrelated contents and
     # prevents concurrent downloads from sharing a partially populated tree.
-    source_dir = mkdtemp(prefix="auto-cpufreq-", dir=custom_dir)
+    try: source_dir = mkdtemp(prefix="auto-cpufreq-", dir=custom_dir)
+    except OSError as error:
+        print(f"Failed to prepare auto-cpufreq release {target_tag}: {error}")
+        return False
+
     print(f"Cloning release {target_tag} to {source_dir}")
     # A branch and a tag may share the same short name. Fetching the fully
     # qualified tag ref prevents a branch from being installed by mistake.
@@ -211,14 +215,22 @@ def new_update(custom_dir, target_tag):
             f"refs/tags/{target_tag}^{{commit}}",
         ],
     ]
-    if any(run(command).returncode != 0 for command in git_commands):
+    try: download_failed = any(run(command).returncode != 0 for command in git_commands)
+    except OSError as error:
+        print(f"Failed to prepare auto-cpufreq release {target_tag}: {error}")
+        return False
+    if download_failed:
         print(f"Failed to download auto-cpufreq release {target_tag}.")
         return False
 
     print(f"Package cloned to directory {source_dir}")
-    installer = run([
-        "bash", "./auto-cpufreq-installer", "--install",
-    ], cwd=source_dir)
+    try:
+        installer = run([
+            "bash", "./auto-cpufreq-installer", "--install",
+        ], cwd=source_dir)
+    except OSError as error:
+        print(f"Failed to prepare auto-cpufreq release {target_tag}: {error}")
+        return False
     if installer.returncode != 0:
         print(f"Failed to install auto-cpufreq release {target_tag}.")
         return False
