@@ -10,6 +10,7 @@ from re import search
 from requests import get, exceptions
 from shutil import copy
 from subprocess import call, CalledProcessError, check_output, DEVNULL, getoutput, run
+from tempfile import mkdtemp
 from time import sleep
 from warnings import filterwarnings
 
@@ -191,7 +192,10 @@ def check_for_update():
     return latest_tag
 
 def new_update(custom_dir, target_tag):
-    source_dir = os.path.join(custom_dir, "auto-cpufreq")
+    # The parent directory is user-selected, but the checkout itself must be
+    # updater-owned. A unique directory avoids deleting unrelated contents and
+    # prevents concurrent downloads from sharing a partially populated tree.
+    source_dir = mkdtemp(prefix="auto-cpufreq-", dir=custom_dir)
     print(f"Cloning release {target_tag} to {source_dir}")
     # A branch and a tag may share the same short name. Fetching the fully
     # qualified tag ref prevents a branch from being installed by mistake.
