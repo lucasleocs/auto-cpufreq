@@ -126,6 +126,15 @@ def app_version():
         try: print(get_formatted_version())
         except Exception as e: print(repr(e))
 
+def parse_version_output(output):
+    match = search(
+        r"(?m)^auto-cpufreq version:[ \t]*(0|[1-9]\d*)\."
+        r"(0|[1-9]\d*)\.(0|[1-9]\d*)"
+        r"(?: \(git: [^)\r\n]+\))?[ \t]*$",
+        output,
+    )
+    return None if match is None else ".".join(match.groups())
+
 def check_for_update():
     # Return the exact published tag so the artifact installed below cannot
     # drift from the release that was presented to the user. False means the
@@ -151,25 +160,28 @@ def check_for_update():
         return None
 
     latest_tag = latest_release.get("tag_name")
-    latest_match = search(r"^v?(\d+)\.(\d+)\.(\d+)$", latest_tag or "")
+    latest_match = search(
+        r"^v?(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$",
+        latest_tag or "",
+    )
     if latest_match is None:
         print("Malformed release data!\nReinstall manually or open an issue on GitHub for help!")
         return None
 
     try:
-        output = check_output(["auto-cpufreq", "--version"]).decode("utf-8")
+        output = check_output(["/usr/local/bin/auto-cpufreq", "--version"]).decode("utf-8")
     except (CalledProcessError, OSError, UnicodeDecodeError):
         print("Error retrieving current version!")
         return None
 
-    installed_match = search(r"auto-cpufreq version:\s*(\d+)\.(\d+)\.(\d+)", output)
-    if installed_match is None:
+    installed_version = parse_version_output(output)
+    if installed_version is None:
         print("Error retrieving current version!")
         return None
 
     latest_release_version = tuple(map(int, latest_match.groups()))
-    installed_release = tuple(map(int, installed_match.groups()))
-    installed_version = "v" + ".".join(installed_match.groups())
+    installed_release = tuple(map(int, installed_version.split(".")))
+    installed_version = "v" + installed_version
     if latest_release_version <= installed_release:
         print("auto-cpufreq is up to date")
         return False
@@ -357,7 +369,7 @@ def deploy_daemon():
 
     tlp_service_detect() # output warning if TLP service is detected
 
-    call("/usr/local/bin/auto-cpufreq-install", shell=True)
+    return call("/usr/local/bin/auto-cpufreq-install", shell=True)
 
 def deploy_daemon_performance():
     print("\n" + "-" * 21 + " Deploying auto-cpufreq as a daemon (performance) " + "-" * 22 + "\n")
@@ -405,8 +417,11 @@ def remove_daemon():
 
     tuned_svc_enable()
 
-    # run auto-cpufreq daemon remove script
-    call("/usr/local/bin/auto-cpufreq-remove", shell=True)
+    # Keep the removal entry point and local runtime state until the init
+    # system cleanup succeeds. A failed removal must remain retryable.
+    remove_status = call("/usr/local/bin/auto-cpufreq-remove", shell=True)
+    if remove_status != 0:
+        return remove_status
 
     # remove auto-cpufreq-remove
     os.remove("/usr/local/bin/auto-cpufreq-remove")
@@ -420,6 +435,7 @@ def remove_daemon():
         auto_cpufreq_stats_path.unlink()
 
     cpufreqctl_restore() # restore original cpufrectl script
+    return 0
 
 def gov_check():
     for gov in AVAILABLE_GOVERNORS:
