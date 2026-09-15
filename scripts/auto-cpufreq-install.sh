@@ -91,8 +91,18 @@ case "$(ps h -o comm 1)" in
     fi
   ;;
   systemd)
-    echo -e "Deploying auto-cpufreq systemd unit file"
-    cp "$SHARE_DIR/scripts/auto-cpufreq.service" /etc/systemd/system/auto-cpufreq.service || exit $?
+    systemd_unit=/etc/systemd/system/auto-cpufreq.service
+    managed_systemd_unit="$SHARE_DIR/scripts/auto-cpufreq.service"
+    if [ -L "$systemd_unit" ] \
+      || { [ -e "$systemd_unit" ] \
+        && ! cmp -s -- "$managed_systemd_unit" "$systemd_unit"; }; then
+      echo "Error: Refusing to replace an unmanaged systemd unit: $systemd_unit"
+      exit 1
+    fi
+    if [ ! -e "$systemd_unit" ]; then
+      echo -e "Deploying auto-cpufreq systemd unit file"
+      cp "$managed_systemd_unit" "$systemd_unit" || exit $?
+    fi
 
     echo -e "\n* Reloading systemd manager configuration"
     systemctl daemon-reload || exit $?
@@ -100,6 +110,12 @@ case "$(ps h -o comm 1)" in
     auto_cpufreq_install "systemd" "systemctl start auto-cpufreq" "systemctl enable auto-cpufreq" || exit $?
   ;;
   s6-svscan)
+    for required_command in s6-service s6-db-reload s6-rc; do
+      if ! command -v "$required_command" > /dev/null 2>&1; then
+        echo "Error: $required_command is required to install the auto-cpufreq s6 service."
+        exit 1
+      fi
+    done
     s6_service_dir=/etc/s6/sv/auto-cpufreq
     s6_bundle_entry=/etc/s6/adminsv/default/contents.d/auto-cpufreq
     echo -e "\n* Deploying auto-cpufreq (s6) unit file"
