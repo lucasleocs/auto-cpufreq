@@ -7,7 +7,6 @@
 # core import
 import sys, time, os
 from subprocess import run
-from shutil import rmtree
 
 from auto_cpufreq.battery_scripts.battery import *
 from auto_cpufreq.config.config import config as conf, find_config_file
@@ -206,24 +205,26 @@ def main(monitor, live, daemon, install, update, remove, force, turbo, config, s
                 if target_tag is False: return
                 ans = input("Do you want to update auto-cpufreq to the latest release? [Y/n]: ").strip().lower()
                 if ans in ['', 'y', 'yes']:
-                    if not os.path.exists(custom_dir): os.makedirs(custom_dir)
-                    source_dir = os.path.join(custom_dir, "auto-cpufreq")
-                    if remove_daemon() != 0:
-                        print("The existing auto-cpufreq daemon could not be removed; update aborted.")
-                        sys.exit(1)
-                    remove_complete_msg()
-                    if os.path.exists(source_dir): rmtree(source_dir)
+                    os.makedirs(custom_dir, exist_ok=True)
+                    daemon_was_installed = os.path.exists("/usr/local/bin/auto-cpufreq-remove")
+                    if daemon_was_installed:
+                        if remove_daemon() != 0:
+                            print("The existing auto-cpufreq daemon could not be removed; update aborted.")
+                            sys.exit(1)
+                        remove_complete_msg()
                     if not new_update(custom_dir, target_tag):
-                        print("Update failed. Reinstalling the daemon from the active source generation.")
-                        daemon_restore = run(["/usr/local/bin/auto-cpufreq", "--install"])
-                        if daemon_restore.returncode != 0:
-                            print("The daemon could not be restored automatically; run `sudo auto-cpufreq --install` after resolving the reported error.")
+                        if daemon_was_installed:
+                            print("Update failed. Reinstalling the daemon from the active source generation.")
+                            daemon_restore = run(["/usr/local/bin/auto-cpufreq", "--install"])
+                            if daemon_restore.returncode != 0:
+                                print("The daemon could not be restored automatically; run `sudo auto-cpufreq --install` after resolving the reported error.")
                         sys.exit(1)
-                    print("enabling daemon")
-                    daemon_install = run(["/usr/local/bin/auto-cpufreq", "--install"])
-                    if daemon_install.returncode != 0:
-                        print("The source release was updated, but the daemon could not be installed.")
-                        sys.exit(1)
+                    if daemon_was_installed:
+                        print("enabling daemon")
+                        daemon_install = run(["/usr/local/bin/auto-cpufreq", "--install"])
+                        if daemon_install.returncode != 0:
+                            print("The source release was updated, but the daemon could not be installed.")
+                            sys.exit(1)
                     version_result = run(
                         ["/usr/local/bin/auto-cpufreq", "--version"],
                         capture_output=True,
