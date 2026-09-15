@@ -555,7 +555,7 @@ function tool_install {
     detected_distro "Debian based"
     PYGOBJECT_INSTALL="system"
     VERSION="${VERSION_ID:-unknown}"
-    [ -r /etc/debian_version ] && VERSION="$(cat /etc/debian_version)"
+    [ -z "${VERSION_ID:-}" ] && [ -r /etc/debian_version ] && VERSION="$(cat /etc/debian_version)"
 
     # apt(8) is intended for interactive use. Debian recommends apt-get for
     # scripts because its command-line behavior is kept backward compatible.
