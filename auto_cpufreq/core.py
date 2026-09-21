@@ -8,8 +8,8 @@ from pathlib import Path
 from pickle import dump, load
 from re import search
 from requests import get, exceptions
-from shutil import copy
-from subprocess import call, CalledProcessError, check_output, DEVNULL, getoutput, run
+from shutil import copy, rmtree
+from subprocess import call, DEVNULL, getoutput, run
 from tempfile import mkdtemp
 from time import sleep
 from warnings import filterwarnings
@@ -32,7 +32,8 @@ else:
 # ToDo:
 # - replace get system/CPU load from: psutil.getloadavg() | available in 5.6.2)
 
-SOURCE_INSTALL_SCRIPTS_DIR = Path("/opt/auto-cpufreq/current/share/scripts")
+SOURCE_INSTALL_ROOT = Path("/opt/auto-cpufreq")
+SOURCE_INSTALL_SCRIPTS_DIR = SOURCE_INSTALL_ROOT / "current/share/scripts"
 SCRIPTS_DIR = SOURCE_INSTALL_SCRIPTS_DIR if SOURCE_INSTALL_SCRIPTS_DIR.is_dir() else Path("/usr/local/share/auto-cpufreq/scripts/")
 CPUS = os.cpu_count()
 
@@ -136,10 +137,26 @@ def parse_version_output(output):
     )
     return None if match is None else ".".join(match.groups())
 
+def is_source_installation():
+    package_file = Path(__file__).resolve()
+    for source_root in (
+        SOURCE_INSTALL_ROOT / "current",
+        SOURCE_INSTALL_ROOT / "venv",
+    ):
+        try: source_root = source_root.resolve(strict=True)
+        except OSError: continue
+        if package_file.is_relative_to(source_root): return True
+    return False
+
 def check_for_update():
     # Return the exact published tag so the artifact installed below cannot
     # drift from the release that was presented to the user. False means the
     # active version is current; None means the check itself could not finish.
+
+    if not is_source_installation():
+        print("The built-in updater is available only for auto-cpufreq source installations.")
+        print("Update this installation through the package manager that provided it.")
+        return None
 
     # Specify the repository and package name
     # IT IS IMPORTANT TO  THAT IF THE REPOSITORY STRUCTURE IS CHANGED, THE FOLLOWING FUNCTION NEEDS TO BE UPDATED ACCORDINGLY
@@ -169,19 +186,17 @@ def check_for_update():
         print("Malformed release data!\nReinstall manually or open an issue on GitHub for help!")
         return None
 
-    try:
-        output = check_output(["/usr/local/bin/auto-cpufreq", "--version"]).decode("utf-8")
-    except (CalledProcessError, OSError, UnicodeDecodeError):
-        print("Error retrieving current version!")
-        return None
-
-    installed_version = parse_version_output(output)
-    if installed_version is None:
+    installed_match = search(
+        r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$",
+        get_literal_version("auto-cpufreq").partition("+")[0],
+    )
+    if installed_match is None:
         print("Error retrieving current version!")
         return None
 
     latest_release_version = tuple(map(int, latest_match.groups()))
-    installed_release = tuple(map(int, installed_version.split(".")))
+    installed_release = tuple(map(int, installed_match.groups()))
+    installed_version = ".".join(installed_match.groups())
     installed_version = "v" + installed_version
     if latest_release_version <= installed_release:
         print("auto-cpufreq is up to date")
@@ -191,15 +206,7 @@ def check_for_update():
     print("If installed, the auto-cpufreq daemon will be stopped and reinstalled during this update")
     return latest_tag
 
-def new_update(custom_dir, target_tag):
-    # The parent directory is user-selected, but the checkout itself must be
-    # updater-owned. A unique directory avoids deleting unrelated contents and
-    # prevents concurrent downloads from sharing a partially populated tree.
-    try: source_dir = mkdtemp(prefix="auto-cpufreq-", dir=custom_dir)
-    except OSError as error:
-        print(f"Failed to prepare auto-cpufreq release {target_tag}: {error}")
-        return False
-
+def _install_update_from_staging(source_dir, target_tag):
     print(f"Cloning release {target_tag} to {source_dir}")
     # A branch and a tag may share the same short name. Fetching the fully
     # qualified tag ref prevents a branch from being installed by mistake.
@@ -235,6 +242,21 @@ def new_update(custom_dir, target_tag):
         print(f"Failed to install auto-cpufreq release {target_tag}.")
         return False
     return True
+
+def new_update(custom_dir, target_tag):
+    # The parent directory is user-selected, but the checkout itself must be
+    # updater-owned. A unique directory avoids deleting unrelated contents and
+    # prevents concurrent downloads from sharing a partially populated tree.
+    try: source_dir = mkdtemp(prefix="auto-cpufreq-", dir=custom_dir)
+    except OSError as error:
+        print(f"Failed to prepare auto-cpufreq release {target_tag}: {error}")
+        return False
+
+    try: return _install_update_from_staging(source_dir, target_tag)
+    finally:
+        try: rmtree(source_dir)
+        except OSError as error:
+            print(f"Warning: Failed to remove update staging directory {source_dir}: {error}")
 
 def get_literal_version(package_name):
     try:

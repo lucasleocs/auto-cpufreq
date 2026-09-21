@@ -628,7 +628,7 @@ For source installations, the updater checks the [latest published release](http
 
 The installer builds and verifies the new release as a separate generation before selecting it through `/opt/auto-cpufreq/current`. Download, daemon removal, installation, and final command failures stop the updater without reporting success; a candidate that fails before activation does not replace the active generation.
 
-Update auto-cpufreq by running: `sudo auto-cpufreq --update`. By default, the selected release tag is cloned to a uniquely named staging directory under `/opt/auto-cpufreq/source`.
+Update auto-cpufreq by running: `sudo auto-cpufreq --update`. By default, the selected release tag is cloned to a uniquely named staging directory under `/opt/auto-cpufreq/source`; the updater removes that staging directory after the attempt finishes.
 
 Update and create the staging directory under a custom parent by running: `sudo auto-cpufreq --update=/path/to/directory`
 
