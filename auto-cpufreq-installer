@@ -340,6 +340,64 @@ function restore_public_file {
   fi
 }
 
+function snapshot_public_files {
+  local backup_file
+  local target_file
+  local target_mode
+
+  PUBLIC_FILE_BACKUPS=()
+  PUBLIC_FILE_MODES=()
+  for target_file in "${PUBLIC_FILE_TARGETS[@]}"; do
+    if [ -L "$target_file" ] \
+      || { [ -e "$target_file" ] && [ ! -f "$target_file" ]; }; then
+      echo "Error: Refusing to replace an unmanaged integration path: $target_file"
+      discard_public_file_backups
+      return 1
+    fi
+
+    backup_file=""
+    target_mode=""
+    if [ -f "$target_file" ]; then
+      backup_file="$(mktemp "$INSTALL_ROOT/.public-file.XXXXXXXX")" || {
+        discard_public_file_backups
+        return 1
+      }
+      target_mode="$(stat -Lc '%a' "$target_file")" || target_mode=""
+      if [ -z "$target_mode" ] \
+        || ! cp -p -- "$target_file" "$backup_file"; then
+        rm -f -- "$backup_file"
+        discard_public_file_backups
+        return 1
+      fi
+    fi
+    PUBLIC_FILE_BACKUPS+=("$backup_file")
+    PUBLIC_FILE_MODES+=("$target_mode")
+  done
+}
+
+function restore_public_files {
+  local index
+  local restore_status=0
+
+  for index in "${!PUBLIC_FILE_TARGETS[@]}"; do
+    if ! restore_public_file \
+      "${PUBLIC_FILE_BACKUPS[$index]}" \
+      "${PUBLIC_FILE_TARGETS[$index]}" \
+      "${PUBLIC_FILE_MODES[$index]}"; then
+      restore_status=1
+    fi
+  done
+  return "$restore_status"
+}
+
+function discard_public_file_backups {
+  local backup_file
+
+  for backup_file in "${PUBLIC_FILE_BACKUPS[@]:-}"; do
+    [ -z "$backup_file" ] || rm -f -- "$backup_file"
+  done
+}
+
 function verify_command_version {
   local command_path="$1"
   local installed_version="$2"
@@ -506,10 +564,20 @@ function build_release {
 function tool_install {
   local active_version
   local candidate_is_active
+  local integration_files_published=false
   local prepared_share_dir
   local previous_release=""
-  local previous_wrapper=""
-  local previous_wrapper_mode=""
+  local -a PUBLIC_FILE_BACKUPS PUBLIC_FILE_MODES PUBLIC_FILE_TARGETS
+
+  PUBLIC_FILE_TARGETS=(
+    "$AUTO_CPUFREQ_FILE"
+    "$IMG_FILE"
+    "$ORG_FILE"
+    "$AUTO_CPUFREQ_GTK_FILE"
+  )
+  if command -v desktop-file-install > /dev/null 2>&1; then
+    PUBLIC_FILE_TARGETS+=("$APPLICATIONS_PATH/$AUTO_CPUFREQ_GTK_DESKTOP_FILE")
+  fi
 
   echo
   if [ -e "$AUTO_CPUFREQ_FILE-remove" ] || [ -L "$AUTO_CPUFREQ_FILE-remove" ]; then
@@ -693,76 +761,25 @@ function tool_install {
       return 1
     }
   fi
-
-  if ! publish_file "$prepared_share_dir/images/icon.png" "$IMG_FILE" 644; then
-    echo "Error: Failed to install auto-cpufreq icon."
+  # Keep every public integration file inside the same rollback boundary as
+  # current. A failed candidate must leave the previously installed command,
+  # desktop integration and PolicyKit entry exactly as they were.
+  if ! snapshot_public_files; then
     discard_release "$PREPARED_RELEASE"
     return 1
-  fi
-  if ! publish_file "$prepared_share_dir/scripts/$(basename "$ORG_FILE")" "$ORG_FILE" 644; then
-    echo "Error: Failed to install auto-cpufreq PolicyKit policy."
-    discard_release "$PREPARED_RELEASE"
-    return 1
-  fi
-
-  if ! publish_file "$prepared_share_dir/scripts/start_app" "$AUTO_CPUFREQ_GTK_FILE" 755; then
-    echo "Error: Failed to install auto-cpufreq GTK launcher."
-    discard_release "$PREPARED_RELEASE"
-    return 1
-  fi
-
-  if command -v desktop-file-install > /dev/null 2>&1; then
-    if ! desktop-file-install --dir="$APPLICATIONS_PATH" "$prepared_share_dir/scripts/$AUTO_CPUFREQ_GTK_DESKTOP_FILE"; then
-      echo "Error: Failed to install the auto-cpufreq desktop entry."
-      discard_release "$PREPARED_RELEASE"
-      return 1
-    fi
-  else
-    echo "Warning: desktop-file-install is not available; skipping desktop menu integration."
-    echo "The GTK interface can still be launched with auto-cpufreq-gtk."
-  fi
-
-  if command -v update-desktop-database > /dev/null 2>&1; then
-    if ! update-desktop-database "$APPLICATIONS_PATH"; then
-      echo "Warning: Failed to refresh the desktop application database."
-    fi
-  fi
-
-  # Publish the stable command last and retain its previous contents until the
-  # candidate has passed the only check that exercises current through it.
-  if [ -L "$AUTO_CPUFREQ_FILE" ] \
-    || { [ -e "$AUTO_CPUFREQ_FILE" ] && [ ! -f "$AUTO_CPUFREQ_FILE" ]; }; then
-    echo "Error: Refusing to replace an unmanaged auto-cpufreq command path."
-    discard_release "$PREPARED_RELEASE"
-    return 1
-  fi
-  if [ -f "$AUTO_CPUFREQ_FILE" ]; then
-    previous_wrapper="$(mktemp "$INSTALL_ROOT/.auto-cpufreq-wrapper.XXXXXXXX")" || {
-      discard_release "$PREPARED_RELEASE"
-      return 1
-    }
-    previous_wrapper_mode="$(stat -Lc '%a' "$AUTO_CPUFREQ_FILE")" \
-      || previous_wrapper_mode=""
-    if [ -z "$previous_wrapper_mode" ] \
-      || ! cp -p -- "$AUTO_CPUFREQ_FILE" "$previous_wrapper"; then
-      rm -f -- "$previous_wrapper"
-      discard_release "$PREPARED_RELEASE"
-      return 1
-    fi
   fi
   if ! publish_file "$prepared_share_dir/scripts/auto-cpufreq-venv-wrapper" "$AUTO_CPUFREQ_FILE" 755; then
     echo "Error: Failed to install auto-cpufreq command wrapper."
-    [ -z "$previous_wrapper" ] || rm -f -- "$previous_wrapper"
+    restore_public_files || echo "Error: Failed to restore public auto-cpufreq files."
     discard_release "$PREPARED_RELEASE"
     return 1
   fi
 
-  # current is the single activation point. Every fallible publication step
-  # above uses the unreferenced candidate, so it cannot select a partial build.
+  # current is the single code activation point. The stable wrapper has been
+  # published, but it keeps resolving the previous generation until this
+  # atomic link replacement succeeds.
   if ! activate_release "$PREPARED_RELEASE"; then
-    if ! restore_public_file "$previous_wrapper" "$AUTO_CPUFREQ_FILE" "$previous_wrapper_mode"; then
-      echo "Error: Failed to restore the previous auto-cpufreq command."
-    fi
+    restore_public_files || echo "Error: Failed to restore public auto-cpufreq files."
     discard_release "$PREPARED_RELEASE"
     return 1
   fi
@@ -786,13 +803,53 @@ function tool_install {
     else
       echo "Error: Failed to undo the first source release activation."
     fi
-    if ! restore_public_file "$previous_wrapper" "$AUTO_CPUFREQ_FILE" "$previous_wrapper_mode"; then
-      echo "Error: Failed to restore the previous auto-cpufreq command."
-    fi
+    restore_public_files || echo "Error: Failed to restore public auto-cpufreq files."
     $candidate_is_active || discard_release "$PREPARED_RELEASE"
     return 1
   fi
-  [ -z "$previous_wrapper" ] || rm -f -- "$previous_wrapper"
+
+  if ! publish_file "$prepared_share_dir/images/icon.png" "$IMG_FILE" 644; then
+    echo "Error: Failed to install auto-cpufreq icon."
+  elif ! publish_file "$prepared_share_dir/scripts/$(basename "$ORG_FILE")" "$ORG_FILE" 644; then
+    echo "Error: Failed to install auto-cpufreq PolicyKit policy."
+  elif ! publish_file "$prepared_share_dir/scripts/start_app" "$AUTO_CPUFREQ_GTK_FILE" 755; then
+    echo "Error: Failed to install auto-cpufreq GTK launcher."
+  elif command -v desktop-file-install > /dev/null 2>&1 \
+    && ! desktop-file-install --dir="$APPLICATIONS_PATH" "$prepared_share_dir/scripts/$AUTO_CPUFREQ_GTK_DESKTOP_FILE"; then
+    echo "Error: Failed to install the auto-cpufreq desktop entry."
+  else
+    integration_files_published=true
+  fi
+
+  if [ "$integration_files_published" != true ]; then
+    candidate_is_active=true
+    if [ -n "$previous_release" ]; then
+      if activate_release "$previous_release"; then
+        candidate_is_active=false
+      else
+        echo "Error: Failed to restore the previous active source release."
+      fi
+    elif rm -f -- "$CURRENT_PATH"; then
+      candidate_is_active=false
+    else
+      echo "Error: Failed to undo the first source release activation."
+    fi
+    restore_public_files || echo "Error: Failed to restore public auto-cpufreq files."
+    $candidate_is_active || discard_release "$PREPARED_RELEASE"
+    return 1
+  fi
+
+  if ! command -v desktop-file-install > /dev/null 2>&1; then
+    echo "Warning: desktop-file-install is not available; skipping desktop menu integration."
+    echo "The GTK interface can still be launched with auto-cpufreq-gtk."
+  fi
+  discard_public_file_backups
+
+  if command -v update-desktop-database > /dev/null 2>&1; then
+    if ! update-desktop-database "$APPLICATIONS_PATH"; then
+      echo "Warning: Failed to refresh the desktop application database."
+    fi
+  fi
 
   # The legacy venv/share copies are no longer executable state once current
   # and every public entry point refer to the complete new generation.
