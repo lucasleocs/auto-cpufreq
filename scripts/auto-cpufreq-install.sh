@@ -28,6 +28,68 @@ function auto_cpufreq_install {
     [ -z "${2:-}" ] || $2 || return $?
 }
 
+function directory_contains_only {
+    local allowed allowed_name entry
+    local directory="$1"
+    shift
+
+    for entry in "$directory"/* "$directory"/.[!.]* "$directory"/..?*; do
+      [ -e "$entry" ] || [ -L "$entry" ] || continue
+      allowed=false
+      for allowed_name in "$@"; do
+        if [ "${entry##*/}" = "$allowed_name" ]; then
+          allowed=true
+          break
+        fi
+      done
+      $allowed || return 1
+    done
+    return 0
+}
+
+function runit_service_is_managed {
+    local managed_run="$SHARE_DIR/scripts/auto-cpufreq-runit"
+    local service_dir="$1"
+
+    [ -e "$service_dir" ] || [ -L "$service_dir" ] || return 0
+    [ -d "$service_dir" ] && [ ! -L "$service_dir" ] || return 1
+    directory_contains_only "$service_dir" run supervise || return 1
+
+    if [ -e "$service_dir/run" ] || [ -L "$service_dir/run" ]; then
+      [ -f "$service_dir/run" ] \
+        && [ ! -L "$service_dir/run" ] \
+        && cmp -s -- "$managed_run" "$service_dir/run" \
+        || return 1
+    elif [ -e "$service_dir/supervise" ] || [ -L "$service_dir/supervise" ]; then
+      return 1
+    fi
+
+    [ ! -e "$service_dir/supervise" ] \
+      && [ ! -L "$service_dir/supervise" ] \
+      || [ -d "$service_dir/supervise" ]
+}
+
+function s6_service_is_managed {
+    local managed_dir="$SHARE_DIR/scripts/auto-cpufreq-s6"
+    local service_dir="$1"
+    local service_file
+
+    [ -e "$service_dir" ] || [ -L "$service_dir" ] || return 0
+    [ -d "$service_dir" ] && [ ! -L "$service_dir" ] || return 1
+    directory_contains_only "$service_dir" run type || return 1
+
+    for service_file in run type; do
+      if [ -e "$service_dir/$service_file" ] \
+        || [ -L "$service_dir/$service_file" ]; then
+        [ -f "$service_dir/$service_file" ] \
+          && [ ! -L "$service_dir/$service_file" ] \
+          && cmp -s -- "$managed_dir/$service_file" "$service_dir/$service_file" \
+          || return 1
+      fi
+    done
+    return 0
+}
+
 case "$(ps h -o comm 1)" in
   dinit) 
     echo -e "\n* Deploying auto-cpufreq (dinit) unit file"
@@ -49,7 +111,10 @@ case "$(ps h -o comm 1)" in
       local service_dir="$1/sv/auto-cpufreq"
 
       echo -e "\n* Deploying auto-cpufreq (runit) unit file"
-      if [ -L "$service_dir" ] || { [ -e "$service_dir" ] && [ ! -d "$service_dir" ]; }; then
+      # A service directory is host configuration, not an opaque deployment
+      # target. Reuse it only when it contains our run script and runit's own
+      # supervision state; otherwise preserve the administrator's files.
+      if ! runit_service_is_managed "$service_dir"; then
         echo "Error: Refusing to replace an unmanaged runit service path: $service_dir"
         return 1
       fi
@@ -119,8 +184,7 @@ case "$(ps h -o comm 1)" in
     s6_service_dir=/etc/s6/sv/auto-cpufreq
     s6_bundle_entry=/etc/s6/adminsv/default/contents.d/auto-cpufreq
     echo -e "\n* Deploying auto-cpufreq (s6) unit file"
-    if [ -L "$s6_service_dir" ] \
-      || { [ -e "$s6_service_dir" ] && [ ! -d "$s6_service_dir" ]; }; then
+    if ! s6_service_is_managed "$s6_service_dir"; then
       echo "Error: Refusing to replace an unmanaged s6 service path: $s6_service_dir"
       exit 1
     fi

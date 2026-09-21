@@ -30,6 +30,66 @@ function auto_cpufreq_remove {
     rm -f -- "$4" || return $?
 }
 
+function directory_contains_only {
+    local allowed allowed_name entry
+    local directory="$1"
+    shift
+
+    for entry in "$directory"/* "$directory"/.[!.]* "$directory"/..?*; do
+      [ -e "$entry" ] || [ -L "$entry" ] || continue
+      allowed=false
+      for allowed_name in "$@"; do
+        if [ "${entry##*/}" = "$allowed_name" ]; then
+          allowed=true
+          break
+        fi
+      done
+      $allowed || return 1
+    done
+    return 0
+}
+
+function runit_service_is_managed {
+    local managed_run="$SHARE_DIR/scripts/auto-cpufreq-runit"
+    local service_dir="$1"
+
+    [ -e "$service_dir" ] || [ -L "$service_dir" ] || return 0
+    [ -d "$service_dir" ] && [ ! -L "$service_dir" ] || return 1
+    directory_contains_only "$service_dir" run supervise || return 1
+
+    if [ -e "$service_dir/run" ] || [ -L "$service_dir/run" ]; then
+      [ -f "$service_dir/run" ] \
+        && [ ! -L "$service_dir/run" ] \
+        && cmp -s -- "$managed_run" "$service_dir/run" \
+        || return 1
+    fi
+
+    [ ! -e "$service_dir/supervise" ] \
+      && [ ! -L "$service_dir/supervise" ] \
+      || [ -d "$service_dir/supervise" ]
+}
+
+function s6_service_is_managed {
+    local managed_dir="$SHARE_DIR/scripts/auto-cpufreq-s6"
+    local service_dir="$1"
+    local service_file
+
+    [ -e "$service_dir" ] || [ -L "$service_dir" ] || return 0
+    [ -d "$service_dir" ] && [ ! -L "$service_dir" ] || return 1
+    directory_contains_only "$service_dir" run type || return 1
+
+    for service_file in run type; do
+      if [ -e "$service_dir/$service_file" ] \
+        || [ -L "$service_dir/$service_file" ]; then
+        [ -f "$service_dir/$service_file" ] \
+          && [ ! -L "$service_dir/$service_file" ] \
+          && cmp -s -- "$managed_dir/$service_file" "$service_dir/$service_file" \
+          || return 1
+      fi
+    done
+    return 0
+}
+
 function openrc_disable {
     local current_membership current_runlevel current_runlevels
     local current_separator current_service delete_status
@@ -84,14 +144,33 @@ case "$(ps h -o comm 1)" in
       local active_link="$2/service/auto-cpufreq"
       local service_dir="$1/sv/auto-cpufreq"
 
+      # Verify every persistent entry before stopping the service. Refusing an
+      # altered definition keeps host-owned runit configuration recoverable.
+      if ! runit_service_is_managed "$service_dir"; then
+        echo "Error: Refusing to remove an unmanaged runit service path: $service_dir"
+        return 1
+      fi
       if [ -e "$active_link" ] || [ -L "$active_link" ]; then
+        if [ ! -L "$active_link" ] \
+          || [ "$(readlink "$active_link")" != "$service_dir" ]; then
+          echo "Error: Refusing to remove an unmanaged runit service link: $active_link"
+          return 1
+        fi
         echo -e "\n* Stopping auto-cpufreq daemon (runit) service"
-        sv stop "$active_link" || return $?
+        if [ -d "$service_dir" ]; then
+          sv stop "$active_link" || return $?
+        fi
         echo -e "\n* Disabling auto-cpufreq daemon (runit) at boot"
         rm -f -- "$active_link" || return $?
       fi
-      echo -e "\n* Removing auto-cpufreq daemon (runit) unit file"
-      rm -rf -- "$service_dir" || return $?
+      if [ -d "$service_dir" ]; then
+        echo -e "\n* Removing auto-cpufreq daemon (runit) unit file"
+        # Remove only entries owned by this service. If another entry appears
+        # after validation, rmdir fails instead of recursively deleting it.
+        rm -f -- "$service_dir/run" || return $?
+        rm -rf -- "$service_dir/supervise" || return $?
+        rmdir -- "$service_dir" || return $?
+      fi
     }
 
     if [ -f /etc/os-release ]; then
@@ -140,12 +219,23 @@ case "$(ps h -o comm 1)" in
   s6-svscan)
     s6_service_dir=/etc/s6/sv/auto-cpufreq
     s6_bundle_entry=/etc/s6/adminsv/default/contents.d/auto-cpufreq
+    # Do not remove the bundle membership before proving that the source
+    # definition still consists only of files deployed by auto-cpufreq.
+    if ! s6_service_is_managed "$s6_service_dir"; then
+      echo "Error: Refusing to remove an unmanaged s6 service path: $s6_service_dir"
+      exit 1
+    fi
     if [ -e "$s6_bundle_entry" ] || [ -L "$s6_bundle_entry" ]; then
       echo -e "\n* Disabling auto-cpufreq daemon (s6) at boot"
       s6-service delete default auto-cpufreq || exit $?
     fi
-    echo -e "\n* Removing auto-cpufreq daemon (s6) unit file"
-    rm -rf -- "$s6_service_dir" || exit $?
+    if [ -d "$s6_service_dir" ]; then
+      echo -e "\n* Removing auto-cpufreq daemon (s6) unit file"
+      # Delete the exact definition files we deploy. An unexpected concurrent
+      # entry keeps the directory non-empty and turns removal into a retry.
+      rm -f -- "$s6_service_dir/run" "$s6_service_dir/type" || exit $?
+      rmdir -- "$s6_service_dir" || exit $?
+    fi
 
     # The bundle entry and service directory are durable progress markers.
     # Once absent, retry only the database reload that commits their removal.
