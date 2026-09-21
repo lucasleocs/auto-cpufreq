@@ -28,6 +28,21 @@ function auto_cpufreq_install {
     [ -z "${2:-}" ] || $2 || return $?
 }
 
+function publish_service_file {
+    (
+      local source="$1" target="$2" mode="$3" staging_parent="$4"
+      local staged_file
+
+      staged_file="$(mktemp "$staging_parent/.auto-cpufreq.XXXXXXXX")" || exit $?
+      trap 'rm -f -- "$staged_file"' EXIT
+      cp -- "$source" "$staged_file" || exit $?
+      chmod "$mode" "$staged_file" || exit $?
+      # Publish only complete files, without replacing a target created since
+      # ownership validation. A failed copy must not poison the next retry.
+      ln -T -- "$staged_file" "$target" || exit $?
+    )
+}
+
 function directory_contains_only {
     local allowed allowed_name entry
     local directory="$1"
@@ -119,7 +134,12 @@ case "$(ps h -o comm 1)" in
         return 1
       fi
       mkdir -p "$service_dir" || return $?
-      cp "$SHARE_DIR/scripts/auto-cpufreq-runit" "$service_dir/run" || return $?
+      if [ ! -e "$service_dir/run" ]; then
+        # Keep staging outside the service directory so an interrupted copy
+        # cannot leave an unexpected entry in an otherwise managed service.
+        publish_service_file "$SHARE_DIR/scripts/auto-cpufreq-runit" \
+          "$service_dir/run" 755 "$1/sv" || return $?
+      fi
       chmod +x "$service_dir/run" || return $?
 
       echo -e "\n* Creating symbolic link ($active_link -> $service_dir)"
@@ -166,7 +186,8 @@ case "$(ps h -o comm 1)" in
     fi
     if [ ! -e "$systemd_unit" ]; then
       echo -e "Deploying auto-cpufreq systemd unit file"
-      cp "$managed_systemd_unit" "$systemd_unit" || exit $?
+      publish_service_file "$managed_systemd_unit" "$systemd_unit" \
+        644 /etc/systemd/system || exit $?
     fi
 
     echo -e "\n* Reloading systemd manager configuration"
@@ -175,31 +196,61 @@ case "$(ps h -o comm 1)" in
     auto_cpufreq_install "systemd" "systemctl start auto-cpufreq" "systemctl enable auto-cpufreq" || exit $?
   ;;
   s6-svscan)
-    for required_command in s6-service s6-db-reload s6-rc; do
+    for required_command in flock s6-service s6-db-reload s6-rc; do
       if ! command -v "$required_command" > /dev/null 2>&1; then
         echo "Error: $required_command is required to install the auto-cpufreq s6 service."
         exit 1
       fi
     done
     s6_service_dir=/etc/s6/sv/auto-cpufreq
+    s6_removing_dir=/etc/s6/sv/.auto-cpufreq-removing
     s6_bundle_entry=/etc/s6/adminsv/default/contents.d/auto-cpufreq
+    # Installation and removal share the source-directory inode lock. Atomic
+    # rename alone cannot serialize their multi-step bundle changes.
+    exec 8</etc/s6/sv || exit $?
+    if ! flock -n 8; then
+      echo "Error: Another auto-cpufreq s6 lifecycle operation is in progress."
+      exit 1
+    fi
+    if [ -e "$s6_removing_dir" ] || [ -L "$s6_removing_dir" ]; then
+      echo "Error: An s6 removal is unfinished. Retry 'sudo auto-cpufreq --remove' first."
+      exit 1
+    fi
     echo -e "\n* Deploying auto-cpufreq (s6) unit file"
     if ! s6_service_is_managed "$s6_service_dir"; then
       echo "Error: Refusing to replace an unmanaged s6 service path: $s6_service_dir"
       exit 1
     fi
-    mkdir -p "$s6_service_dir" || exit $?
-    cp -r "$SHARE_DIR/scripts/auto-cpufreq-s6/." "$s6_service_dir/" || exit $?
+    if [ ! -f "$s6_service_dir/run" ] || [ ! -f "$s6_service_dir/type" ]; then
+      (
+        staged_dir="$(mktemp -d /etc/s6/sv/.auto-cpufreq-install.XXXXXXXX)" || exit $?
+        trap 'rm -rf -- "$staged_dir"' EXIT
+        cp -r "$SHARE_DIR/scripts/auto-cpufreq-s6/." "$staged_dir/" || exit $?
+        chmod 755 "$staged_dir" || exit $?
+        # s6-rc-compile ignores dot directories. Publish a new definition as
+        # one rename, so another database build never sees half a service.
+        if [ ! -e "$s6_service_dir" ]; then
+          mv -T -- "$staged_dir" "$s6_service_dir" || exit $?
+        else
+          # Older attempts may have left a managed, incomplete directory.
+          # Repair only missing files; never truncate its existing definition.
+          for service_file in run type; do
+            [ -e "$s6_service_dir/$service_file" ] || \
+              ln -T -- "$staged_dir/$service_file" "$s6_service_dir/$service_file" || exit $?
+          done
+        fi
+      ) || exit $?
+    fi
 
     echo -e "\n* Add auto-cpufreq service (s6) to default bundle"
     if [ ! -e "$s6_bundle_entry" ] && [ ! -L "$s6_bundle_entry" ]; then
-      s6-service add default auto-cpufreq || exit $?
+      s6-service add default auto-cpufreq 8<&- || exit $?
     fi
 
     echo -e "\n* Update daemon service bundle (s6)"
-    s6-db-reload || exit $?
+    s6-db-reload 8<&- || exit $?
 
-    auto_cpufreq_install "s6" "s6-rc -u change auto-cpufreq default" || exit $?
+    auto_cpufreq_install "s6" "s6-rc -u change auto-cpufreq default" 8<&- || exit $?
   ;;
   *)
     echo -e "\n* Unsupported init system detected, could not install the daemon\n"

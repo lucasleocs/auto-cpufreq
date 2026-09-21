@@ -880,6 +880,13 @@ function tool_remove {
   fi
   if [ ! -d "$RELEASES_PATH" ] \
     && [ ! -d "$INSTALL_ROOT/venv" ]; then
+    # A failed recursive removal may already have deleted both recognizable
+    # layouts. Their absence alone does not prove that cleanup completed.
+    if [ -e "$INSTALL_ROOT" ]; then
+      echo "Error: Unrecognized or partially removed source installation: $INSTALL_ROOT"
+      echo "Inspect the remaining files before retrying; they were not deleted."
+      return 1
+    fi
     echo; echo "No auto-cpufreq source installation was found."; echo
     return 0
   fi

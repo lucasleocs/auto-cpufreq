@@ -644,6 +644,8 @@ This does, in part, the equivalent of `systemctl stop auto-cpufreq && systemctl 
 
 Removing the daemon does not uninstall the source-installed CLI or GUI. To remove the complete source installation, run `sudo bash ./auto-cpufreq-installer --remove` from an auto-cpufreq source directory.
 
+If removal fails, address the reported error and retry the same command. On s6, an unfinished removal must complete before reinstalling the daemon. If the error identifies unrecognized source-install remnants or a preserved s6 removal directory, inspect and preserve any custom files before removing those remnants; they are not treated as successful cleanup.
+
 ### Stats
 
 If the daemon has been installed, live system information and the current optimization state can be viewed with:

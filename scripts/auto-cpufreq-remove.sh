@@ -218,7 +218,24 @@ case "$(ps h -o comm 1)" in
   ;;
   s6-svscan)
     s6_service_dir=/etc/s6/sv/auto-cpufreq
+    s6_removing_dir=/etc/s6/sv/.auto-cpufreq-removing
     s6_bundle_entry=/etc/s6/adminsv/default/contents.d/auto-cpufreq
+    # Use the same stable directory inode as installation; the lock vanishes
+    # with the process, while a pending removal survives for the next retry.
+    exec 8</etc/s6/sv || exit $?
+    if ! flock -n 8; then
+      echo "Error: Cannot lock the s6 source directory; flock is required and no other auto-cpufreq s6 operation may be running."
+      exit 1
+    fi
+    if ! s6_service_is_managed "$s6_removing_dir"; then
+      echo "Error: Inspect the preserved s6 removal directory before retrying: $s6_removing_dir"
+      exit 1
+    fi
+    if { [ -e "$s6_removing_dir" ] || [ -L "$s6_removing_dir" ]; } \
+      && { [ -e "$s6_service_dir" ] || [ -L "$s6_service_dir" ]; }; then
+      echo "Error: Both an s6 definition and an unfinished removal exist. Preserve and inspect both paths: $s6_service_dir $s6_removing_dir"
+      exit 1
+    fi
     # Do not remove the bundle membership before proving that the source
     # definition still consists only of files deployed by auto-cpufreq.
     if ! s6_service_is_managed "$s6_service_dir"; then
@@ -227,20 +244,28 @@ case "$(ps h -o comm 1)" in
     fi
     if [ -e "$s6_bundle_entry" ] || [ -L "$s6_bundle_entry" ]; then
       echo -e "\n* Disabling auto-cpufreq daemon (s6) at boot"
-      s6-service delete default auto-cpufreq || exit $?
+      s6-service delete default auto-cpufreq 8<&- || exit $?
     fi
     if [ -d "$s6_service_dir" ]; then
       echo -e "\n* Removing auto-cpufreq daemon (s6) unit file"
-      # Delete the exact definition files we deploy. An unexpected concurrent
-      # entry keeps the directory non-empty and turns removal into a retry.
-      rm -f -- "$s6_service_dir/run" "$s6_service_dir/type" || exit $?
-      rmdir -- "$s6_service_dir" || exit $?
+      # Retire the whole definition before deleting any part of it. The s6
+      # compiler ignores dot directories, including partially deleted ones.
+      # Rename stays on the same filesystem and preserves unexpected entries.
+      mv -T -- "$s6_service_dir" "$s6_removing_dir" || exit $?
     fi
 
-    # The bundle entry and service directory are durable progress markers.
-    # Once absent, retry only the database reload that commits their removal.
+    # Retain the pending directory until the database accepts the removal.
+    # A crash or failed reload can then be retried without installing anew.
     echo -e "\n* Update daemon service bundle (s6)"
-    s6-db-reload || exit $?
+    s6-db-reload 8<&- || exit $?
+    if [ -d "$s6_removing_dir" ]; then
+      if ! s6_service_is_managed "$s6_removing_dir"; then
+        echo "Error: Inspect the preserved s6 removal directory before retrying: $s6_removing_dir"
+        exit 1
+      fi
+      rm -f -- "$s6_removing_dir/run" "$s6_removing_dir/type" || exit $?
+      rmdir -- "$s6_removing_dir" || exit $?
+    fi
   ;;
   *)
     echo -e "\n* Unsupported init system detected, could not remove the daemon"
