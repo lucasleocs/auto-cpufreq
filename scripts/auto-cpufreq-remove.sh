@@ -30,6 +30,39 @@ function auto_cpufreq_remove {
     rm -f -- "$4" || return $?
 }
 
+function openrc_disable {
+    local current_membership current_runlevel current_runlevels
+    local current_separator current_service delete_status
+    local membership runlevel runlevels separator service
+    local still_registered
+
+    membership="$(rc-update show)" || return $?
+    while read -r service separator runlevels; do
+      [ "$service" = "auto-cpufreq" ] && [ "$separator" = "|" ] || continue
+      # Remove only memberships that still exist. OpenRC reports failure when
+      # asked to delete an already-absent service, which must remain retry-safe.
+      for runlevel in $runlevels; do
+        rc-update del auto-cpufreq "$runlevel"
+        delete_status=$?
+        [ "$delete_status" -eq 0 ] && continue
+
+        # Another removal may complete between show and del. Suppress only
+        # that completed step; retain real OpenRC failures.
+        current_membership="$(rc-update show)" || return $?
+        still_registered=false
+        while read -r current_service current_separator current_runlevels; do
+          [ "$current_service" = "auto-cpufreq" ] \
+            && [ "$current_separator" = "|" ] || continue
+          for current_runlevel in $current_runlevels; do
+            [ "$current_runlevel" = "$runlevel" ] && still_registered=true
+          done
+        done <<< "$current_membership"
+        $still_registered && return "$delete_status"
+      done
+    done <<< "$membership"
+    return 0
+}
+
 case "$(ps h -o comm 1)" in
   dinit)
     if [ -e /etc/dinit.d/auto-cpufreq ] || [ -L /etc/dinit.d/auto-cpufreq ]; then
@@ -40,7 +73,7 @@ case "$(ps h -o comm 1)" in
   ;;
   init)
     if [ -e /etc/init.d/auto-cpufreq ] || [ -L /etc/init.d/auto-cpufreq ]; then
-      auto_cpufreq_remove "openrc" "rc-service --ifexists --ifstarted auto-cpufreq stop" "rc-update del auto-cpufreq" "/etc/init.d/auto-cpufreq" || exit $?
+      auto_cpufreq_remove "openrc" "rc-service --ifexists --ifstarted auto-cpufreq stop" "openrc_disable" "/etc/init.d/auto-cpufreq" || exit $?
     else
       echo -e "\n* auto-cpufreq OpenRC service is already removed"
     fi
