@@ -581,8 +581,14 @@ function tool_install {
 
   echo
   if [ -e "$AUTO_CPUFREQ_FILE-remove" ] || [ -L "$AUTO_CPUFREQ_FILE-remove" ]; then
-    echo "Error: Remove the installed auto-cpufreq daemon before replacing the source installation."
-    echo "Run 'sudo auto-cpufreq --remove', then run this installer again."
+    if [ ! -f "$AUTO_CPUFREQ_FILE-remove" ] \
+      || [ -L "$AUTO_CPUFREQ_FILE-remove" ]; then
+      echo "Error: Found an unexpected daemon-removal marker: $AUTO_CPUFREQ_FILE-remove"
+      echo "The source installation was not changed. Inspect that path before retrying."
+    else
+      echo "Error: The auto-cpufreq daemon is still installed, so the source installation was not changed."
+      echo "Run 'sudo auto-cpufreq --remove' to remove only the daemon, then run this installer again."
+    fi
     return 1
   fi
   if [ -e "$CURRENT_PATH" ] && [ ! -L "$CURRENT_PATH" ]; then
@@ -864,6 +870,10 @@ function tool_install {
 }
 
 function tool_remove {
+  local daemon_installed=false
+  local managed_file srv_remove
+  local -a tool_arg_pids
+
   if [ -L "$INSTALL_ROOT" ]; then
     echo "Error: Refusing to remove a symbolic-link source installation root."
     return 1
@@ -874,21 +884,46 @@ function tool_remove {
     return 0
   fi
 
-  # stop any running auto-cpufreq argument (daemon/live/monitor)
-  tool_arg_pids=($(pgrep -f "auto-cpufreq --"))
-  for pid in "${tool_arg_pids[@]}"; do [ $pid != $$ ] && kill "$pid"; done
-
   function remove_directory {
-    [ -d "$1" ] && rm -rf -- "$1"
+    if [ ! -e "$1" ] && [ ! -L "$1" ]; then
+      return 0
+    fi
+    if [ ! -d "$1" ] || [ -L "$1" ]; then
+      echo "Error: Refusing to remove an unexpected source-install path: $1"
+      return 1
+    fi
+    rm -rf -- "$1"
   }
   function remove_file {
-    { [ -f "$1" ] || [ -L "$1" ]; } && rm -f -- "$1"
+    if [ ! -e "$1" ] && [ ! -L "$1" ]; then
+      return 0
+    fi
+    if [ ! -f "$1" ] && [ ! -L "$1" ]; then
+      echo "Error: Refusing to remove an unexpected source-install path: $1"
+      return 1
+    fi
+    rm -f -- "$1"
   }
 
   srv_remove="$AUTO_CPUFREQ_FILE-remove"
 
-  # run uninstall in case of installed daemon
-  if [ -f "$srv_remove" ]; then
+  # The installer deploys the daemon-removal marker as a regular file. A
+  # symlink or another file type cannot prove that daemon cleanup is safe, so
+  # retain the source tree and let the administrator inspect the path.
+  if [ -e "$srv_remove" ] || [ -L "$srv_remove" ]; then
+    if [ ! -f "$srv_remove" ] || [ -L "$srv_remove" ]; then
+      echo "Error: Refusing to trust an unexpected daemon-removal marker: $srv_remove"
+      echo "The source installation was kept so removal can be retried."
+      return 1
+    fi
+    daemon_installed=true
+  fi
+
+  # stop any running auto-cpufreq argument (daemon/live/monitor)
+  tool_arg_pids=($(pgrep -f "auto-cpufreq --"))
+  for pid in "${tool_arg_pids[@]}"; do [ $pid != $$ ] && kill "$pid"; done
+
+  if $daemon_installed; then
     if ! "$AUTO_CPUFREQ_FILE" --remove; then
       echo "Error: Failed to remove the auto-cpufreq daemon."
       echo "The source installation was kept so removal can be retried."
@@ -898,25 +933,39 @@ function tool_remove {
     echo; echo "auto-cpufreq daemon is not installed; removing the source installation."
   fi
 
-  # remove auto-cpufreq and all its supporting files
-  remove_directory "$LEGACY_SHARE_DIR"
+  # Keep the versioned source tree until every public integration path has
+  # been removed. A partial cleanup then remains retryable with this installer.
+  if ! remove_directory "$LEGACY_SHARE_DIR"; then
+    echo "Error: Source installation removal is incomplete."
+    return 1
+  fi
 
-  remove_file "$AUTO_CPUFREQ_FILE-install"
-  remove_file "$srv_remove"
-  remove_file "$AUTO_CPUFREQ_FILE"
-  remove_file "$AUTO_CPUFREQ_GTK_FILE"
-  remove_file "$IMG_FILE"
-  remove_file "$ORG_FILE"
-  remove_file "/usr/local/bin/cpufreqctl.auto-cpufreq"
-  remove_file "/var/run/auto-cpufreq.stats"
+  for managed_file in \
+    "$AUTO_CPUFREQ_FILE-install" \
+    "$srv_remove" \
+    "$AUTO_CPUFREQ_FILE" \
+    "$AUTO_CPUFREQ_GTK_FILE" \
+    "$IMG_FILE" \
+    "$ORG_FILE" \
+    "/usr/local/bin/cpufreqctl.auto-cpufreq" \
+    "/var/run/auto-cpufreq.stats" \
+    "$APPLICATIONS_PATH/$AUTO_CPUFREQ_GTK_DESKTOP_FILE"; do
+    if ! remove_file "$managed_file"; then
+      echo "Error: Source installation removal is incomplete."
+      return 1
+    fi
+  done
 
-  remove_file "$APPLICATIONS_PATH/$AUTO_CPUFREQ_GTK_DESKTOP_FILE"
   if command -v update-desktop-database > /dev/null 2>&1; then
-    update-desktop-database "$APPLICATIONS_PATH"
+    update-desktop-database "$APPLICATIONS_PATH" \
+      || echo "Warning: Failed to refresh the desktop application database."
   fi
 
   # Remove every source generation only after daemon removal has completed.
-  remove_directory "$INSTALL_ROOT"
+  if ! remove_directory "$INSTALL_ROOT"; then
+    echo "Error: Source installation removal is incomplete."
+    return 1
+  fi
 
   echo; echo "auto-cpufreq tool and all its supporting files successfully removed"; echo
 }

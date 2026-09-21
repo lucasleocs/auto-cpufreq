@@ -632,7 +632,7 @@ Update auto-cpufreq by running: `sudo auto-cpufreq --update`. By default, the se
 
 Update and create the staging directory under a custom parent by running: `sudo auto-cpufreq --update=/path/to/directory`
 
-Development checkouts are not advanced by `--update`. To update a development installation, pull the desired Git revision and run `sudo ./auto-cpufreq-installer --install` from that checkout.
+Development checkouts are not advanced by `--update`. To replace a development installation while its daemon is installed, run `sudo auto-cpufreq --remove`, install the desired Git revision with `sudo ./auto-cpufreq-installer --install`, and then run `sudo auto-cpufreq --install` to deploy the daemon from the new generation.
 
 ### Remove - auto-cpufreq daemon
 
