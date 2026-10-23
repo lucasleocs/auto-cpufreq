@@ -193,5 +193,102 @@ class RaplSafetyRegressionTests(unittest.TestCase):
         self.assertEqual(self.power_path.read_text().strip(), "15000000")
 
 
+    def _add_package(self, control, zone_index, package, original_uw):
+        zone = self.root / control / f"{control}:{zone_index}"
+        zone.mkdir(parents=True, exist_ok=True)
+        (zone / "name").write_text(package + "\n")
+        (zone / "constraint_0_name").write_text("long_term\n")
+        power = zone / "constraint_0_power_limit_uw"
+        power.write_text(str(original_uw) + "\n")
+        return zone, power
+
+    def _set_discovery(self, zone_pairs):
+        class MultiDiscovery:
+            def __init__(self, root, pairs):
+                self.powercap_root = root
+                self.pairs = pairs
+
+            def powercap_zone_paths(self):
+                return self.pairs
+
+        self.controller.discovery = MultiDiscovery(self.root, tuple(zone_pairs))
+
+    def test_multiple_controllers_require_explicit_selection(self):
+        mmio, mmio_power = self._add_package(
+            "intel-rapl-mmio", 0, "package-0", 28_000_000
+        )
+        self._set_discovery((
+            (self.zone, "intel-rapl"), (mmio, "intel-rapl-mmio")
+        ))
+        with self.assertRaises(rapl.RaplStateError):
+            self.controller.apply(self.target)
+        self.assertEqual(self.power_path.read_text().strip(), "15000000")
+        self.assertEqual(mmio_power.read_text().strip(), "28000000")
+        self.assertEqual(self.store.load(), ())
+
+    def test_selected_mmio_does_not_modify_msr(self):
+        mmio, mmio_power = self._add_package(
+            "intel-rapl-mmio", 0, "package-0", 28_000_000
+        )
+        self._set_discovery((
+            (self.zone, "intel-rapl"), (mmio, "intel-rapl-mmio")
+        ))
+        results = self.controller.apply(
+            self.target, control_type="intel-rapl-mmio"
+        )
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0].action, "acquired")
+        self.assertEqual(self.power_path.read_text().strip(), "15000000")
+        self.assertEqual(mmio_power.read_text().strip(), "14500000")
+        self.assertEqual(self.store.load()[0].identity.control_type,
+                         "intel-rapl-mmio")
+        self.assertEqual(self.controller.restore_owned()[0].action, "restored")
+        self.assertEqual(mmio_power.read_text().strip(), "28000000")
+
+    def test_multiple_packages_require_explicit_selection(self):
+        second, second_power = self._add_package(
+            "intel-rapl", 1, "package-1", 30_000_000
+        )
+        self._set_discovery(((self.zone, "intel-rapl"), (second, "intel-rapl")))
+        with self.assertRaises(rapl.RaplStateError):
+            self.controller.apply(self.target)
+        self.assertEqual(self.power_path.read_text().strip(), "15000000")
+        self.assertEqual(second_power.read_text().strip(), "30000000")
+
+        results = self.controller.apply(self.target, package="package-1")
+        self.assertEqual(results[0].action, "acquired")
+        self.assertEqual(self.power_path.read_text().strip(), "15000000")
+        self.assertEqual(second_power.read_text().strip(), "14500000")
+        self.assertEqual(self.controller.restore_owned()[0].action, "restored")
+
+    def test_switching_controller_with_owned_state_requires_restoration(self):
+        mmio, mmio_power = self._add_package(
+            "intel-rapl-mmio", 0, "package-0", 28_000_000
+        )
+        self._set_discovery((
+            (self.zone, "intel-rapl"), (mmio, "intel-rapl-mmio")
+        ))
+        original = self.controller.apply(
+            self.target, control_type="intel-rapl"
+        )
+        self.assertEqual(original[0].action, "acquired")
+        with self.assertRaises(rapl.RaplStateError):
+            self.controller.apply(self.target, control_type="intel-rapl-mmio")
+        self.assertEqual(mmio_power.read_text().strip(), "28000000")
+        self.assertEqual(self.controller.restore_owned()[0].action, "restored")
+        second = self.controller.apply(
+            self.target, control_type="intel-rapl-mmio"
+        )
+        self.assertEqual(second[0].action, "acquired")
+        self.assertEqual(self.controller.restore_owned()[0].action, "restored")
+
+    def test_stale_scope_selector_causes_no_write(self):
+        with self.assertRaises(rapl.RaplStateError):
+            self.controller.apply(self.target, control_type="intel-rapl-mmio")
+        with self.assertRaises(rapl.RaplStateError):
+            self.controller.apply(self.target, package="package-9")
+        self.assertEqual(self.power_path.read_text().strip(), "15000000")
+
+
 if __name__ == "__main__":
     unittest.main()
