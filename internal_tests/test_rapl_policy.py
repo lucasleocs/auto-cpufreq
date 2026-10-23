@@ -65,6 +65,14 @@ class PolicyParsingTests(unittest.TestCase):
         self.assertEqual(request(pl1="0.000001").targets.long_term_uw, 1)
         self.assertEqual(request(pl1="1").targets.long_term_uw, 1_000_000)
 
+    def test_parser_uses_uint64_range_not_arbitrary_tdp(self):
+        self.assertEqual(request(pl1="1001").targets.long_term_uw,
+                         1_001_000_000)
+        self.assertEqual(
+            request(pl1="18446744073709.551615").targets.long_term_uw,
+            (1 << 64) - 1,
+        )
+
     def test_rejects_invalid_booleans(self):
         with self.assertRaises(RaplPolicyError):
             request(enabled="maybe")
@@ -84,8 +92,9 @@ class PolicyParsingTests(unittest.TestCase):
                 request(package=name)
 
     def test_rejects_bad_power(self):
-        for raw in ("0", "-1", "nan", "inf", "1e3", "1000.000001",
-                    "1001", "3.1234567", " 2 2 ", ".5", "10,4", ""):
+        for raw in ("0", "-1", "nan", "inf", "1e3",
+                    "18446744073709.551616", "999999999999999999999",
+                    "3.1234567", " 2 2 ", ".5", "10,4", ""):
             with self.subTest(raw=raw), self.assertRaises(RaplPolicyError):
                 request(pl1=raw)
 
