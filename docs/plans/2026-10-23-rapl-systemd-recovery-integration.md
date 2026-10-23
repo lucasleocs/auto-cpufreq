@@ -1,6 +1,44 @@
 # Intel RAPL — systemd recovery and installation integration
 Internal implementation plan — 2026-10-23
 
+## 0. October 23 clarification: updater non-interference is mandatory
+
+**User decision overrides earlier conservative proposals that could block an ordinary version update.** Upstream's versioned \`/opt/auto-cpufreq/releases/\` layout and atomic \`current\` activation must be preserved. The RAPL feature may pause during an update, just like existing CPU governor/EPP management, and safely reapply the opt-in configuration after the daemon starts again.
+
+Separate the **normal** and **exceptional** paths:
+
+**Normal update (must remain unchanged):**
+1. Existing auto-cpufreq update/remove/install sequence requests the regular systemd service stop. Do not introduce a new RAPL-specific updater or manipulate \`current\`/release generations.
+2. While the **old installed version** is still present, its standard \`ExecStopPost=\` cleanup attempts to restore *only provably owned* RAPL limits; a daemon stop by itself does **not** reset Powercap sysfs limits.
+3. The existing updater switches versions by its current mechanism, then starts the new daemon. No new Powercap writes are required during the update.
+4. The new daemon re-reads the **actual .conf** file and, only if opt-in is still enabled and the supported lifecycle is healthy, applies the selected constraint(s) again from a freshly observed firmware baseline. If opt-in is off or the new version has no RAPL support, only ordinary CPU management resumes. Do **not** claim that the new version always supports or reapplies RAPL.
+5. No new failure point is allowed to block normal version replacement merely because optional RAPL telemetry is missing or a controller is unsupported.
+
+**Exceptional cleanup failure (keep normal updates possible without hiding danger):**
+- If the old helper cannot prove restoration, it keeps an unresolved, root-protected journal, reports a high-signal warning, and the new daemon's RAPL module enters **unarmed / no new writes** until a compatible recovery action can inspect it. Normal governor, EPP, turbo and update controls must continue working.
+- A nonzero \`ExecStopPost=\` could cause \`systemctl stop\` failure and indirectly block the pre-existing \`--update\` flow. Therefore, **do not ship a cleanup unit whose failure propagates to block normal updater operations**. Investigate documented systemd \`-\` command prefix, which records a failed command but does not mark the entire stop failed, together with explicit error output and retained journal. This is not approval to silently ignore failures: real recovery success must be determined from the journal/readback, never from the service stop status.
+- Never delete the journal merely because the cleanup command was attempted or because the update proceeds. In an unresolved case, don't reapply RAPL in the new version; give a clear manual remediation path. Assess how to retain a compatible recovery implementation if an old generation is eventually removed, but **do not rewrite the release manager solely for RAPL**.
+- **Full final uninstall** is a separate workflow from a routine version update. Investigate the safe warning/recovery strategy for a final uninstall with pending state; do not silently remove recovery records or promise seamless cleanup when it failed. If satisfying this requirement would demand intrusive modifications to the existing updater, postpone active-writer enablement rather than regress the updater.
+
+**Minimal-change design criterion:** first prefer adding one package-provided restore entry point, adding \`ExecStopPost\` plus runtime directory preservation to the *managed service unit*, and wiring a single opt-in daemon controller. No change to upstream \`auto-cpufreq-installer\`, source install/remove scripts, release layout, wrapper or current-symlink activation should be included in the first implementation unless a reproducible incompatibility proves strictly necessary. Test existing installed-unit \`cmp\` ownership checks across version transitions, without bypassing them.
+
+**Normative sources:**
+- [systemd.service](https://www.freedesktop.org/software/systemd/man/latest/systemd.service.html): \`systemctl restart\` is a stop/start, \`ExecStopPost\` runs on stop and abnormal termination; executable \`-\` prefix records failure but does not propagate failure to the service operation.
+- [systemd.exec](https://www.freedesktop.org/software/systemd/man/latest/systemd.exec.html): \`RuntimeDirectoryPreserve=yes\` persists across stops until reboot, not permanently.
+- [Linux Powercap](https://docs.kernel.org/power/powercap/powercap.html): changing a constraint is independent of the userspace daemon process lifetime.
+
+**Regression gates before implementing active writes:**
+1. Normal update with RAPL *disabled* produces the same updater exit code, current symlink, rollback and service state as upstream.
+2. Normal update with RAPL *enabled*: old service stop recovers baseline, updater proceeds unmodified, new version restarts and conditionally reapplies config (subject to new hardware/support checks).
+3. Cleanup failure: updater is not stuck due to the cleanup hook, journal survives, user receives a warning, and the new daemon runs normal CPU policies but does no RAPL writes.
+4. Failed version activation and rollback: old daemon can restart; no orphaned Powercap state or destructive journal overwrite.
+5. No additional permanent service, release-switch wrapper, custom install hook, or installed-unit ownership bypass is introduced for RAPL.
+
+This is a **planning correction only**. Existing code, updater and service on the user system remain untouched.
+
+---
+
+
 **Status:** research and design only; no service/daemon changes authorized by this document.  
 **Owner constraints:** functional final upstream PR only. No development tests, plans, logs, or internal documentation in the final PR. The GTK UI remains read-only. RAPL writes are opt-in and initially disabled. Do not modify the user's running notebook while preparing or validating this plan.
 
@@ -47,9 +85,9 @@ The upstream systemd install/remove scripts compare the installed unit with the 
 
 Do not silently overwrite a custom unit. If the detected unit is unmanaged, disable active RAPL and give a specific actionable diagnostic.
 
-### Hazard D: complete uninstallation
+### Hazard D: complete uninstallation (distinct from ordinary updates)
 
-The source installer's `tool_remove` eventually removes the entire installation root. A pending journal must not be discarded when its restoration helper is still required. Before disabling/removing the unit or deleting generations, check the return result from a real restore attempt and the verified emptiness of any unresolved journal. On failure: **abort destructive cleanup**, retain executable and state, log a specific reason. Later retries must be idempotent. Preserve normal uninstall behavior for systems that never used RAPL.
+The source installer's `tool_remove` eventually removes the entire installation root. An unresolved journal must not be silently discarded or presented as restored. **Do not treat a routine version update as a final uninstall, and do not add an unconditional blocker to the existing update path.** For final uninstall, research a narrowly scoped warning/retry/rescue procedure, preserving recoverability. If that cannot be achieved without a disruptive overhaul of the current release manager, defer active RAPL writes rather than add invasive updater logic. Preserve normal uninstall behavior on systems that never enabled RAPL.
 
 ### Hazard E: non-systemd packaging
 
@@ -111,13 +149,13 @@ Restart=on-failure
 
 This *illustrates* the systemd lifecycle and 3.2.0 paths; it **does not prove helper stability across release switch**. Confirm whether to use a stable package-owned launcher that resolves the correct compatible helper, with tests against stale/missing versions and old journal schema. Do not apply the unit above without those tests.
 
-No `WatchdogSec` in this initial change. Only enable after proving `sd_notify WATCHDOG=1` support and reasonable timing. Do not suppress cleanup failure with a `-` command prefix without careful diagnostic design.
+No `WatchdogSec` in this initial change. Only enable after proving `sd_notify WATCHDOG=1` support and reasonable timing. The documented systemd `-` prefix is a **candidate** for isolating an optional recovery-hook failure from the routine update/stop result; if used, the helper must still log its real status, preserve unresolved journal state, and prevent later RAPL writes until resolved. Test the exact `systemctl stop` / updater behavior.
 
 **Runtime journal proposal:** `/run/auto-cpufreq/power-state.json`, root `0600`, parent root `0700`, `RuntimeDirectoryPreserve=yes`, same-boot only. Test manual stop, daemon crash, auto restart, and failed cleanup; the file survives within the same boot. Do not claim recovery after power loss/reboot. Persistent `StateDirectory` across reboot is deferred until a safe boot-id + hardware identity + no-stale-restore policy exists.
 
 **Stop timeouts:** choose bounded stopping and helper operation timeouts empirically. `TimeoutStopSec` applies to cleanup phases. A killed/hung helper must leave journal state intact, and the next start must enter `recovery_failed` / `unarmed` until reconciled.
 
-**Logging:** report cleanup action and `$SERVICE_RESULT` diagnostics through journald. Distinguish success, already restored, drift/no overwrite, inaccessible constraint, journal corrupt, lock busy, helper unavailable, and cleanup timeout. Exit zero only for no pending changes or fully verified cleanup. Nonzero when unresolved entries exist; verify how unit restart handling works.
+**Logging:** report cleanup action and `$SERVICE_RESULT` diagnostics through journald. Distinguish success, already restored, drift/no overwrite, inaccessible constraint, journal corrupt, lock busy, helper unavailable, and cleanup timeout. The helper reports true success/failure via its exit code and journal; service-unit failure handling must be tested separately so an optional hook cannot block routine updates. Do not infer successful recovery from `systemctl stop` alone.
 
 ## 5. Execution sequence (all development tests remain on lab branch)
 
@@ -143,7 +181,7 @@ Prototype unit in a lab systemd manager/container/VM. Verify with `systemd-analy
 
 Test fresh installation, existing 3.2.0 installation, versioned release switch, rollback on failure, remove/reinstall, stop failure, unresolved journal at uninstall, missing helper, and mismatched/unmanaged unit. Account for the source installer's marker and unit-content `cmp` protections. Ensure no successful uninstall deletes the only compatible recovery implementation while unresolved caps exist.
 
-**Pass:** invariant: `pending recovery ⇒ compatible helper + journal preserved OR active writes never enabled`. No destructive removal under uncertainty.
+**Pass:** normal update remains compatible and unblocked; pending recovery prevents *new RAPL writes* while preserving a recoverable journal and clear diagnostics. Full uninstall with unresolved recovery receives separate safe handling. Do not alter the versioned installer's established switching/rollback contract.
 
 ### Gate 4 — control scope integration
 
