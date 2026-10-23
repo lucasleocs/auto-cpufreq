@@ -22,6 +22,10 @@ jobs:
         run: python -c 'import dbus_next; import auto_cpufreq.modules.battery_upower'
       - name: Run battery-report integration tests
         run: python -m unittest discover -s internal -p 'test_upower_system_info.py' -v
+      - name: Verify terminal --stats frontend and UPower polling
+        run: |
+          python -m unittest discover -s internal -p 'test_upower_frontends.py' -k StatsFrontendTests -v
+          python -m unittest discover -s internal -p 'test_upower_polling.py' -v
       - name: Confirm sysfs fallback without physical battery
         run: |
           python - <<'PY'
@@ -30,3 +34,20 @@ jobs:
           print("status:", battery)
           print("source:", battery.source)
           PY
+
+  gtk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install GTK3 runtime and Xvfb
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends python3-gi gir1.2-gtk-3.0 python3-venv xvfb xauth
+      - name: Install package without replacing system Python
+        run: |
+          /usr/bin/python3 -m venv --system-site-packages .venv
+          POETRY_DYNAMIC_VERSIONING_BYPASS=3.2.0 .venv/bin/python -m pip install -e .
+      - name: Simulate old and new UPower battery capability displays
+        run: xvfb-run -a .venv/bin/python -m unittest discover -s internal -p 'test_upower_frontends.py' -k GtkFrontendTests -v
