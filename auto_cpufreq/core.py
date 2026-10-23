@@ -1274,9 +1274,11 @@ def set_autofreq():
     if charging():
         print("Battery is: charging\n")
         set_performance()
+        return "charger"
     else:
         print("Battery is: discharging\n")
         set_powersave()
+        return "battery"
 
 def mon_autofreq():
     """
