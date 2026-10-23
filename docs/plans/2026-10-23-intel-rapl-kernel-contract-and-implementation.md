@@ -198,3 +198,21 @@ Current lab baseline: 20 synthetic tests passed on Python 3.9 and 3.12, plus the
 **Approved now:** read-only package RAPL discovery and shared GTK/stats reporting as a staged feature, subject to further ABI edge-case tests.
 
 **Not approved now:** enabling the active PL1/PL2 writer, regardless of synthetic green checks, until the recovery journal, systemd lifecycle, control-type ambiguity and external-owner gates above are satisfied.
+
+
+## Implementation checkpoint: scope selection and journal locking
+
+Reviewed and exercised on the separate \`lab/intel-rapl-capability-20261023\` branch:
+
+- Pure \`rapl_policy.py\` parses \`enable_rapl_envelopes\` (default off), exact decimal watts and optional exact \`rapl_control_type\` / \`rapl_package\`. No system state is changed by parsing or capability selection.
+- The selector is **fail-closed** when both \`intel-rapl\` and \`intel-rapl-mmio\` are exposed or multiple packages are present. There is intentionally **no** accepted \`both\` selector and no forced MSR/MMIO equality.
+- The laboratory \`IntelRaplController.apply()\` independently rejects ambiguous types/packages and cross-controller transitions with outstanding ownership. It cannot accidentally write a second interface when a caller forgets the selector.
+- The laboratory state store uses \`fcntl.flock\` on a private \`O_NOFOLLOW\` lock file, covering both apply and restore. The lock prevents participating local auto-cpufreq processes from interleaving hardware writes and journal changes, but not external firmware/other utilities.
+- Package-zone aliases in the read-only module are constrained to the canonical Powercap controller tree; report status now uses **observed** rather than interpreting readability as write authorization. This read-only improvement was ported to the clean feature branch.
+- Numerical parsing is bounded to a nonzero unsigned 64-bit micro-watt value, not an arbitrary laptop TDP (e.g. 1000 W) chosen by the application. \`powercap_sys.c\` parses \`constraint_X_power_limit_uw\` with \`kstrtoull\` into \`u64\`, and \`powercap.h\` passes \`u64\` to driver callbacks. **That bound is only a representation check**, not permission to raise a platform limit.
+  - https://kernel.googlesource.com/pub/scm/linux/kernel/git/torvalds/linux/+/b91872c56940950a6a0852e499d249c3091d4284/drivers/powercap/powercap_sys.c
+  - https://github.com/torvalds/linux/blob/master/include/linux/powercap.h
+
+Lab regression coverage has been expanded from 20 baseline tests to include opt-in parsing, dual-controller selection, multi-package scoping, cross-scope journal ownership, symlink escape, file-lock contention and numerical edge cases. Passing synthetic tests do **not** establish production safety.
+
+**Remaining hard stop before any active RAPL writer is merged to the contribution branch:** integrate the controller through exactly one daemon lifecycle, verify independent restoration helper, unambiguous service paths and upgrade behavior, preserve unresolved journal entries after failed stop, test suspend/resume, and confirm recovery against genuine Powercap hardware in an explicitly authorized test environment. The daemon and real notebook have not been changed by this checkpoint.
