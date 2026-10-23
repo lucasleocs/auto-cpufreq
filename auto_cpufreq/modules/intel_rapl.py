@@ -299,48 +299,86 @@ class RaplStateStore:
     def __init__(self, path: Path = DEFAULT_RAPL_STATE_PATH) -> None:
         self.path = Path(path)
 
-    @contextmanager
-    def locked(self):
-        """Serialize journal and sysfs operations across local processes.
+    def _private_parent(self) -> Path:
+        """Require a private, owned, real runtime directory.
 
-        The advisory lock is cooperative; it cannot lock out firmware, other
-        tools or competing privileged writers that do not use this lock.
+        Do not chmod an unexpected pre-existing directory. In production
+        systemd creates /run/auto-cpufreq with RuntimeDirectoryMode=0700.
         """
         parent = self.path.parent
         try:
             parent.mkdir(parents=True, mode=0o700, exist_ok=True)
-            parent_mode = parent.lstat().st_mode
-            if not stat.S_ISDIR(parent_mode):
-                raise RaplStateError("RAPL state directory is not a real directory")
-            os.chmod(parent, 0o700)
+            info = parent.lstat()
+        except OSError as exc:
+            raise RaplStateError(f"Unable to inspect RAPL state directory: {exc}") from exc
+        if (not stat.S_ISDIR(info.st_mode)
+                or info.st_uid != os.geteuid()
+                or (info.st_mode & 0o077)):
+            raise RaplStateError(
+                "RAPL state directory must be a private directory owned "
+                "by the service account"
+            )
+        return parent
+
+    @staticmethod
+    def _validate_private_file(fd: int, kind: str) -> None:
+        info = os.fstat(fd)
+        if (not stat.S_ISREG(info.st_mode)
+                or info.st_uid != os.geteuid()
+                or info.st_nlink != 1
+                or (info.st_mode & 0o077)):
+            raise RaplStateError(
+                f"Untrusted RAPL {kind}: expected a private, owned regular file"
+            )
+
+    @contextmanager
+    def locked(self):
+        """Cooperatively serialize local journal and Powercap operations."""
+        self._private_parent()
+        try:
             flags = os.O_CREAT | os.O_RDWR | os.O_CLOEXEC | os.O_NOFOLLOW
             fd = os.open(str(self.path) + ".lock", flags, 0o600)
-            try:
-                os.fchmod(fd, 0o600)
-                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            except OSError:
-                os.close(fd)
-                raise
         except OSError as exc:
-            raise RaplStateError(
-                f"Unable to acquire exclusive RAPL journal lock: {exc}"
-            ) from exc
+            raise RaplStateError(f"Unable to open RAPL state lock: {exc}") from exc
         try:
-            yield
+            self._validate_private_file(fd, "lock")
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except OSError as exc:
+                raise RaplStateError(
+                    f"Unable to acquire exclusive RAPL lock: {exc}"
+                ) from exc
+            try:
+                yield
+            finally:
+                fcntl.flock(fd, fcntl.LOCK_UN)
         finally:
-            fcntl.flock(fd, fcntl.LOCK_UN)
             os.close(fd)
 
     def load(self) -> tuple[RaplOwnershipRecord, ...]:
+        fd = -1
         try:
-            with self.path.open("r", encoding="utf-8") as handle:
+            # O_NOFOLLOW protects against untrusted journal aliases;
+            # O_NONBLOCK avoids blocking on a substituted FIFO.
+            fd = os.open(
+                self.path,
+                os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW | os.O_NONBLOCK,
+            )
+            self._validate_private_file(fd, "ownership journal")
+            with os.fdopen(fd, "r", encoding="utf-8") as handle:
+                fd = -1
                 payload = json.load(handle)
         except FileNotFoundError:
             return ()
+        except RaplStateError:
+            raise
         except (OSError, UnicodeError, json.JSONDecodeError) as exc:
             raise RaplStateError(
                 f"Unable to read trusted RAPL ownership state: {exc}"
             ) from exc
+        finally:
+            if fd >= 0:
+                os.close(fd)
 
         if not isinstance(payload, dict) or set(payload) != {"version", "records"}:
             raise RaplStateError("Invalid RAPL ownership state document")
@@ -374,11 +412,11 @@ class RaplStateStore:
             "records": [_record_to_json(record) for record in records],
         }
 
-        parent = self.path.parent
+        parent = self._private_parent()
         temp_path: Optional[Path] = None
         try:
-            parent.mkdir(parents=True, mode=0o700, exist_ok=True)
-            os.chmod(parent, 0o700)
+            if self.path.is_symlink():
+                raise RaplStateError("RAPL journal is a symbolic link")
             fd, temp_name = tempfile.mkstemp(
                 prefix=f".{self.path.name}.",
                 dir=str(parent),
@@ -405,7 +443,10 @@ class RaplStateStore:
                     pass
 
     def clear(self) -> None:
+        self._private_parent()
         try:
+            if self.path.is_symlink():
+                raise RaplStateError("RAPL journal is a symbolic link")
             self.path.unlink()
         except FileNotFoundError:
             return
@@ -414,8 +455,12 @@ class RaplStateStore:
         self._fsync_parent()
 
     def _fsync_parent(self) -> None:
+        self._private_parent()
         try:
-            fd = os.open(self.path.parent, os.O_RDONLY)
+            fd = os.open(
+                self.path.parent,
+                os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+            )
         except OSError as exc:
             raise RaplStateError(
                 f"Unable to open RAPL state directory for sync: {exc}"
