@@ -21,3 +21,28 @@ jobs:
         run: python -m unittest discover -s internal_tests -p 'test_rapl_*.py' -v
       - name: Compile Python module
         run: python -m compileall -q auto_cpufreq/modules/rapl_capabilities.py
+
+  real-systemd-lifecycle:
+    name: Real systemd lifecycle with fake Powercap
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Confirm real systemd PID 1 and parse the fixture
+        run: |
+          test "$(cat /proc/1/comm)" = systemd
+          python3 -m py_compile \
+            internal_tests/rapl_systemd_fixture.py \
+            internal_tests/rapl_systemd_integration.py \
+            auto_cpufreq/bin/auto_cpufreq_restore_rapl.py
+      - name: Verify stop, restart, SIGKILL and release-switch semantics
+        run: sudo /usr/bin/python3 internal_tests/rapl_systemd_integration.py
+      - name: Prove the ephemeral unit was removed
+        if: always()
+        run: |
+          if systemctl list-units --all --plain --no-legend \
+            'auto-cpufreq-rapl-lifecycle-lab-*.service' \
+            | grep -q auto-cpufreq-rapl-lifecycle-lab; then
+            echo "A disposable RAPL lab unit survived cleanup" >&2
+            exit 1
+          fi
