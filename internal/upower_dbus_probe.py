@@ -8,6 +8,7 @@ import asyncio
 import json
 import math
 import os
+import sys
 from pathlib import Path
 
 POWER_SUPPLY_DIR = Path("/sys/class/power_supply")
@@ -194,16 +195,21 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Read UPower if available; otherwise read sysfs. Never writes settings.")
     parser.add_argument("--battery", help="Power supply battery name, e.g. BAT1")
     parser.add_argument("--timeout", type=float, default=2.0, help="Maximum seconds for the complete D-Bus read")
+    parser.add_argument("--diagnose", action="store_true", help="Report why UPower was not selected, on stderr")
     args = parser.parse_args()
     if not math.isfinite(args.timeout) or not 0.05 <= args.timeout <= 15:
         parser.error("--timeout must be between 0.05 and 15 seconds")
     selected = battery_path(args.battery)
     result = None
+    reason = "No system battery found"
     if selected is not None:
+        reason = "No valid UPower snapshot matched the selected battery"
         try:
             result = asyncio.run(upower_snapshot(selected, args.timeout))
-        except (ImportError, OSError, Exception):
-            result = None
+        except Exception as error:
+            reason = f"{type(error).__name__}: {error}"
+    if result is None and args.diagnose:
+        print(f"UPower fallback: {reason}", file=sys.stderr)
     print(json.dumps(result or sysfs_snapshot(selected), indent=2, sort_keys=True))
 
 
