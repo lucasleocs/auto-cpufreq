@@ -3,6 +3,7 @@ import os
 import unittest
 from dataclasses import dataclass
 from pathlib import Path
+from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -105,12 +106,14 @@ class BatteryStatusTests(unittest.TestCase):
 
     def test_sysfs_status_propagation(self):
         system = self.ns["SystemInfo"]
-        system.get_battery_path = staticmethod(lambda: "/virtual/BAT0")
-        system.external_power_state = staticmethod(lambda _: True)
-        system._battery_power_watts = staticmethod(lambda _: 0.0)
         data = {"status": "Discharging", "capacity": "91"}
-        system.read_file = staticmethod(lambda path: data.get(os.path.basename(path)))
-        info = system.battery_info()
+        with (
+            patch.object(system, "get_battery_path", return_value="/virtual/BAT0"),
+            patch.object(system, "external_power_state", return_value=True),
+            patch.object(system, "_battery_power_watts", return_value=0.0),
+            patch.object(system, "read_file", side_effect=lambda path: data.get(os.path.basename(path))),
+        ):
+            info = system.battery_info()
         self.assertEqual(info.status, "Discharging")
         self.assertTrue(info.is_ac_plugged)
         self.assertEqual(self.ns["battery_power_label"](info), "Discharge power")
@@ -118,12 +121,14 @@ class BatteryStatusTests(unittest.TestCase):
     def test_zero_power_and_current_voltage_fallback(self):
         system = self.ns["SystemInfo"]
         data = {"power_now": "0", "current_now": "2000000", "voltage_now": "12000000"}
-        system.read_file = staticmethod(lambda path: data.get(os.path.basename(path)))
-        self.assertEqual(system._battery_power_watts("/virtual/BAT0"), 0.0)
-        data.pop("power_now")
-        self.assertEqual(system._battery_power_watts("/virtual/BAT0"), 24.0)
-        data.pop("voltage_now")
-        self.assertIsNone(system._battery_power_watts("/virtual/BAT0"))
+        with patch.object(
+            system, "read_file", side_effect=lambda path: data.get(os.path.basename(path))
+        ):
+            self.assertEqual(system._battery_power_watts("/virtual/BAT0"), 0.0)
+            data.pop("power_now")
+            self.assertEqual(system._battery_power_watts("/virtual/BAT0"), 24.0)
+            data.pop("voltage_now")
+            self.assertIsNone(system._battery_power_watts("/virtual/BAT0"))
 
 
 if __name__ == "__main__":
