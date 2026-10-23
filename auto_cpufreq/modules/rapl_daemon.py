@@ -51,7 +51,8 @@ def _managed_systemd_lifecycle() -> bool:
             [
                 "systemctl", "show", SERVICE_NAME,
                 "--property=MainPID", "--property=DropInPaths",
-                "--property=ActiveState",
+                "--property=ActiveState", "--property=NeedDaemonReload",
+                "--property=FragmentPath", "--property=ExecStopPost",
             ],
             capture_output=True, text=True, timeout=2, check=False,
         )
@@ -64,10 +65,25 @@ def _managed_systemd_lifecycle() -> bool:
         key, sep, value = line.partition("=")
         if sep:
             props[key] = value
+    # The unit file on disk can differ from the version held in PID 1
+    # until a daemon-reload. Only the *loaded* post-stop command is an
+    # adequate guard for changing kernel-enforced package limits.
+    loaded_stop = props.get("ExecStopPost", "")
+    helper_path = str(HELPER)
+    stop_commands = loaded_stop.count("path=")
+    loaded_command = (
+        f"path={helper_path} ;" in loaded_stop
+        and f"argv[]={helper_path} ;" in loaded_stop
+        and "ignore_errors=yes" in loaded_stop
+    )
     return (
         props.get("MainPID") == str(os.getpid())
         and props.get("ActiveState") == "active"
         and props.get("DropInPaths") == ""
+        and props.get("NeedDaemonReload") == "no"
+        and props.get("FragmentPath") == str(INSTALLED_UNIT)
+        and stop_commands == 1
+        and loaded_command
     )
 
 
