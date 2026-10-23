@@ -83,6 +83,22 @@ class RAPLDaemonTests(unittest.TestCase):
         self.assertEqual(int(self.mmio.read_text()), 15_000_000)
         self.assertFalse(self.engine.state_store.path.exists())
 
+    def test_direct_top_level_mmio_zone_uses_same_reader_and_writer_identity(self):
+        # Some Powercap layouts expose package zones directly beneath the
+        # class root rather than underneath a control-type directory.
+        zone = self.mmio.parent
+        direct = self.root / "intel-rapl-mmio:0"
+        zone.rename(direct)
+        (self.root / "intel-rapl-mmio").rmdir()
+        direct_power = direct / "constraint_0_power_limit_uw"
+        result = self.tick(selected(controller="intel-rapl-mmio"))
+        self.assertEqual(result.state, "active")
+        self.assertEqual(int(direct_power.read_text()), 12_000_000)
+        self.assertEqual(int(self.msr.read_text()), 28_000_000)
+        self.assertEqual(self.tick(config()).state, "restored")
+        self.assertEqual(int(direct_power.read_text()), 15_000_000)
+        self.assertEqual(self.engine.state_store.load(), ())
+
     def test_msr_and_mmio_must_be_selected_explicitly(self):
         c = config(
             "[intel_power]\nenable_rapl_envelopes = true\n"
