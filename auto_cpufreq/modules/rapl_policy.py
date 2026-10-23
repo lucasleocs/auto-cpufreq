@@ -209,9 +209,9 @@ def resolve_rapl_selection(
         limit for limit in available_in_control
         if limit.package == package and limit.constraint_name in requested
     )
-    readable = tuple(limit for limit in selected if limit.state == "available")
+    readable = tuple(limit for limit in selected if limit.state == "observed")
     missing = tuple(name for name in requested if not any(
-        limit.constraint_name == name and limit.state == "available"
+        limit.constraint_name == name and limit.state == "observed"
         for limit in selected
     ))
     if not readable:
