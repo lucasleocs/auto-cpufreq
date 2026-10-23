@@ -132,5 +132,5 @@ def read_upower_battery(sysfs_path: str, timeout: float = 1.5) -> UPowerBattery 
     """Return an optional physical battery snapshot, never modifying power policy."""
     try:
         return asyncio.run(_read_upower(sysfs_path, timeout))
-    except (Exception,):
+    except Exception:
         return None
