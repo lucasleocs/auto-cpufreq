@@ -398,3 +398,32 @@ The **laboratory only** branch `lab/intel-rapl-capability-20261023` now has the 
 **Evidence:** three targeted recovery regressions originally failed against the old implementation and passed after the corrections; additional file-permission, symlink, malformed-path and helper tests passed. Lab GitHub Actions `Intel RAPL lab checks` run [#40035814189](https://github.com/lucasleocs/auto-cpufreq/actions/runs/40035814189) PASS **70 tests on Python 3.9 and 3.12**. Read-only feature branch and upstream-aligned fork `master` remain unchanged. The laboratory has not installed a unit, called real Powercap writes, or changed the user notebook.
 
 **Remaining next gate before the active writer is deployable:** validate `ExecStopPost` and `RuntimeDirectoryPreserve` with a real, isolated systemd manager; confirm the helper remains available through source-installer updates and rollbacks; harden startup readiness and eliminate divergent discovery implementations. Any installation-mode not verified with an equivalent restore lifecycle remains RAPL read-only. Keep the installer/versioned `releases/current` flow unchanged unless a narrow, reproducible incompatibility demands it.
+
+
+## Real-systemd laboratory checkpoint — 8 scenarios (2026-10-23)
+
+**Branch:** `lab/intel-rapl-capability-20261023`, checkpoint commit `93b32e8a99039d3d44939138559762e485702c6d`.
+
+Added `internal_tests/rapl_systemd_fixture.py` and `internal_tests/rapl_systemd_integration.py` and a *lab-only* real systemd job in `.github/workflows/rapl-lab.yml`. The job uses an Ubuntu GitHub Actions VM with **systemd as PID 1**. The unique test unit is created under `/run/systemd/system/auto-cpufreq-rapl-lifecycle-lab-*.service`; all fake Powercap controls and ownership journals are under that unit's separate `/run` directory, with automatic fixture/unit cleanup. No live machine/sysfs Powercap was written, no real auto-cpufreq service was installed, and no installer was executed.
+
+The **experimental** `scripts/auto-cpufreq.service` includes `RuntimeDirectory=auto-cpufreq`, `RuntimeDirectoryMode=0700`, `RuntimeDirectoryPreserve=yes`, and `ExecStopPost=-/opt/auto-cpufreq/current/venv/bin/auto-cpufreq-restore-rapl`; this is deliberately not in fork `master` or the clean upstream PR branch. The integration harness **derives its unit from this actual lab service file** (substitutes only executable paths, private runtime directory, and test restart/timeout settings) and runs `systemd-analyze verify` against the substituted unit.
+
+**Observed PASS**, [Intel RAPL lab checks run #40036386363](https://github.com/lucasleocs/auto-cpufreq/actions/runs/40036386363), real-manager scenarios:
+
+1. Ordinary service stop invokes `ExecStopPost`, restores fake PL1 from 12 W to 15 W, and retires the journal.
+2. `systemctl restart` runs cleanup before reapplying on start; event order explicitly checked.
+3. `SIGKILL` of the main daemon triggers cleanup and standard `Restart=on-failure`, with restoration before next acquisition.
+4. An atomic `current` symlink switch from simulated release v1 to v2 and rollback to v1 restores state between generations.
+5. Injected write failure in `ExecStopPost` leaves the journal and 12 W unchanged but the normal `systemctl stop` succeeds due to the documented `-` prefix.
+6. Restart after unresolved journal allows daemon startup but does not perform another fake RAPL write.
+7. After fixing cleanup, a blocked daemon can stop, restore the baseline, and safely re-arm RAPL only after state reconciliation.
+8. Failed daemon startup *after fake PL1 acquisition* still invokes `ExecStopPost`, restores 15 W and removes the journal.
+
+Pure-Python synthetic tests still pass on Python 3.9 and 3.12 (70 tests per interpreter as of this checkpoint).
+
+**Strict interpretation:** this validates real systemd lifecycle semantics and the *simulated* release-switch order, **not** a full execution of upstream `auto-cpufreq --update`/installer, and not Linux kernel/firmware behavior on other hardware. The production writer is not connected to the daemon; no support on NixOS/Snap/AUR or other init systems is implied. The next gate is precise integration into actual daemon config/AC-battery policy, dynamic Powercap discovery, and a real source updater/rollback regression harness if it can be run in a disposable environment. Keep all unsupported deployments RAPL read-only.
+
+Official references:
+- https://www.freedesktop.org/software/systemd/man/latest/systemd.service.html (`ExecStopPost` and `-` command prefix)
+- https://www.freedesktop.org/software/systemd/man/latest/systemd.exec.html (`RuntimeDirectoryPreserve`)
+
