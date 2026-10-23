@@ -10,6 +10,7 @@ import distro
 import psutil
 
 from auto_cpufreq.config.config import config
+from auto_cpufreq.modules.rapl_capabilities import RaplCapabilities, inspect_rapl
 from auto_cpufreq.core import (
     get_hwp_dynamic_boost,
     get_power_supply_ignore_list,
@@ -94,6 +95,7 @@ class SystemReport:
     cpu_avg_temp: float | None = None
     offline_cpus: tuple[int, ...] = ()
     platform_profile: PlatformProfileSnapshot = PlatformProfileSnapshot()
+    rapl_capabilities: RaplCapabilities = RaplCapabilities((), ())
 
 
 class SystemInfo:
@@ -851,6 +853,7 @@ class SystemInfo:
             cpu_avg_temp=avg_temp,
             offline_cpus=tuple(self.offline_cpu_ids()),
             platform_profile=platform_profile.snapshot(),
+            rapl_capabilities=inspect_rapl(),
         )
 
 
