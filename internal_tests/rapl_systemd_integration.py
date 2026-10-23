@@ -85,7 +85,7 @@ def write_unit(unitfile, name, root, *, restore_mode="normal",
             f"daemon {root} {start_mode}",
         ),
         (
-            "RuntimeDirectory=auto-cpufreq",
+            "RuntimeDirectory=auto-cpufreq-rapl",
             f"RuntimeDirectory={name}",
         ),
         (
