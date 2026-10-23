@@ -660,6 +660,10 @@ class IntelRaplController:
                 )
                 continue
 
+            if current == record.original_power_limit_uw:
+                results.append(self._restore(ref, record, current, ownership))
+                continue
+
             if record.pending_target_uw is not None:
                 if current in (
                     record.last_written_power_limit_uw,
@@ -1056,54 +1060,28 @@ class IntelRaplController:
         unsafe_effective: int,
         ownership: dict[RaplConstraintIdentity, RaplOwnershipRecord],
     ) -> RaplApplyResult:
-        try:
-            _write_int(ref.power_limit_path, original)
-        except OSError as exc:
-            restored = _read_int(ref.power_limit_path)
-            if restored is not None and restored > 0:
-                ownership[identity] = RaplOwnershipRecord(
-                    identity=identity,
-                    original_power_limit_uw=original,
-                    last_written_power_limit_uw=restored,
-                )
-                self._save_ownership(ownership)
-            return RaplApplyResult(
-                identity,
-                "unsafe-readback-restore-failed",
-                before,
-                requested,
-                restored,
-                f"Unexpected RAPL readback could not be restored: {exc}",
+        # A readback above the external baseline (or an invalid zero)
+        # cannot be attributed to this process. In particular, it could
+        # already be a firmware/thermal-daemon update. Never overwrite it
+        # to "recover", and never promote it to last_written ownership.
+        #
+        # _acquire/_apply_owned persisted a pending write-ahead record
+        # before calling _write_int. Keep that record so cleanup reports
+        # the unresolved state and a later apply cannot silently reacquire.
+        record = ownership.get(identity)
+        if record is None or record.pending_target_uw is None:
+            raise RaplStateError(
+                "Unsafe RAPL readback without a durable pending write"
             )
-
-        restored = _read_int(ref.power_limit_path)
-        if restored == original:
-            ownership.pop(identity, None)
-            self._save_ownership(ownership)
-            return RaplApplyResult(
-                identity,
-                "unsafe-readback-restored",
-                before,
-                requested,
-                restored,
-                "Unexpected RAPL readback exceeded the safe baseline and was restored",
-            )
-
-        if restored is not None and restored > 0:
-            ownership[identity] = RaplOwnershipRecord(
-                identity=identity,
-                original_power_limit_uw=original,
-                last_written_power_limit_uw=restored,
-            )
-            self._save_ownership(ownership)
-
+        self._yielded_external.add(identity)
         return RaplApplyResult(
             identity,
-            "unsafe-readback-restore-failed",
+            "unsafe-readback-unresolved",
             before,
             requested,
-            restored,
-            "Unexpected RAPL readback was not restored to the original baseline",
+            unsafe_effective,
+            "Unexpected RAPL readback: preserved recovery intent and "
+            "yielded to external control without overwriting the value",
         )
 
     def _restore(
@@ -1116,6 +1094,29 @@ class IntelRaplController:
         identity = record.identity
         original = record.original_power_limit_uw
 
+        if current == original:
+            # Firmware may already have restored the baseline; a redundant
+            # write can fail or race with a new platform power policy.
+            ownership.pop(identity, None)
+            self._save_ownership(ownership)
+            return RaplApplyResult(
+                identity, "already-restored", current, original, current,
+                "Original RAPL value already observed; no sysfs write needed",
+            )
+
+        # Persist the intended *restore* before touching hardware. The
+        # observed 'current' is an accepted previously owned or in-flight
+        # value, as checked by the caller. If restoration fails after a
+        # partial write, the pending intent survives a process crash.
+        pending = RaplOwnershipRecord(
+            identity=identity,
+            original_power_limit_uw=original,
+            last_written_power_limit_uw=current,
+            pending_target_uw=original,
+        )
+        ownership[identity] = pending
+        self._save_ownership(ownership)
+
         try:
             _write_int(ref.power_limit_path, original)
         except OSError as exc:
@@ -1124,23 +1125,18 @@ class IntelRaplController:
                 ownership.pop(identity, None)
                 self._save_ownership(ownership)
                 return RaplApplyResult(
-                    identity,
-                    "restored",
-                    current,
-                    original,
-                    effective,
-                    "Original RAPL limit was restored despite a reported write error",
+                    identity, "restored", current, original, effective,
+                    "Original RAPL limit confirmed despite a write error",
                 )
-            if effective is not None and effective != current:
-                ownership.pop(identity, None)
-                self._save_ownership(ownership)
+            # Never delete the journal if the baseline was not confirmed.
+            # Also do not assign an unexpected value to last_written.
             return RaplApplyResult(
                 identity,
                 "restore-failed",
                 current,
                 original,
                 effective,
-                f"Original RAPL limit could not be restored: {exc}",
+                f"Unconfirmed RAPL restoration; pending intent retained: {exc}",
             )
 
         effective = _read_int(ref.power_limit_path)
@@ -1148,29 +1144,19 @@ class IntelRaplController:
             ownership.pop(identity, None)
             self._save_ownership(ownership)
             return RaplApplyResult(
-                identity,
-                "restored",
-                current,
-                original,
-                effective,
+                identity, "restored", current, original, effective,
                 "Original RAPL limit restored and ownership retired",
             )
 
-        if effective is not None and effective > 0 and effective != current:
-            ownership[identity] = RaplOwnershipRecord(
-                identity=identity,
-                original_power_limit_uw=original,
-                last_written_power_limit_uw=effective,
-            )
-            self._save_ownership(ownership)
-
+        # Even a successful write may be rejected, rounded, or raced by
+        # firmware. Do not claim an unverified readback as self-owned.
         return RaplApplyResult(
             identity,
             "restore-failed",
             current,
             original,
             effective,
-            "Original RAPL limit was not confirmed by readback",
+            "Original RAPL baseline not confirmed; pending intent retained",
         )
 
     @staticmethod
