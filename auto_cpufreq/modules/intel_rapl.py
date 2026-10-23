@@ -1,6 +1,7 @@
 import fcntl
 import json
 import os
+import re
 import stat
 import tempfile
 from contextlib import contextmanager
@@ -448,7 +449,9 @@ class IntelRaplController:
             self.discovery.powercap_root / ref.control_type / "enabled",
             ref.power_limit_path.parent / "enabled",
         ):
-            if path.exists() and _read_text(path) != "1":
+            # A dangling symlink or unreadable attribute is not the same
+            # as an optional attribute omitted by the kernel.
+            if (path.exists() or path.is_symlink()) and _read_text(path) != "1":
                 return False
         return True
 
@@ -460,7 +463,7 @@ class IntelRaplController:
                 continue
 
             zone_name = _read_text(zone_path / "name")
-            if zone_name is None or not zone_name.startswith("package-"):
+            if zone_name is None or re.fullmatch(r"package-[0-9]+", zone_name) is None:
                 continue
 
             try:
