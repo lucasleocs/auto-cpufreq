@@ -50,6 +50,27 @@ def event(root, label):
 
 
 def daemon(root, start_mode="normal"):
+    if start_mode == "verify-real-service":
+        from auto_cpufreq.modules import rapl_daemon as daemon_policy
+
+        unit_name = root.name + ".service"
+        installed = Path("/run/systemd/system") / unit_name
+        expected = root / "packaged-unit"
+        stop_commands = [
+            line for line in expected.read_text().splitlines()
+            if line.startswith("ExecStopPost=")
+        ]
+        if len(stop_commands) != 1:
+            raise RuntimeError("Ambiguous service cleanup hook in test unit")
+        with patch.object(daemon_policy, "SERVICE_NAME", unit_name), \
+             patch.object(daemon_policy, "INSTALLED_UNIT", installed), \
+             patch.object(daemon_policy, "PACKAGE_UNIT", expected), \
+             patch.object(daemon_policy, "HELPER", Path("/usr/bin/python3")), \
+             patch.object(daemon_policy, "EXPECTED_STOP", stop_commands[0]):
+            if not daemon_policy._managed_systemd_lifecycle():
+                raise RuntimeError("The real systemd lifecycle gate was rejected")
+        event(root, "daemon-lifecycle-verified")
+
     engine = controller(root)
     version = Path(__file__).resolve().parent.name
     journal = engine.state_store.load()
@@ -66,7 +87,7 @@ def daemon(root, start_mode="normal"):
     if start_mode == "fail-after-apply":
         event(root, "daemon-failed-after-apply:" + version)
         return 42
-    if start_mode != "normal":
+    if start_mode not in ("normal", "verify-real-service"):
         raise RuntimeError("Unknown fake daemon start mode")
 
     def stop(_sig, _frame):
