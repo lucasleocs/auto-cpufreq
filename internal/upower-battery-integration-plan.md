@@ -86,6 +86,25 @@ Useful design patterns in `6.7/applet.js`:
 
 Do **not** port the applet's `EnableChargeThreshold()` writes, Cinnamon-only UI code, permissions workflow, or its minimum Cinnamon version. The applet is a reference, not a runtime dependency or a guarantee that custom percent configuration is available.
 
+## Observed GalaxyMint GTK results and separate CPU/fan follow-up (2026-10-23)
+
+Reference: the user tested the experimental `SystemReportView` against their installed GTK on Samsung GalaxyMint (Mint 22.3, kernel 7.2.12-x64v3-xanmod1).
+
+- **UPower/Battery verified:** both views showed BAT1 99%, AC connected, start threshold unavailable, end threshold 100, battery power 0.00 W. Installed GTK showed `Not charging`; UPower experimental GTK correctly showed `Fully charged`. UPower 1.90.3 returned no charge-capability API, and both optional GTK labels were confirmed hidden (`False`). Repeated telemetry duration has **not** yet been characterized; one end-to-end call measured 23.9 ms.
+- **Prototype layout:** the experimental window intentionally rendered `SystemReportView` alone, without the production control panel, CSS and full shell. Header spacing and styling differences are expected; this is not an established GTK regression.
+- **CPU fan RPM:** both screenshots showed `CPU fan speed: 0 RPM`. The user reports that an actual RPM value was visible previously. Present `SystemInfo.cpu_fan_speed()` consults `psutil.sensors_fans()`, returns the first strictly positive reading, else zero if **any** entry reports zero, else None. Thus a zero may be a real stopped fan, a transient firmware/EC reading, or an exposed but unreliable sensor; the screenshot alone cannot distinguish them. Neither the experimental UPower module nor the battery UI computes fan speed. **Open investigation; do not modify the battery PR.**
+- **Temperatures:** one screenshot contained CPU sample temperatures around 90–93 C and the other showed several readings around 80–93 C. These are snapshots at different loads; they do not establish a thermal regression from UPower. If elevated temperatures persist under low load, investigate separately.
+- **Minor pre-existing presentation inconsistency:** legacy `BatteryInfoBox.refresh()` displays `None` for missing threshold numbers while the main `SystemReportView` renders `Unavailable`. The new UPower feature should not expand scope just to restyle this; optionally address in a separate UI consistency PR.
+
+### Deferred fan/sensor investigation — separate PR only if warranted
+
+1. Capture repeated readings of `psutil.sensors_fans()` and corresponding `/sys/class/hwmon/hwmon*/fan*_input`, including sensor labels and device names, while noting load/temperature and whether a fan is audibly spinning. Read only; do not alter BIOS/EC, fan curves, RAPL, governor or kernel.
+2. Compare `SystemInfo.cpu_fan_speed()` output with all raw candidate sensor values. Determine whether the first positive value is actually CPU fan rather than a different fan, whether all values are zero, or whether the kernel provides no reliable RPM.
+3. Compare with the installed program *at the same time and system state*, using its own environment and installed psutil version, rather than inferring a regression from screenshots.
+4. If a bug is confirmed, handle it in an independent targeted PR, ideally representing `Unavailable` when there is no reliable fan reading rather than reporting a false zero. Preserve real zero when verifiably supported. Evaluate deterministic sensor selection without vendor/model tables.
+
+**Exit rule:** no fan, temperature or unrelated CPU changes enter the UPower telemetry PR without a separate supported rationale and tests.
+
 ## Future workstream — declarative charge limits in auto-cpufreq.conf (NOT part of this reporting PR)
 
 Goal: allow explicit administrator configuration such as an end limit of `80%` using **existing** auto-cpufreq configuration conventions. The GTK remains read-only; `--stats` reports both requested configuration and observed effective limit, when determinable. No interactive GTK editor, no universal list of accepted percentages, and no new vendor commands.

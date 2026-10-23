@@ -98,6 +98,25 @@ Known baseline:
 
 Validate provider selection with `NativePath`, compare snapshot `UpdateTime`, run GTK and `--stats` while near-full and while genuinely discharging away from AC, and observe behavior after suspend/resume. Do not use sudo, edit charge thresholds, invoke EnableChargeThreshold, or install services as part of this plan.
 
+## Real GTK comparison and deferred fan-speed anomaly
+
+Observed on Samsung GalaxyMint: UPower integration gave 99%, Fully charged, 0.00 W; baseline GTK gave Not charging, 99%, 0.00 W. Both reported start unavailable and stop 100. Confirmed with the live GTK instance that optional `protection` and `controls` labels were invisible.
+
+The same paired screenshots showed CPU fan speed 0 RPM, although the user remembers receiving a positive RPM previously, and CPU sample temperatures around 80–93 C. These remain **observations, not proof of a regression**. Record only; follow up independently of the battery change.
+
+Future fan checks (read-only): raw `psutil.sensors_fans()`, hwmon `fan*_input`, labels, temporal samples, program-installed psutil version, compare positive/zero/absent readings. No kernel parameter, EC write, fan profile or daemon policy change.
+
+### Additional read-only battery release checks
+
+- R01: Main Gtk.show_all() never reveals unsupported UPower rows after initial construction and after subsequent updates.
+- R02: Simulated end-only UPower capability renders `Charge protection` and `Supported controls` with no editable fields; terminal stats conveys the same values.
+- R03: Simulated firmware-managed capability has no invented end percentage.
+- R04: UPower supported then unavailable across successive reports hides optional GTK rows again.
+- R05: `SystemMonitor.format_system_info(report)` renders correct `Fully charged`, zero watts, and no optional rows for UPower 1.90.3.
+- R06: Repeated UPower queries have bounded runtime and no persistent orphaned tasks, beyond one healthy sample at 23.9 ms.
+- R07: A failed read falls back to sysfs while leaving external AC detection and charging threshold writer untouched.
+- R08: Sensor and fan values remain outside the battery feature's changed-data surface.
+
 ## Build and CI validation
 
 - Targeted data-model tests, with injected D-Bus and sysfs fakes.
