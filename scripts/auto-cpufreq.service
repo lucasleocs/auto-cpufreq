@@ -10,7 +10,7 @@ ExecStart=/opt/auto-cpufreq/current/venv/bin/python /opt/auto-cpufreq/current/ve
 Restart=on-failure
 # RAPL journal lives only for this boot and must survive daemon restarts
 # and source-release switches. Normal CPU policy remains independent.
-RuntimeDirectory=auto-cpufreq
+RuntimeDirectory=auto-cpufreq-rapl
 RuntimeDirectoryMode=0700
 RuntimeDirectoryPreserve=yes
 # Optional recovery must never make normal daemon removal or update fail.
