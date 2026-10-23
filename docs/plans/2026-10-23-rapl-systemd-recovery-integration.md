@@ -301,3 +301,28 @@ This strengthens the earlier decision to **avoid requiring profile-based restora
 
 ---
 
+
+## Field evidence — short-lived RAPL writer persistence
+
+Test date 2026-10-23, Samsung GalaxyMint on XanMod 7.2.12; user-executed supervised experiment. This is **observed hardware behavior**, not a universal kernel ABI guarantee.
+
+**Baseline:** Intel RAPL MMIO package-0 named `long_term` = 15,000,000 microW; other RAPL constraints were not targeted by the test. Both custom RAPL systemd units were previously disabled; upstream auto-cpufreq daemon remained active.
+
+**Procedure:** a root-owned short-lived Python subprocess re-read MMIO PL1, wrote 12,000,000 microW to its named `long_term` constraint, then exited with code 0. Separate supervisor read the exact same constraint immediately after exit and again three seconds later. Supervisor restored 15,000,000 microW only when current readback still equaled its requested 12,000,000 microW, then verified the readback.
+
+**Observed terminal evidence:**
+
+```text
+PL1 MMIO inicial: 15.000 W
+Processo filho encerrado: código 0
+PL1 logo após saída do filho: 12.000 W
+O limite permaneceu alterado após o processo sair.
+PL1 após 3 segundos: 12.000 W
+Restaurando PL1 MMIO para 15 W...
+PL1 MMIO final: 15.000 W
+Restauração verificada.
+```
+
+**Interpretation:** exit of the writer did **not** automatically restore a Powercap package limit within the measured three-second interval. Successful write and explicit restoration were confirmed by readback. This experiment did **not** test a systemd daemon stop or a full reboot/hibernate cycle, nor does it establish indefinite persistence or rule out later firmware changes.
+
+**Design consequence:** retain a **minimal, independently verified cleanup on daemon service stop**; no justification to remove the RAPL restore hook based on firmware reset assumptions. Do not modify the versioned updater: normal stop invokes cleanup, then the existing installer can switch versions and the restarted daemon may reapply an explicitly enabled profile. Simulated failure tests and recovery-state safety remain mandatory before active-write release; do not add cross-boot restoration or a new update mechanism without separate evidence. The lab controller already has journal/locking experiments, but active RAPL remains unshipped.
