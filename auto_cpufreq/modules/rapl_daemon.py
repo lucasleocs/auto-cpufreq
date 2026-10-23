@@ -5,6 +5,7 @@ No code path outside the --daemon loop calls tick(). When no explicit
 [intel_power] opt-in is configured, the policy never touches Powercap.
 """
 import os
+import re
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -70,11 +71,13 @@ def _managed_systemd_lifecycle() -> bool:
     # adequate guard for changing kernel-enforced package limits.
     loaded_stop = props.get("ExecStopPost", "")
     helper_path = str(HELPER)
-    stop_commands = loaded_stop.count("path=")
+    paths = re.findall(r"(?:^|[;{])\s*path=([^;\s}]+)", loaded_stop)
+    argvs = re.findall(r"(?:^|[;{])\s*argv\[\]=([^;\s}]+)", loaded_stop)
+    ignored = re.findall(r"(?:^|[;{])\s*ignore_errors=([^;\s}]+)", loaded_stop)
     loaded_command = (
-        f"path={helper_path} ;" in loaded_stop
-        and f"argv[]={helper_path} ;" in loaded_stop
-        and "ignore_errors=yes" in loaded_stop
+        paths == [helper_path]
+        and argvs == [helper_path]
+        and ignored == ["yes"]
     )
     return (
         props.get("MainPID") == str(os.getpid())
@@ -82,7 +85,6 @@ def _managed_systemd_lifecycle() -> bool:
         and props.get("DropInPaths") == ""
         and props.get("NeedDaemonReload") == "no"
         and props.get("FragmentPath") == str(INSTALLED_UNIT)
-        and stop_commands == 1
         and loaded_command
     )
 
