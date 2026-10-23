@@ -689,16 +689,32 @@ class IntelRaplController:
             action, message = validation
             return RaplApplyResult(identity, action, current, target, current, message)
 
+        # Write-ahead intent: loss of the process after the hardware write must
+        # not erase the original externally supplied limit.
+        pending = RaplOwnershipRecord(
+            identity=identity,
+            original_power_limit_uw=current,
+            last_written_power_limit_uw=current,
+            pending_target_uw=target,
+        )
+        ownership[identity] = pending
+        try:
+            self._save_ownership(ownership)
+        except RaplStateError:
+            ownership.pop(identity, None)
+            raise
+
         try:
             _write_int(ref.power_limit_path, target)
         except OSError as exc:
+            effective = _read_int(ref.power_limit_path)
+            if effective == current:
+                ownership.pop(identity, None)
+                self._save_ownership(ownership)
+            # If the write may have changed hardware, keep pending metadata.
             return RaplApplyResult(
-                identity,
-                "write-failed",
-                current,
-                target,
-                _read_int(ref.power_limit_path),
-                f"RAPL write failed: {exc}",
+                identity, "write-failed", current, target, effective,
+                f"RAPL write failed; recovery intent retained if necessary: {exc}",
             )
 
         effective = _read_int(ref.power_limit_path)
@@ -713,6 +729,8 @@ class IntelRaplController:
             )
 
         if effective == current:
+            ownership.pop(identity, None)
+            self._save_ownership(ownership)
             return RaplApplyResult(
                 identity,
                 "readback-rejected",
@@ -742,8 +760,9 @@ class IntelRaplController:
         try:
             self._save_ownership(ownership)
         except RaplStateError:
-            ownership.pop(identity, None)
-            self._best_effort_rollback(ref, current)
+            # The saved on-disk record remains pending. Do not discard it after
+            # a possible hardware write; a subsequent restore pass needs it.
+            ownership[identity] = pending
             raise
 
         return RaplApplyResult(
