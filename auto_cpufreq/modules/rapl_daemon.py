@@ -250,6 +250,17 @@ class RaplDaemonPolicy:
                    for r in results):
                 self._ever_owned = True
                 self._scope = scope
+            if self._ever_owned and any(
+                r.action in {"restored", "already-restored"} for r in results
+            ):
+                # A config reload may withdraw the final owned constraint
+                # while still requesting some externally matched (unowned)
+                # PL2 value. Reconcile the verified journal after restoration.
+                with self.controller.state_store.locked():
+                    remaining = self.controller.state_store.load()
+                if not remaining:
+                    self._ever_owned = False
+                    self._scope = None
             return self._event(
                 "active" if self._ever_owned else "no-change",
                 "Explicit RAPL envelope evaluated: "
