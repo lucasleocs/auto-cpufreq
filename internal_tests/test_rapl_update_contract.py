@@ -6,7 +6,10 @@ No sudo, no installation, no systemctl calls and no real Powercap writes.
 """
 from pathlib import Path
 import re
+import os
+import subprocess
 import unittest
+from tempfile import TemporaryDirectory
 
 from auto_cpufreq.modules.intel_rapl import DEFAULT_RAPL_STATE_PATH
 
@@ -85,6 +88,73 @@ class SourceUpdaterRaplContractTests(unittest.TestCase):
             "refusing to remove the recovery helper", systemd
         )
         self.assertIn("exit 1", systemd[check:disable])
+
+    def test_real_remove_systemd_branch_blocks_unresolved_journal(self):
+        """Execute the verbatim systemd removal branch with fake paths only.
+
+        This does not execute a source installer or touch system unit files:
+        the extracted shell case uses an isolated temporary managed unit,
+        fake systemctl and restore helper.
+        """
+        source = read("scripts/auto-cpufreq-remove.sh")
+        start = source.index("  systemd)")
+        end = source.index("  s6-svscan)", start)
+        branch = source[start:end].replace(
+            "systemd_unit=/etc/systemd/system/auto-cpufreq.service",
+            'systemd_unit="$MOCK_UNIT"',
+        ).replace(
+            "rapl_restore_helper=/opt/auto-cpufreq/current/venv/bin/"
+            "auto-cpufreq-restore-rapl",
+            'rapl_restore_helper="$MOCK_HELPER"',
+        )
+        self.assertIn('systemd_unit="$MOCK_UNIT"', branch)
+        self.assertIn('rapl_restore_helper="$MOCK_HELPER"', branch)
+
+        bash = (
+            '#!/bin/bash\n'
+            'SHARE_DIR="$MOCK_SHARE"\n'
+            'systemctl() { printf "%s\\n" "$*" >> "$MOCK_EVENTS"; }\n'
+            'case "systemd" in\n' + branch + 'esac\n'
+        )
+
+        with TemporaryDirectory() as td:
+            root = Path(td)
+            share = root / "share"
+            (share / "scripts").mkdir(parents=True)
+            packaged = share / "scripts" / "auto-cpufreq.service"
+            installed = root / "installed-auto-cpufreq.service"
+            helper = root / "fake-restore"
+            events = root / "systemctl.log"
+            packaged.write_text(read("scripts/auto-cpufreq.service"))
+            installed.write_text(packaged.read_text())
+            helper.write_text("#!/bin/sh\nexit 1\n")
+            helper.chmod(0o700)
+
+            env = {
+                **os.environ, "MOCK_SHARE": str(share),
+                "MOCK_UNIT": str(installed), "MOCK_HELPER": str(helper),
+                "MOCK_EVENTS": str(events),
+            }
+            failed = subprocess.run(
+                ["bash", "-c", bash], text=True, capture_output=True, env=env
+            )
+            self.assertNotEqual(failed.returncode, 0, failed.stdout)
+            self.assertTrue(installed.exists(), "Unit must survive failed restore")
+            self.assertEqual(events.read_text().splitlines(),
+                             ["stop auto-cpufreq"])
+
+            helper.write_text("#!/bin/sh\nexit 0\n")
+            succeeded = subprocess.run(
+                ["bash", "-c", bash], text=True, capture_output=True, env=env
+            )
+            self.assertEqual(succeeded.returncode, 0, succeeded.stderr)
+            self.assertFalse(installed.exists())
+            self.assertEqual(events.read_text().splitlines(), [
+                "stop auto-cpufreq",
+                "stop auto-cpufreq",
+                "disable auto-cpufreq",
+                "daemon-reload",
+            ])
 
     def test_helper_is_packaged_in_source_venv_and_release_is_atomic(self):
         scripts = read("pyproject.toml")
