@@ -84,5 +84,78 @@ class RaplSafetyRegressionTests(unittest.TestCase):
         )
 
 
+    def _pending_record(self, last=15_000_000, target=14_500_000):
+        ref = self.controller.discover_package_constraints()[0]
+        return rapl.RaplOwnershipRecord(
+            identity=self.controller._identity(ref),
+            original_power_limit_uw=15_000_000,
+            last_written_power_limit_uw=last,
+            pending_target_uw=target,
+        )
+
+    def test_interrupted_before_write_can_retire_pending_intent(self):
+        self.store.save((self._pending_record(),))
+        result = self.controller.restore_owned()
+        self.assertEqual(result[0].action, "restored")
+        self.assertEqual(self.power_path.read_text().strip(), "15000000")
+        self.assertEqual(self.store.load(), ())
+
+    def test_interrupted_after_write_restores_pending_intent(self):
+        self.store.save((self._pending_record(),))
+        self.power_path.write_text("14500000\n")
+        result = self.controller.restore_owned()
+        self.assertEqual(result[0].action, "restored")
+        self.assertEqual(self.power_path.read_text().strip(), "15000000")
+        self.assertEqual(self.store.load(), ())
+
+    def test_ambiguous_pending_readback_is_not_overwritten(self):
+        self.store.save((self._pending_record(),))
+        self.power_path.write_text("14250000\n")
+        result = self.controller.restore_owned()
+        self.assertEqual(result[0].action, "restore-failed")
+        self.assertEqual(self.power_path.read_text().strip(), "14250000")
+        self.assertEqual(len(self.store.load()), 1)
+
+    def test_owned_update_readback_failure_preserves_original_baseline(self):
+        self.assertEqual(self.controller.apply(self.target)[0].action, "acquired")
+        actual_read = rapl._read_int
+        reads = [0]
+
+        def fail_post_write(path):
+            if path == self.power_path:
+                reads[0] += 1
+                if reads[0] >= 2:
+                    return None
+            return actual_read(path)
+
+        with patch.object(rapl, "_read_int", side_effect=fail_post_write):
+            result = self.controller.apply(
+                rapl.RaplEnvelopeTargets(long_term_uw=14_000_000)
+            )
+        self.assertEqual(result[0].action, "readback-failed")
+        journal = self.store.load()[0]
+        self.assertEqual(journal.original_power_limit_uw, 15_000_000)
+        self.assertEqual(journal.last_written_power_limit_uw, 14_500_000)
+        self.assertEqual(journal.pending_target_uw, 14_000_000)
+        restored = self.controller.restore_owned()
+        self.assertEqual(restored[0].action, "restored")
+        self.assertEqual(self.power_path.read_text().strip(), "15000000")
+
+    def test_prewrite_persistence_failure_prevents_hardware_write(self):
+        with patch.object(
+            self.store, "save", side_effect=rapl.RaplStateError("disk full")
+        ):
+            with self.assertRaises(rapl.RaplStateError):
+                self.controller.apply(self.target)
+        self.assertEqual(self.power_path.read_text().strip(), "15000000")
+
+    def test_malformed_ownership_journal_stops_before_hardware_write(self):
+        self.store.path.parent.mkdir(parents=True)
+        self.store.path.write_text("{bad json")
+        with self.assertRaises(rapl.RaplStateError):
+            self.controller.apply(self.target)
+        self.assertEqual(self.power_path.read_text().strip(), "15000000")
+
+
 if __name__ == "__main__":
     unittest.main()
