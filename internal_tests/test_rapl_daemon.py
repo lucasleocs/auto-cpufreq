@@ -140,6 +140,25 @@ class RAPLDaemonTests(unittest.TestCase):
         self.assertEqual(self.tick(bad).state, "restored")
         self.assertEqual(int(self.mmio.read_text()), 15_000_000)
 
+    def test_disappeared_owned_journal_disables_new_writes(self):
+        settings = selected(controller="intel-rapl-mmio")
+        self.assertEqual(self.tick(settings).state, "active")
+        self.engine.state_store.path.unlink()
+        self.assertEqual(self.tick(config()).state, "blocked")
+        self.assertEqual(int(self.mmio.read_text()), 12_000_000)
+        self.assertEqual(self.tick(settings).state, "blocked")
+
+    def test_removed_systemd_cleanup_hook_restores_owned_limit(self):
+        settings = selected(controller="intel-rapl-mmio")
+        self.assertEqual(self.tick(settings).state, "active")
+        self.policy.ready = lambda: False
+        self.assertEqual(self.tick(settings).state, "blocked")
+        self.assertEqual(int(self.mmio.read_text()), 15_000_000)
+        self.assertEqual(self.engine.state_store.load(), ())
+        self.policy.ready = lambda: True
+        self.assertEqual(self.tick(settings).state, "blocked")
+        self.assertEqual(int(self.mmio.read_text()), 15_000_000)
+
     def test_external_drift_latches_off_without_reacquisition(self):
         self.assertEqual(self.tick(selected(controller="intel-rapl-mmio")).state, "active")
         self.mmio.write_text("14000000\n")
