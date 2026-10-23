@@ -562,7 +562,25 @@ class IntelRaplController:
                 )
                 continue
 
+            if record.pending_target_uw is not None:
+                if current in (
+                    record.last_written_power_limit_uw,
+                    record.pending_target_uw,
+                ):
+                    # The value is either still the previously owned limit or
+                    # exactly the in-flight requested limit. Both are safe to
+                    # restore to the recorded external baseline.
+                    results.append(self._restore(ref, record, current, ownership))
+                else:
+                    results.append(RaplApplyResult(
+                        identity, "restore-failed", current,
+                        record.original_power_limit_uw, current,
+                        "Unresolved pending RAPL write; external state is ambiguous",
+                    ))
+                continue
+
             if current != record.last_written_power_limit_uw:
+                self._yielded_external.add(identity)
                 ownership.pop(identity, None)
                 self._save_ownership(ownership)
                 results.append(
