@@ -67,6 +67,9 @@ class RaplOwnershipRecord:
     identity: RaplConstraintIdentity
     original_power_limit_uw: int
     last_written_power_limit_uw: int
+    # Persist a write intention BEFORE mutating Powercap. On an interrupted
+    # readback, the helper must be able to distinguish pending from owned.
+    pending_target_uw: Optional[int] = None
 
 
 @dataclass(frozen=True)
@@ -219,8 +222,12 @@ def _record_from_json(raw) -> RaplOwnershipRecord:
         "original_power_limit_uw",
         "last_written_power_limit_uw",
     }
-    if set(raw) != expected:
+    if not expected.issubset(raw) or set(raw) - expected - {"pending_target_uw"}:
         raise RaplStateError("Unexpected fields in RAPL ownership record")
+
+    pending_target = raw.get("pending_target_uw")
+    if pending_target is not None:
+        pending_target = _require_int(pending_target, "pending_target_uw", minimum=1)
 
     return RaplOwnershipRecord(
         identity=_identity_from_json(raw["identity"]),
@@ -234,6 +241,7 @@ def _record_from_json(raw) -> RaplOwnershipRecord:
             "last_written_power_limit_uw",
             minimum=1,
         ),
+        pending_target_uw=pending_target,
     )
 
 
@@ -273,6 +281,10 @@ def _record_to_json(record: RaplOwnershipRecord) -> dict:
             record.last_written_power_limit_uw,
             "last_written_power_limit_uw",
             minimum=1,
+        ),
+        "pending_target_uw": (
+            _require_int(record.pending_target_uw, "pending_target_uw", minimum=1)
+            if record.pending_target_uw is not None else None
         ),
     }
 
