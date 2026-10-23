@@ -471,3 +471,23 @@ New lab-only `internal_tests/test_rapl_update_contract.py` validates the source 
 
 **Open gate:** full source-installer/update/rollback run in a disposable runner with the real release-installer commands and realistic stop/reinstall failure injection, plus race/path hardening and opt-in real-hardware validation only after explicit permission. Until that gate passes, do not ship the active writer upstream or enable it on the GalaxyMint laptop.
 
+
+
+## Second source-review corrections checkpoint — 2026-10-23
+
+**Scope:** All code changes were confined to `lab/intel-rapl-capability-20261023`. The user laptop, running service, synced fork `master`, clean telemetry-only RAPL contribution branch, and the `auto-cpufreq-installer` entry point were not modified.
+
+**Corrected findings:**
+
+1. `RaplDaemonPolicy._fail_and_reconcile()` attempts same-process `restore_owned()` after any rejected/partial envelope or write-path exception once the startup journal has been checked. This includes PL1 successfully applied immediately before a PL2 write failure, or an exception during journal finalization before `_ever_owned` could be set. A cleanup that cannot confirm the baseline preserves the pending journal; further writes are disabled. `--daemon` unexpected-exception handler now explicitly calls `handle_unexpected_failure()` rather than just dropping the policy object.
+2. `skipped-above-original`, `skipped-external-limit`, `rejected-min`, `rejected-max`, `readback-rejected` and other failed requested writes now trigger a blocked policy and recovery of previously owned caps. On a request to raise MMIO PL1 from owned 12 W to 18 W above its original 15 W baseline, the new 18 W value is not written and the 15 W baseline is restored when safe.
+3. The `constraint_N_max_power_uw` validation now correctly compares `target > max` without incorrectly relying on `current <= max`. A simulated kernel reporting current=15 W, maximum=10 W, target=12 W is denied.
+4. `_managed_systemd_lifecycle()` requires an exact active main PID, installed unit bytes matching its packaged source, no drop-ins, `NeedDaemonReload=no`, loaded `FragmentPath` pointing to the managed unit, and **one exactly parsed loaded** `ExecStopPost` record whose `path` and `argv[]` equal the independent helper and `ignore_errors=yes`. It does not accept partial substrings such as `removed_path=`. Nine real-systemd lifecycle scenarios still pass with this stricter requirement.
+5. **Explicit pre-release-update cleanup barrier:** `scripts/auto-cpufreq-remove.sh` now runs the independent, idempotent RAPL restorer *after* `systemctl stop` (which invokes optional `ExecStopPost`) but **before disabling/unlinking** the managed unit when the unit advertises the RAPL recovery hook. If restoration is still unsuccessful or the helper is missing, it returns failure, retaining the unit and active source generation. This error propagates through the existing `remove_daemon()` / `--update` flow before the version switch. Legacy units without RAPL support are unaffected. The main `auto-cpufreq-installer` and release-link logic remain untouched.
+6. The second redundant RAPL config parser in `intel_rapl.py` now delegates to the one validated `rapl_policy.parse_rapl_configuration`, preserving the legacy `RaplPolicyConfig` return shape and its `RaplConfigError` API.
+
+**Regression testing:** Additional synthetic tests cover partial PL1/PL2 failure, exception after hardware write before journal finalization, above-original config reload, maximum-power mismatch, exact loaded systemd metadata, malformed loaded path prefixes, and parser equivalence. A separate test executes the **actual systemd removal case branch** in Bash with a temporary managed unit, a fake `systemctl` function and a fake restore executable: a failed restorer causes nonzero exit and retains the installed unit; a succeeding restorer allows stop/disable/remove/reload in order. No host system paths or actual services are modified.
+
+GitHub Actions [Intel RAPL lab checks run #40040808955](https://github.com/lucasleocs/auto-cpufreq/actions/runs/40040808955) passed **119 tests on Python 3.9 and Python 3.12**, plus **nine real systemd lifecycle scenarios**, on lab commit `40b4e395be570954a6296ad83c2b469ece79f38b`.
+
+**Residual gate:** This test does **not** run full `auto-cpufreq --update` with a new release downloaded/built in a real isolated host. An actual updater integration run with staged activation, failure injection, and rollback remains the next phase. Keep active RAPL writes disabled on user hardware and do not transfer into upstream contribution branch until separate validation and explicit permission.
