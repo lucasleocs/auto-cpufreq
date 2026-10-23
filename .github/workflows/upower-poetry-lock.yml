@@ -1,0 +1,44 @@
+name: Poetry lock refresh (temporary)
+
+on:
+  push:
+    branches:
+      - tmp/upower-reporting-integration-20261023
+    paths:
+      - pyproject.toml
+      - .github/workflows/upower-poetry-lock.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  refresh-lock:
+    if: github.repository == 'lucasleocs/auto-cpufreq'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install 'poetry==2.5.1'
+      - name: Resolve without upgrading unrelated dependencies
+        run: poetry lock
+      - name: Verify lockfile freshness
+        run: poetry check --lock
+      - name: Commit refreshed lock only on temporary branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --exit-code -- pyproject.toml
+          if git diff --quiet -- poetry.lock; then
+            echo "Lockfile already current"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add poetry.lock
+          git commit -m "build: lock UPower D-Bus dependency"
+          git push origin HEAD:refs/heads/tmp/upower-reporting-integration-20261023

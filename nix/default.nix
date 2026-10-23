@@ -12,6 +12,7 @@
   urwid,
   pyasyncore,
   requests,
+  dbus-next,
   pkgs,
   fetchFromGitHub,
   fetchPypi,
@@ -62,6 +63,7 @@ buildPythonPackage rec {
 
   propagatedBuildInputs = [
     requestsPatched
+    dbus-next
     pygobject3
     click
     distro
