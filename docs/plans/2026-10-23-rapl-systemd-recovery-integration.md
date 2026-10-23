@@ -3,28 +3,28 @@ Internal implementation plan — 2026-10-23
 
 ## 0. October 23 clarification: updater non-interference is mandatory
 
-**User decision overrides earlier conservative proposals that could block an ordinary version update.** Upstream's versioned \`/opt/auto-cpufreq/releases/\` layout and atomic \`current\` activation must be preserved. The RAPL feature may pause during an update, just like existing CPU governor/EPP management, and safely reapply the opt-in configuration after the daemon starts again.
+**User decision overrides earlier conservative proposals that could block an ordinary version update.** Upstream's versioned `/opt/auto-cpufreq/releases/` layout and atomic `current` activation must be preserved. The RAPL feature may pause during an update, just like existing CPU governor/EPP management, and safely reapply the opt-in configuration after the daemon starts again.
 
 Separate the **normal** and **exceptional** paths:
 
 **Normal update (must remain unchanged):**
-1. Existing auto-cpufreq update/remove/install sequence requests the regular systemd service stop. Do not introduce a new RAPL-specific updater or manipulate \`current\`/release generations.
-2. While the **old installed version** is still present, its standard \`ExecStopPost=\` cleanup attempts to restore *only provably owned* RAPL limits; a daemon stop by itself does **not** reset Powercap sysfs limits.
+1. Existing auto-cpufreq update/remove/install sequence requests the regular systemd service stop. Do not introduce a new RAPL-specific updater or manipulate `current`/release generations.
+2. While the **old installed version** is still present, its standard `ExecStopPost=` cleanup attempts to restore *only provably owned* RAPL limits; a daemon stop by itself does **not** reset Powercap sysfs limits.
 3. The existing updater switches versions by its current mechanism, then starts the new daemon. No new Powercap writes are required during the update.
 4. The new daemon re-reads the **actual .conf** file and, only if opt-in is still enabled and the supported lifecycle is healthy, applies the selected constraint(s) again from a freshly observed firmware baseline. If opt-in is off or the new version has no RAPL support, only ordinary CPU management resumes. Do **not** claim that the new version always supports or reapplies RAPL.
 5. No new failure point is allowed to block normal version replacement merely because optional RAPL telemetry is missing or a controller is unsupported.
 
 **Exceptional cleanup failure (keep normal updates possible without hiding danger):**
 - If the old helper cannot prove restoration, it keeps an unresolved, root-protected journal, reports a high-signal warning, and the new daemon's RAPL module enters **unarmed / no new writes** until a compatible recovery action can inspect it. Normal governor, EPP, turbo and update controls must continue working.
-- A nonzero \`ExecStopPost=\` could cause \`systemctl stop\` failure and indirectly block the pre-existing \`--update\` flow. Therefore, **do not ship a cleanup unit whose failure propagates to block normal updater operations**. Investigate documented systemd \`-\` command prefix, which records a failed command but does not mark the entire stop failed, together with explicit error output and retained journal. This is not approval to silently ignore failures: real recovery success must be determined from the journal/readback, never from the service stop status.
+- A nonzero `ExecStopPost=` could cause `systemctl stop` failure and indirectly block the pre-existing `--update` flow. Therefore, **do not ship a cleanup unit whose failure propagates to block normal updater operations**. Investigate documented systemd `-` command prefix, which records a failed command but does not mark the entire stop failed, together with explicit error output and retained journal. This is not approval to silently ignore failures: real recovery success must be determined from the journal/readback, never from the service stop status.
 - Never delete the journal merely because the cleanup command was attempted or because the update proceeds. In an unresolved case, don't reapply RAPL in the new version; give a clear manual remediation path. Assess how to retain a compatible recovery implementation if an old generation is eventually removed, but **do not rewrite the release manager solely for RAPL**.
 - **Full final uninstall** is a separate workflow from a routine version update. Investigate the safe warning/recovery strategy for a final uninstall with pending state; do not silently remove recovery records or promise seamless cleanup when it failed. If satisfying this requirement would demand intrusive modifications to the existing updater, postpone active-writer enablement rather than regress the updater.
 
-**Minimal-change design criterion:** first prefer adding one package-provided restore entry point, adding \`ExecStopPost\` plus runtime directory preservation to the *managed service unit*, and wiring a single opt-in daemon controller. No change to upstream \`auto-cpufreq-installer\`, source install/remove scripts, release layout, wrapper or current-symlink activation should be included in the first implementation unless a reproducible incompatibility proves strictly necessary. Test existing installed-unit \`cmp\` ownership checks across version transitions, without bypassing them.
+**Minimal-change design criterion:** first prefer adding one package-provided restore entry point, adding `ExecStopPost` plus runtime directory preservation to the *managed service unit*, and wiring a single opt-in daemon controller. No change to upstream `auto-cpufreq-installer`, source install/remove scripts, release layout, wrapper or current-symlink activation should be included in the first implementation unless a reproducible incompatibility proves strictly necessary. Test existing installed-unit `cmp` ownership checks across version transitions, without bypassing them.
 
 **Normative sources:**
-- [systemd.service](https://www.freedesktop.org/software/systemd/man/latest/systemd.service.html): \`systemctl restart\` is a stop/start, \`ExecStopPost\` runs on stop and abnormal termination; executable \`-\` prefix records failure but does not propagate failure to the service operation.
-- [systemd.exec](https://www.freedesktop.org/software/systemd/man/latest/systemd.exec.html): \`RuntimeDirectoryPreserve=yes\` persists across stops until reboot, not permanently.
+- [systemd.service](https://www.freedesktop.org/software/systemd/man/latest/systemd.service.html): `systemctl restart` is a stop/start, `ExecStopPost` runs on stop and abnormal termination; executable `-` prefix records failure but does not propagate failure to the service operation.
+- [systemd.exec](https://www.freedesktop.org/software/systemd/man/latest/systemd.exec.html): `RuntimeDirectoryPreserve=yes` persists across stops until reboot, not permanently.
 - [Linux Powercap](https://docs.kernel.org/power/powercap/powercap.html): changing a constraint is independent of the userspace daemon process lifetime.
 
 **Regression gates before implementing active writes:**
