@@ -5,6 +5,7 @@ from threading import Thread
 from typing import Callable
 import urwid
 import time
+from .rapl_capabilities import format_rapl_capabilities
 from .system_info import (
     SystemReport,
     battery_power_label,
@@ -392,6 +393,14 @@ class SystemMonitor:
             )
 
         self.right_content.append(aligned_text(""))
+
+        if self.type == ViewType.STATS:
+            self.right_content.append(
+                urwid.AttrMap(aligned_text("Intel RAPL (read-only)"), "header")
+            )
+            for line in format_rapl_capabilities(report.rapl_capabilities):
+                self.right_content.append(aligned_text(line))
+            self.right_content.append(aligned_text(""))
 
         # System Statistics
         self.right_content.extend(
