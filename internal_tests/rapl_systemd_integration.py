@@ -245,7 +245,20 @@ def test_lab():
         assert root.exists()
         cmd("systemctl", "reset-failed", unit, check=False)
 
-        print("SYSTEMD RAPL LAB PASS: 8 real-manager lifecycle scenarios",
+        print("Case 9: actual systemd PID and installed recovery hook "
+              "authorize the managed daemon", flush=True)
+        write_unit(unitfile, name, root,
+                   start_mode="verify-real-service", restart="no")
+        shutil.copyfile(unitfile, root / "packaged-unit")
+        cmd("systemctl", "start", unit)
+        poll("verified service applies selected fake envelope",
+             lambda: lines(root)[-2:] ==
+             ["daemon-lifecycle-verified", "daemon-applied:v1"])
+        assert value(root) == TARGET
+        cmd("systemctl", "stop", unit)
+        assert_restored(root)
+
+        print("SYSTEMD RAPL LAB PASS: 9 real-manager lifecycle scenarios",
               flush=True)
     finally:
         # Always dismantle ONLY this unique fixture/unit.
