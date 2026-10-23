@@ -265,6 +265,57 @@ class RAPLDaemonTests(unittest.TestCase):
         self.assertEqual(self.tick(settings).state, "active")
         self.assertEqual(int(self.mmio.read_text()), 12_000_000)
 
+    def test_bios_ignores_power_limit_without_write_error_only_once(self):
+        settings = selected(controller="intel-rapl-mmio")
+        attempts = []
+
+        def ignored(path, value):
+            attempts.append((path, value))
+            # Locked BIOS constraint: the kernel reports no write error
+            # but readback is unchanged at the external 15 W baseline.
+
+        with patch.object(rapl, "_write_int", side_effect=ignored):
+            self.assertEqual(self.tick(settings).state, "blocked")
+            self.assertEqual(self.tick(settings).state, "blocked")
+
+        self.assertEqual(len(attempts), 1)
+        self.assertEqual(int(self.mmio.read_text()), 15_000_000)
+        self.assertEqual(self.engine.state_store.load(), ())
+
+    def test_bios_rejects_write_error_only_once(self):
+        settings = selected(controller="intel-rapl-mmio")
+        attempts = []
+        def rejected(path, value):
+            attempts.append(value)
+            raise OSError("RAPL constraint locked by firmware")
+
+        with patch.object(rapl, "_write_int", side_effect=rejected):
+            self.assertEqual(self.tick(settings).state, "blocked")
+            self.assertEqual(self.tick(settings).state, "blocked")
+        self.assertEqual(attempts, [12_000_000])
+        self.assertEqual(int(self.mmio.read_text()), 15_000_000)
+        self.assertEqual(self.engine.state_store.load(), ())
+
+    def test_quantized_readback_does_not_loop_or_leave_modified_limit(self):
+        settings = selected(controller="intel-rapl-mmio")
+        actual_write = rapl._write_int
+        writes = []
+
+        def quantized(path, value):
+            writes.append(value)
+            if path == self.mmio and value == 12_000_000:
+                self.mmio.write_text("12500000\n")
+            else:
+                actual_write(path, value)
+
+        with patch.object(rapl, "_write_int", side_effect=quantized):
+            self.assertEqual(self.tick(settings).state, "blocked")
+            self.assertEqual(self.tick(settings).state, "blocked")
+
+        self.assertEqual(writes, [12_000_000, 15_000_000])
+        self.assertEqual(int(self.mmio.read_text()), 15_000_000)
+        self.assertEqual(self.engine.state_store.load(), ())
+
     def test_no_writes_to_explicitly_disabled_zone(self):
         (self.mmio.parent / "enabled").write_text("0\n")
         self.assertEqual(self.tick(selected(controller="intel-rapl-mmio")).state,
