@@ -139,6 +139,12 @@ class RaplDaemonPolicy:
             return self._disable_on_fault(
                 RaplStateError("RAPL restoration left unresolved ownership")
             )
+        if not outcomes:
+            # We had owned state but there is no longer any journal entry.
+            # An empty journal is not proof that restoration occurred.
+            return self._disable_on_fault(
+                RaplStateError("Owned RAPL journal disappeared without restoration")
+            )
         # If the firmware took control, yield instead of reacquiring.
         if any(item.action == "retired-drift" for item in outcomes):
             return self._disable_on_fault(
@@ -174,7 +180,14 @@ class RaplDaemonPolicy:
             return self._event("disabled", "RAPL opt-in inactive for this profile")
 
         if not self.ready():
-            # Never restore/write from an unsupported daemon lifecycle.
+            # If the service was valid earlier and we have already changed
+            # Powercap, relinquish our proven ownership before disabling
+            # RAPL. This is cleanup, never a new limit acquisition.
+            if self._ever_owned:
+                self._restore_ours()
+                return self._disable_on_fault(
+                    RaplStateError("Managed service recovery lifecycle changed")
+                )
             return self._event("read-only", "Service recovery lifecycle not verified")
 
         if not self._check_initial_state():
