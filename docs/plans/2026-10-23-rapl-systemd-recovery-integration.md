@@ -441,3 +441,33 @@ Official references:
 - Lab service unit still includes a non-blocking `ExecStopPost` independent recovery command and same-boot runtime directory preservation. The helper's own return code continues to report unresolved states.
 
 **Unfinished gates (do not interpret as production approval):** audit the differences between `intel_power.py` and the read-only `rapl_capabilities.py` discovery and identity handling, harden untrusted journal ancestor/path races, test driver quantization/BIOS lock cases, exercise the **complete real versioned updater** and rollback under failure (the existing v1/v2 symlink tests are only a simulation), validate initial state with live systemd on supported hardware after separate authorization, and restrict initial deployment to source-installed systemd only. Do not submit an active-write upstream PR yet.
+
+
+## Discovery and updater isolation checkpoint — 2026-10-23
+
+**Lab only; no release / installed daemon changes.** Final lab commit `4993bda16563d2fd301d412011be9e44b926ac3d`.
+
+### Unified package-scoped Powercap discovery
+
+The initial controller used generic `IntelPowerDiscovery.powercap_zone_paths()`, which can enumerate package *and subzone* paths, and may assign `control_type=None` to a direct class alias. The read-only `rapl_capabilities._package_zones()` already recognizes safe package-level zones through canonical control directories and top-level class aliases, with deduplication by resolved path and no descent into core/uncore/DRAM subzones.
+
+A regression demonstrated that the reader could identify an MMIO package while the writer failed to select it. The writer now uses exactly the same package-zone enumeration; ownership identity uses stable package zone names within the same boot rather than alias-dependent relative paths. It additionally refuses:
+- two physical zones sharing the selected `package-N` name;
+- duplicate requested `long_term` or `short_term` constraint names;
+- a power limit or constraint-name attribute redirected by a symlink (sysfs attributes are regular virtual files).
+The MSR controller remains isolated from MMIO, and readers/GTK remain read-only.
+
+### Firmware-readback behavior
+
+The lab daemon now treats a kernel-ignored write (`readback-rejected`) or a rounded/quantized write as an unsupported **active** limit. It does **not** retry the same write on every daemon tick. When a quantized value is verified and journal-owned, it explicitly restores the external baseline and latches RAPL off for the running process. Rejection via an `OSError` also latches off after the first attempt. Existing CPU governor/EPP/turbo continues. This deliberately conservative initial behavior does **not** claim general support for controller-dependent rounding.
+
+### Critical updater/runtime-path conflict resolved without touching updater
+
+Found a concrete cross-component collision: upstream `auto-cpufreq-installer` has `OPERATION_LOCK_DIR="/run/auto-cpufreq"` and `acquire_operation_lock()` deliberately runs `chmod 755 "$OPERATION_LOCK_DIR"`. The first RAPL design also required `/run/auto-cpufreq` as a private (0700) ownership-journal directory, which cannot safely share those permissions. The RAPL implementation now exclusively uses **`/run/auto-cpufreq-rapl/power-state.json`**, created by the experimental systemd unit with `RuntimeDirectory=auto-cpufreq-rapl`, `RuntimeDirectoryMode=0700` and `RuntimeDirectoryPreserve=yes`. Upstream's installer, operation lock, `current` release symlink, and updater are completely untouched.
+
+New lab-only `internal_tests/test_rapl_update_contract.py` validates the source file relationships: the installer lock directory is distinct from the RAPL journal directory, the service unit creates the matching private runtime location and calls a packaged console restore command, the existing updater removes/stops the daemon before installing a new release, the remove script checks the managed unit and stops before disable, and the versioned installer has the expected atomic `current` replacement. This is **static cross-file regression**, not a successful execution of a real `auto-cpufreq --update` with actual tag download, release build, service remove/reinstall or rollback.
+
+**Validation:** GitHub Actions RAPL lab [run #40039523171](https://github.com/lucasleocs/auto-cpufreq/actions/runs/40039523171) passed **105 Python synthetic tests on both Python 3.9 and 3.12, and nine real-systemd/fake-Powercap lifecycle scenarios**. Linux Build and Nix Flake on the exact same SHA passed. Fork `master` remains aligned with upstream; clean read-only RAPL contribution branch remains untouched.
+
+**Open gate:** full source-installer/update/rollback run in a disposable runner with the real release-installer commands and realistic stop/reinstall failure injection, plus race/path hardening and opt-in real-hardware validation only after explicit permission. Until that gate passes, do not ship the active writer upstream or enable it on the GalaxyMint laptop.
+
