@@ -201,6 +201,25 @@ case "$(ps h -o comm 1)" in
       fi
       echo -e "\n* Stopping auto-cpufreq daemon (systemd) service"
       systemctl stop auto-cpufreq || exit $?
+
+      # ExecStopPost is intentionally nonblocking so normal service
+      # restarts are not interrupted by optional RAPL cleanup. However,
+      # removing/updating the source generation must NOT discard the only
+      # recovery executable while a prior RAPL cap is still unresolved.
+      # Re-run the idempotent helper explicitly before disabling/removing
+      # this managed unit. Older units without RAPL support are unaffected.
+      if grep -Fqx \
+        'ExecStopPost=-/opt/auto-cpufreq/current/venv/bin/auto-cpufreq-restore-rapl' \
+        "$managed_systemd_unit"; then
+        rapl_restore_helper=/opt/auto-cpufreq/current/venv/bin/auto-cpufreq-restore-rapl
+        if [ ! -x "$rapl_restore_helper" ] \
+          || ! "$rapl_restore_helper"; then
+          echo "Error: Intel RAPL restoration is unconfirmed; refusing to remove the recovery helper or activate another source release."
+          echo "The managed systemd unit and source release were retained for diagnosis."
+          exit 1
+        fi
+      fi
+
       # disable reloads systemd, which may unload the now-inactive unit.
       # stop already clears its failed state, so no reset-failed is needed.
       echo -e "\n* Disabling auto-cpufreq daemon (systemd) at boot"
