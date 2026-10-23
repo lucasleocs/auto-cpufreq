@@ -669,6 +669,8 @@ auto-cpufreq --stats
 
 In addition to CPU and battery telemetry, the stats interface reports the current **Platform Profile**, detected interface, control availability, available platform profiles, and provider information. CPU power controls such as the governor, EPP, EPB, HWP Dynamic Boost, and Turbo Boost are grouped separately under **CPU Power State**.
 
+Battery power is measured at the battery, not across the entire system. Its label follows the battery status reported by the kernel; AC can be connected while the battery is not charging or is discharging.
+
 ### bluetooth_boot_off
 
 Turn off Bluetooth on boot (only)! Bluetooth can still be turned on manually when needed. This option is executed during the installation of the auto-cpufreq daemon, but it can also be run independently without installing the daemon.

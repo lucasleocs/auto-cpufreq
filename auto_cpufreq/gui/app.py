@@ -16,6 +16,7 @@ from auto_cpufreq.globals import GITHUB, IS_INSTALLED_WITH_SNAP
 from auto_cpufreq.gui.objects import BluetoothBootControl, DaemonNotRunningView, DropDownMenu, MonitorModeView, RadioButtonView, CPUTurboOverride, UpdateDialog
 from auto_cpufreq.modules.system_info import (
     battery_power_label,
+    battery_status_label,
     format_platform_profile_choices,
     system_info,
 )
@@ -88,15 +89,7 @@ def _set_row_visible(grid, row, visible):
 
 
 def _battery_status(battery):
-    if battery is None:
-        return "Unavailable"
-    if battery.is_charging is True:
-        return "Charging"
-    if battery.is_ac_plugged is False:
-        return "Discharging"
-    if battery.is_ac_plugged is True:
-        return "Not charging"
-    return "Unknown"
+    return battery_status_label(battery)
 
 
 def _governor_status(report):

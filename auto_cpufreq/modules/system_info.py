@@ -45,24 +45,35 @@ class BatteryInfo:
     charging_stop_threshold: int | None
     battery_level: int | None
     power_watts: float | None
+    status: str | None = None
 
     def __repr__(self) -> str:
-        if self.is_charging:
-            return "charging"
-        if self.is_ac_plugged is False:
-            return "discharging"
-        if self.is_ac_plugged is None:
-            return "Unknown"
-        return "Not Charging"
+        return battery_status_label(self)
+
+
+def battery_status_label(battery: BatteryInfo | None) -> str:
+    if battery is None:
+        return "Unavailable"
+    status = (battery.status or "").strip().lower()
+    states = {
+        "charging": "Charging",
+        "discharging": "Discharging",
+        "not charging": "Not charging",
+        "full": "Full",
+        "unknown": "Unknown",
+    }
+    if status in states:
+        return states[status]
+    if battery.is_charging is True:
+        return "Charging"
+    return "Unknown"
 
 
 def battery_power_label(battery: BatteryInfo | None) -> str:
-    """Describe the direction of the reported battery power."""
-    if battery is None:
-        return "Battery power"
-    if battery.is_charging is True:
+    status = battery_status_label(battery)
+    if status == "Charging":
         return "Charging power"
-    if battery.is_ac_plugged is False:
+    if status == "Discharging":
         return "Discharge power"
     return "Battery power"
 
@@ -768,6 +779,7 @@ class SystemInfo:
             charging_stop_threshold=charging_stop_threshold,
             battery_level=battery_level,
             power_watts=power_watts,
+            status=battery_status,
         )
 
     @staticmethod
