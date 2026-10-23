@@ -104,9 +104,9 @@ class PolicyParsingTests(unittest.TestCase):
                 request(pl1=raw)
 
     def test_compatibility_parser_delegates_to_canonical_policy(self):
-        settings = conf("enable_rapl_envelopes = true\\n"
-                        "rapl_control_type = intel-rapl-mmio\\n"
-                        "rapl_package = package-0\\n")
+        settings = conf("enable_rapl_envelopes = true\n"
+                        "rapl_control_type = intel-rapl-mmio\n"
+                        "rapl_package = package-0\n")
         settings.set("charger", "rapl_package_long_term_w", "12.000001")
         canonical = parse_rapl_configuration(settings, "charger")
         legacy = parse_rapl_policy_config(settings, "charger")
@@ -118,13 +118,13 @@ class PolicyParsingTests(unittest.TestCase):
 
     def test_compatibility_parser_cannot_bypass_scope_validation(self):
         for bad in ("both", "other", "../package-0"):
-            settings = conf("enable_rapl_envelopes = true\\n")
+            settings = conf("enable_rapl_envelopes = true\n")
             settings.set("intel_power", "rapl_control_type", bad)
             with self.subTest(bad=bad), self.assertRaises(RaplConfigError):
                 parse_rapl_policy_config(settings, "charger")
 
     def test_compatibility_parser_rejects_scientific_power(self):
-        settings = conf("enable_rapl_envelopes = true\\n")
+        settings = conf("enable_rapl_envelopes = true\n")
         settings.set("charger", "rapl_package_long_term_w", "1e6")
         with self.assertRaises(RaplConfigError):
             parse_rapl_policy_config(settings, "charger")
