@@ -96,7 +96,7 @@ class RaplSafetyRegressionTests(unittest.TestCase):
     def test_interrupted_before_write_can_retire_pending_intent(self):
         self.store.save((self._pending_record(),))
         result = self.controller.restore_owned()
-        self.assertEqual(result[0].action, "restored")
+        self.assertEqual(result[0].action, "already-restored")
         self.assertEqual(self.power_path.read_text().strip(), "15000000")
         self.assertEqual(self.store.load(), ())
 
