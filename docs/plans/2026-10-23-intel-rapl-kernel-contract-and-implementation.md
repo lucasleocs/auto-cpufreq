@@ -72,6 +72,25 @@ It would be misleading to say a 28 W \`intel-rapl\` cap determines effective sus
 
 Open issue to resolve against available targets/tests before implementation: whether to use \`[intel_power] rapl_control_type = intel-rapl\` or a separate exact selector, with warnings for stale/unavailable selection. Do not assume one controller type is always the most authoritative one.
 
+### 3A. MSR/MMIO equality review (23 October 2026)
+
+The Intel 10th-generation U/Y datasheet, Vol. 2, section 3.3.31, explicitly states that MMIO package power limits and their MSR counterparts are **evaluated separately**. This is primary Intel evidence that these two channels need **not** contain identical numbers. It is not the datasheet for the user's i3-1315U, so do not extrapolate exact electrical/thermal arbitration to every generation:
+https://www.intel.com/content/dam/www/public/us/en/documents/datasheets/10th-gen-core-families-datasheet-vol-2-datasheet.pdf#page=149
+
+The Intel thermald developer documentation states that its cooling-device selection **prefers RAPL MMIO over MSR when available** and, in adaptive mode, may raise the MSR value to 200 W specifically to avoid MSR interference. This is an intentionally unequal software strategy, not a universal rule for auto-cpufreq or authority to raise firmware limits:
+https://github.com/intel/thermal_daemon/blob/master/DEVELOPER.md
+
+**Updated contract:**
+
+- Do **not** normalize, mirror, or synchronize MSR/MMIO PL1 or PL2 merely because both are present. An unequal readback is not intrinsically an error. Preserve the untouched interface and its independently discovered baseline.
+- A configured target should be described as a **requested upper cap**, not a guarantee of measured package watts and not a promise that hardware will run exactly at that cap. A stricter untouched limit may keep the effective performance below target. Different time windows make "effective limit = min(PL1 entries)" only an approximation, **not** a documented universal formula.
+- In the first active-writer version, apply the configured cap to **one unambiguously selected controller** (implicit only when just one is present; explicit selection when both are present). When both are present, report the other values and explain possible interactions. Do not unilaterally prefer MMIO for every model simply because thermald does so.
+- Optionally investigate a future explicit \`rapl_control_type = both\` **upper-ceiling** policy, but only if requested, separately validated and with per-controller ownership/recovery. Even that mode must **never raise** a stricter OEM value just to make the numbers equal. Its contract would be "each eligible active limit will be lowered at most to the requested value", **not** "all registered limits become identical".
+- If Intel thermald, DTT/ACPI thermal policy or firmware changes an observed limit, do not reassert it every 2 seconds. Suppress reacquisition after drift and report the conflict; do not disable existing thermal daemons.
+- Add lab tests for unequal starting limits such as 28 W MSR / 15 W MMIO, single-control-type configurations, missing/locked interfaces, differing PL1 and PL2 availability, accidental cross-write detection, time window mismatch, and "target greater than one OEM cap" with **zero raising**. A snapshot that shows both interfaces is read-only evidence, not permission to write to both.
+
+These distinctions are explicitly sourced. Preserving existing OEM limits is an **application policy** chosen for safety, not an invariant guaranteed by the Powercap ABI.
+
 ## 4. Policy parsing and daemon integration
 
 Existing configuration structure may use \`[intel_power] enable_rapl_envelopes\`, \`[charger]\`/\`[battery]\` \`rapl_package_long_term_w\` and \`rapl_package_short_term_w\`. Add explicit selector only if required by ambiguous hardware. Settings are optional for each PL. Absent opt-in or invalid config means no writes; log validation errors only where appropriate, without stopping the rest of auto-cpufreq.
