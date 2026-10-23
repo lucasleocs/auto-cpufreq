@@ -216,3 +216,13 @@ Reviewed and exercised on the separate \`lab/intel-rapl-capability-20261023\` br
 Lab regression coverage has been expanded from 20 baseline tests to include opt-in parsing, dual-controller selection, multi-package scoping, cross-scope journal ownership, symlink escape, file-lock contention and numerical edge cases. Passing synthetic tests do **not** establish production safety.
 
 **Remaining hard stop before any active RAPL writer is merged to the contribution branch:** integrate the controller through exactly one daemon lifecycle, verify independent restoration helper, unambiguous service paths and upgrade behavior, preserve unresolved journal entries after failed stop, test suspend/resume, and confirm recovery against genuine Powercap hardware in an explicitly authorized test environment. The daemon and real notebook have not been changed by this checkpoint.
+
+## Repository synchronization verified 2026-10-23
+
+The former fork `master` was exactly `070693c94170f6ac4b1a01e3bcc41d3d798825d2` (7 unique historical commits). Upstream's primary source-install/update work was accepted as [PR #975](https://github.com/AdnanHodzic/auto-cpufreq/pull/975), merged on 2026-10-02 with a redesigned, narrower implementation. The old fork's `power_state.py` snapshot and `release_update.py` helper were not copied literally: the former was intentionally dropped in upstream's narrower design, and latter's update behavior moved into the core/CLI.
+
+Before any default-branch change, the exact old fork master was preserved as `backup/master-pre-upstream-sync-20261023` at `070693c94170f6ac4b1a01e3bcc41d3d798825d2`. The fork's `master` was then updated with an expected-SHA lease to `5a1683037a583785f802b5d039022127b9b154cd`, the exact `AdnanHodzic/master` head. GitHub compare confirmed **identical trees, 0 ahead, 0 behind, 0 files**.
+
+The clean RAPL contributor branch `feat/intel-rapl-gtk-stats` remains independently based on upstream and currently contains 5 commits modifying only 4 functional files. Lab and internal planning branches were not reset. The system running on the user's notebook was not changed.
+
+Future RAPL code should target the now-synchronized `master` without accidentally cherry-picking legacy fork-only installer or host-state snapshot code.
