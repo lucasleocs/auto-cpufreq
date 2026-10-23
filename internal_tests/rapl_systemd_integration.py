@@ -21,7 +21,8 @@ TARGET = 12_000_000
 
 
 def cmd(*argv, check=True):
-    p = subprocess.run(argv, text=True, capture_output=True)
+    p = subprocess.run(argv, text=True, capture_output=True,
+                       env={**os.environ, "PYTHONPATH": str(REPOSITORY)})
     if check and p.returncode:
         raise AssertionError(
             "Command failed: " + repr(argv) + "\nstdout:\n" +
