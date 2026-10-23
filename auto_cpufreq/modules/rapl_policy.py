@@ -17,9 +17,10 @@ from auto_cpufreq.modules.rapl_capabilities import (
 
 
 # Application-level configuration guard, not an Intel electrical specification.
-MAX_CONFIG_WATTS = Decimal("1000")
+MAX_UNSIGNED_POWER_UW = (1 << 64) - 1
 MICROWATTS_PER_WATT = Decimal("1000000")
-WATTS_FORMAT = re.compile(r"(?:0|[1-9][0-9]*)(?:\.[0-9]{1,6})?\Z")
+# Bound the input before parsing to avoid giant integer / Decimal conversion.
+WATTS_FORMAT = re.compile(r"(?:0|[1-9][0-9]{0,19})(?:\.[0-9]{1,6})?\Z")
 PACKAGE_FORMAT = re.compile(r"package-[0-9]+\Z")
 
 
@@ -77,13 +78,16 @@ def _watts_to_uw(raw: str, label: str) -> int:
             f"Invalid {label}: use positive decimal watts with at most "
             "six fractional digits"
         )
-    watts = Decimal(raw)
-    if not 0 < watts <= MAX_CONFIG_WATTS:
+    microwatts = int(Decimal(raw) * MICROWATTS_PER_WATT)
+    # This is a representation bound, not an arbitrary TDP/SKU limit.
+    # Actual writability and safety are validated against the kernel's
+    # constraint metadata and the observed external baseline by the writer.
+    if not 0 < microwatts <= MAX_UNSIGNED_POWER_UW:
         raise RaplPolicyError(
-            f"Invalid {label}: the target must be between 0 and "
-            f"{MAX_CONFIG_WATTS} W"
+            f"Invalid {label}: the micro-watt value exceeds a 64-bit "
+            "unsigned Powercap limit"
         )
-    return int(watts * MICROWATTS_PER_WATT)
+    return microwatts
 
 
 def parse_rapl_configuration(
