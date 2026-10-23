@@ -162,8 +162,9 @@ class RaplSafetyRegressionTests(unittest.TestCase):
         self.assertEqual(self.power_path.read_text().strip(), "15000000")
 
     def test_malformed_ownership_journal_stops_before_hardware_write(self):
-        self.store.path.parent.mkdir(parents=True)
+        self.store.path.parent.mkdir(parents=True, mode=0o700)
         self.store.path.write_text("{bad json")
+        self.store.path.chmod(0o600)
         with self.assertRaises(rapl.RaplStateError):
             self.controller.apply(self.target)
         self.assertEqual(self.power_path.read_text().strip(), "15000000")
