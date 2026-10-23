@@ -179,9 +179,21 @@ def main(monitor, live, daemon, install, update, remove, force, turbo, config, s
                         try:
                             rapl_runtime.tick(conf.get_config(), selected_profile)
                         except Exception as exc:
-                            print("Intel RAPL disabled after unexpected error; "
-                                  f"normal CPU policy continues: {exc}",
-                                  file=sys.stderr)
+                            # A hardware write may have succeeded before a
+                            # Python exception. Reconcile the journal now,
+                            # rather than waiting until service stop.
+                            try:
+                                rapl_runtime.handle_unexpected_failure(exc)
+                            except Exception as recovery_error:
+                                print(
+                                    "Intel RAPL emergency cleanup failed; "
+                                    f"service-stop helper remains available: {recovery_error}",
+                                    file=sys.stderr,
+                                )
+                            print(
+                                f"Intel RAPL disarmed after unexpected error: {exc}",
+                                file=sys.stderr,
+                            )
                             rapl_runtime = None
                     countdown(2)
                 except KeyboardInterrupt: break
