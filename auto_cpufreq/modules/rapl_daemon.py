@@ -230,6 +230,30 @@ class RaplDaemonPolicy:
             results = self.controller.apply(
                 target, control_type=scope[0], package=scope[1],
             )
+            # A BIOS/driver may silently ignore a write or quantize the
+            # request. Never attempt the same unsupported value each daemon
+            # tick, and never label a nonmatching readback as a successful cap.
+            verified_owned = any(
+                r.action in {"acquired", "updated", "unchanged-owned"}
+                for r in results
+            )
+            if verified_owned:
+                self._ever_owned = True
+                self._scope = scope
+            rejected = any(
+                r.action == "readback-rejected" for r in results
+            )
+            quantized = any(
+                r.action in {"acquired", "updated"}
+                and r.effective_uw != r.requested_uw
+                for r in results
+            )
+            if rejected or quantized:
+                if self._ever_owned:
+                    self._restore_ours()
+                return self._disable_on_fault(RaplStateError(
+                    "Kernel rejected or adjusted the requested RAPL limit"
+                ))
             if any(r.action in {
                 "write-failed", "readback-failed",
                 "unsafe-readback-unresolved", "restore-failed",
