@@ -43,6 +43,48 @@ Disposition: temporary branch only. No production changes or battery writes are 
 | U33 | pyproject installation without GTK optional extra | CLI works and fallback does not import gi |
 | U34 | UPower absent on non-systemd init | No assumptions about systemd or D-Bus availability |
 
+## Applet-derived read-only checks
+
+These add to U01–U34 and are scoped to the first reporting PR:
+
+| ID | Condition | Expected behavior |
+|---|---|---|
+| A01 | Physical BAT1 and aggregate DisplayDevice present | Match BAT1 through NativePath, never aggregate silently |
+| A02 | UPower threshold property missing while telemetry is valid | Status and rate still use UPower; no extra threshold capability block |
+| A03 | UPower threshold property explicitly false | Distinguish unsupported from unavailable API |
+| A04 | Start-only, end-only, and firmware-managed flags | Correct read-only capability descriptions, without invented percentages |
+| A05 | UPower service owner changes during refresh | Discard stale response; bounded fallback |
+| A06 | Multiple physical batteries with different threshold metadata | No fictitious common configured threshold |
+| A07 | Charge control support=true but threshold=G_MAXUINT | Show configured threshold as unavailable |
+| A08 | `ChargeThresholdSettingsSupported` unknown mask bits | Ignore unknown capability bits, avoid false availability claims |
+
+## Separate future configuration/write-feature test design (not part of this reporting PR)
+
+The following scenarios describe a *future* opt-in declarative config feature. They must **not** be executed against a real battery during reporting implementation.
+
+| ID | Scenario | Expected future behavior |
+|---|---|---|
+| W01 | Existing `enable_thresholds=true`, start=75, stop=80 | Backward-compatible interpretation; no silent change in ownership |
+| W02 | Stop-only standard kernel attribute, config requests stop=80 | No invented start threshold; only intentional end attribute written |
+| W03 | Start/end hardware, config omits start | Explicit supported policy or descriptive refusal, never silent guessing |
+| W04 | Legacy vendor-specific conservation mode | Unchanged behavior; not overridden by generic backend |
+| W05 | `enable_thresholds=false` with stop=80 present | No writes |
+| W06 | Absent/read-only attribute | Feature unavailable or clear failure; no write attempt |
+| W07 | Invalid 0–100 input or start>=stop | Reject before attempting any write |
+| W08 | Driver rounds requested 75 to 80 | Readback shows actual 80, requested 75 not falsely confirmed |
+| W09 | Driver rejects stop=80 | Fail without retrying values or alternate uncontrolled provider |
+| W10 | UPower charge-threshold mode enabled and managing same device | Detect potential competing owner; no silent direct sysfs write |
+| W11 | UPower unavailable but sysfs standard attribute exists | Future sysfs support independent of UPower version, under approved control policy |
+| W12 | Two batteries, only one selected | Target only selected physical battery |
+| W13 | Privilege denied | No partial configuration claimed as successful |
+| W14 | Failure after one write in paired operation | Documented safe partial-write recovery and original-value reporting |
+| W15 | Hourly existing threshold daemon active | No duplicate writer or racing reapplications |
+| W16 | Interrupted installation, restart, suspend/resume | No automatic reconfiguration outside established opt-in policy |
+| W17 | Battery at 99%, requested stop=80 | Do not claim immediate discharge to 80% |
+| W18 | GTK/terminal query with writable hardware | No sysfs writes, no UPower mutating method calls |
+| W19 | UPower settings read-only and requested custom 80 | Never call `EnableChargeThreshold` as if it sets a numeric value |
+| W20 | End limit actual value differs from config due to rounding | Show requested and actual separately, or explicit failure state |
+
 ## Real hardware inspection — no writes
 
 Reference host: GalaxyMint (Samsung BAT1, UPower daemon 1.90.3).

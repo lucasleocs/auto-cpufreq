@@ -71,13 +71,81 @@ Keep the existing GTK fields and names: `Status`, `Charge`, `AC power`, `Start t
 - `auto_cpufreq/battery_scripts/{battery.py,shared.py}`: existing charge threshold writer; review for conflicts, do not modify in the telemetry PR.
 - `README.md`: make a short public note only after code and tests pass, explaining optional UPower and preserved sysfs fallback. Do not include this internal plan or test harness in the final PR.
 
+## Reference implementation reviewed: Battery Health Cinnamon applet
+
+Reference: https://github.com/lucasleocs/cinnamon-spices-applets/tree/battery-health-applet/battery-health@lucasleocs (branch commit `ac4fbdd385ceb8adf6e341c5dbbb8bd6e53eaac3`).
+
+Useful design patterns in `6.7/applet.js`:
+
+- Discover UPower's physical system batteries using `Type == Battery`, `PowerSupply == true`, and `IsPresent == true`. auto-cpufreq additionally **must** match the configured physical battery by `NativePath` instead of aggregating all system batteries.
+- Distinguish a missing optional D-Bus property from a supported property with value `false`. Do not reject general UPower telemetry merely because the threshold API is old or absent.
+- Decode `ChargeThresholdSettingsSupported` bitwise (start=1, end=2, firmware=4); do not present that mask as a list of permitted percentages. Treat 4294967295 as unavailable rather than a valid threshold.
+- Describe end-only, start-and-end, firmware-managed, and differing multiple-battery limits without guessing values.
+- Detect UPower service disappearance/reappearance and invalidated device state; a stale proxy must not block sysfs fallback.
+- For future event-driven updates, consider the applet's D-Bus owner-generation approach, but do not port its full asynchronous lifecycle or event system into the initial periodic `--stats` path.
+
+Do **not** port the applet's `EnableChargeThreshold()` writes, Cinnamon-only UI code, permissions workflow, or its minimum Cinnamon version. The applet is a reference, not a runtime dependency or a guarantee that custom percent configuration is available.
+
+## Future workstream — declarative charge limits in auto-cpufreq.conf (NOT part of this reporting PR)
+
+Goal: allow explicit administrator configuration such as an end limit of `80%` using **existing** auto-cpufreq configuration conventions. The GTK remains read-only; `--stats` reports both requested configuration and observed effective limit, when determinable. No interactive GTK editor, no universal list of accepted percentages, and no new vendor commands.
+
+### Existing implementation and migration constraints
+
+Current code: `auto_cpufreq/battery_scripts/battery.py`, `shared.py`, `ideapad_laptop.py`, `asus.py`.
+
+- `get_battery_device()` detects particular kernel modules (`ideapad_acpi`, `ideapad_laptop`, `thinkpad_acpi`, `asus_wmi`). Samsung BAT1 can expose a standard end-threshold sysfs attribute while not matching those branches. Existing vendor-specific conservation mode must be preserved, not silently replaced.
+- `get_parsed_config()` requires both `start_threshold` and `stop_threshold` when `enable_thresholds=true`. `set_battery_thresholds()` also requires both sysfs attributes and temporarily writes stop=100 while setting the pair. This prevents a *stop-only* device from using the current generic path; it also makes a write more invasive than a simple end-threshold request.
+- Existing daemon periodically reapplies user threshold configuration (currently once per hour). There must be **one owner / one write path**, not a new independent UPower controller competing with the existing writer.
+- The first version of the new read-only UPower provider must not touch those writers or change the semantics of an existing configuration. Any refactor comes in a separate PR with an explicit compatibility migration and tests.
+
+### Proposed future administrator experience (illustrative, not enabled)
+
+```ini
+[battery]
+enable_thresholds = true
+stop_threshold = 80
+```
+
+This is a **design target** for stop-only devices and is **not currently valid** in the old implementation without `start_threshold`. Existing two-threshold configurations must keep working unchanged:
+
+```ini
+[battery]
+enable_thresholds = true
+start_threshold = 75
+stop_threshold = 80
+```
+
+An omitted start threshold must mean **do not touch or fabricate a start threshold** when the backend supports stop-only operation. Conversely, when the hardware requires a paired start/end setting, the program must validate that requirement and refuse an incomplete configuration with a clear error; it must not assume all devices support end-only operation.
+
+### Future provider strategy to be decided after a read-only capability audit
+
+- For UPower's preconfigured preservation mode, `EnableChargeThreshold(bool)` may be a future opt-in feature, but cannot set an arbitrary `80%`. UPower `ChargeStartThreshold` and `ChargeEndThreshold` are read-only D-Bus properties. Do not repurpose `EnableChargeThreshold(true)` as if it accepted `stop_threshold=80`.
+- For a **custom** requested limit, a standard kernel `charge_control_end_threshold` writer may be necessary. This is **not vendor-specific code**: kernel drivers own the hardware-specific mapping. Only support documented `charge_control_*_threshold` ABI for a generic path. No EC commands, driver-private paths, model allowlists, arbitrary firmware pokes, or blind sysfs probing.
+- Do not automatically fall back from one failed write backend to another. First establish control ownership and conflicts with UPower, TLP, desktop settings and auto-cpufreq's current hourly writer. Refuse or clearly require resolution when ownership is ambiguous; never silently override another manager.
+- If UPower's enabled preservation mode is active, do not directly overwrite its threshold under the hood. Decide on an explicit single-controller policy in the separate write-feature design. Merely reporting that UPower is installed does not imply it owns all charge settings.
+- The write operation must be explicit opt-in, executed only by an authorized code path (for daemon config, existing controlled root service as applicable); never from a GTK refresh, stats display, or device detection.
+- Resolve the selected physical battery using the existing `battery_device` and established safety checks. Do not write to all BAT* implicitly when one battery is selected.
+- Take pre-change readings, check declared sysfs capability, validate integer percentage and start<stop when both configured; write only the attributes that are actually present and intended. Reread each attribute after writing; report the actual driver value. A rounded or rejected request is **not** proof that 80% was applied. Define explicit error, no-retry and recovery behavior for partial writes and service interruptions. Never automatically probe a range of unknown values.
+- Persist only via the existing configuration mechanism; no additional background service or new write-loop. Audit startup, resume, multiple batteries and possible existing periodic reapplication before exposing this to users.
+- No promise that selecting 80% immediately discharges a battery currently at 99%.
+
+### Release gates for the future write feature
+
+Gate W1: full read-only UPower integration and fallback already verified.
+Gate W2: generic standard-kernel capability handling is proven with simulated end-only, paired, read-only, and absent attributes, while preserving vendor conservation modes.
+Gate W3: existing config compatibility and opt-in semantics documented, including start-omitted handling and conflict policies.
+Gate W4: simulated write/readback, rounding, permission-denied, partial-write, UPower-managed and concurrent-controller cases pass without changes to real hardware.
+Gate W5: real hardware trial on an explicitly opted-in machine, with original values recorded and a documented restoration procedure; no automatic writes as a detection test.
+Gate W6: review release packaging, README, service lifecycle, `--stats` presentation and final diff. Keep all internal plans, temporary tests and experimental workflows out of the final contribution.
+
 ## Phased delivery
 
 1. **Transport spike** (temporary only): identify D-Bus client, test physical-battery mapping and bounded failure paths, compare packaging across installers.
 2. **Shared data model**: UPower-first battery snapshot, robust sysfs fallback, shared formatters, no power-policy changes.
 3. **Frontends**: update GTK, legacy GTK battery box, and `--stats`, with optional read-only UPower threshold metadata.
 4. **Verification and audit**: tests in temporary branches; Linux/Nix CI; headless CLI; GTK on real hardware; assert the final contribution branch contains no tests, plan documents, workflows or experimental scripts unless explicitly approved as production tests.
-5. **Separate later proposal**, not in this PR: evaluate controlling preconfigured UPower thresholds. Any write-path would require a dedicated design, privilege review and conflict analysis; no direct editing in GTK is currently planned.
+5. **Separate future configuration PR**, not in this reporting PR: modernize the existing threshold code toward standard-kernel stop-only/paired capabilities and declarative `stop_threshold = 80` where supported, with strict single-writer ownership, permission, rollback/recovery and readback safeguards as specified above. No GTK editor.
 
 ## Acceptance criteria
 
