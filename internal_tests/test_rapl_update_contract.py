@@ -69,6 +69,23 @@ class SourceUpdaterRaplContractTests(unittest.TestCase):
                       "auto-cpufreq-restore-rapl",
                       read("scripts/auto-cpufreq.service"))
 
+    def test_removal_requires_successful_rerun_of_rapl_restore(self):
+        source = read("scripts/auto-cpufreq-remove.sh")
+        start = source.index("  systemd)")
+        end = source.index("  s6-svscan)", start)
+        systemd = source[start:end]
+        stop = systemd.index("systemctl stop auto-cpufreq")
+        check = systemd.index('|| ! "$rapl_restore_helper"')
+        disable = systemd.index("systemctl disable auto-cpufreq")
+        remove_unit = systemd.index('rm -f -- "$systemd_unit"')
+        self.assertLess(stop, check)
+        self.assertLess(check, disable)
+        self.assertLess(disable, remove_unit)
+        self.assertIn(
+            "refusing to remove the recovery helper", systemd
+        )
+        self.assertIn("exit 1", systemd[check:disable])
+
     def test_helper_is_packaged_in_source_venv_and_release_is_atomic(self):
         scripts = read("pyproject.toml")
         self.assertIn('auto-cpufreq-restore-rapl = '
