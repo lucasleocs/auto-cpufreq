@@ -99,6 +99,52 @@ class RAPLDaemonTests(unittest.TestCase):
         self.assertEqual(int(direct_power.read_text()), 15_000_000)
         self.assertEqual(self.engine.state_store.load(), ())
 
+    def test_duplicate_package_identity_cannot_write_either_zone(self):
+        second = self.mmio.parent.parent / "intel-rapl-mmio:1"
+        second.mkdir()
+        (second / "name").write_text("package-0\n")
+        (second / "constraint_0_name").write_text("long_term\n")
+        other_limit = second / "constraint_0_power_limit_uw"
+        other_limit.write_text("17000000\n")
+        event = self.tick(selected(controller="intel-rapl-mmio"))
+        self.assertEqual(event.state, "blocked")
+        self.assertEqual(int(self.mmio.read_text()), 15_000_000)
+        self.assertEqual(int(other_limit.read_text()), 17_000_000)
+        self.assertEqual(self.engine.state_store.load(), ())
+
+    def test_duplicate_long_term_indices_cannot_write(self):
+        zone = self.mmio.parent
+        (zone / "constraint_7_name").write_text("long_term\n")
+        another = zone / "constraint_7_power_limit_uw"
+        another.write_text("15000000\n")
+        event = self.tick(selected(controller="intel-rapl-mmio"))
+        self.assertEqual(event.state, "blocked")
+        self.assertEqual(int(self.mmio.read_text()), 15_000_000)
+        self.assertEqual(int(another.read_text()), 15_000_000)
+        self.assertEqual(self.engine.state_store.load(), ())
+
+    def test_symlinked_power_limit_attribute_must_not_be_written(self):
+        external = self.root / "unrelated-control"
+        external.write_text("15000000\n")
+        self.mmio.unlink()
+        self.mmio.symlink_to(external)
+        event = self.tick(selected(controller="intel-rapl-mmio"))
+        self.assertEqual(event.state, "blocked")
+        self.assertEqual(int(external.read_text()), 15_000_000)
+        self.assertFalse(self.engine.state_store.path.exists())
+
+    def test_top_level_alias_and_nested_package_are_not_double_written(self):
+        zone = self.mmio.parent
+        (self.root / "intel-rapl-mmio:0").symlink_to(
+            zone, target_is_directory=True,
+        )
+        self.assertEqual(self.tick(selected(controller="intel-rapl-mmio")).state,
+                         "active")
+        self.assertEqual(len(self.engine.state_store.load()), 1)
+        self.assertEqual(int(self.mmio.read_text()), 12_000_000)
+        self.assertEqual(self.tick(config()).state, "restored")
+        self.assertEqual(int(self.mmio.read_text()), 15_000_000)
+
     def test_msr_and_mmio_must_be_selected_explicitly(self):
         c = config(
             "[intel_power]\nenable_rapl_envelopes = true\n"
