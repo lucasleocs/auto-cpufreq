@@ -65,23 +65,49 @@ def change_release(root, version):
     os.replace(name, root / "current")
 
 
-def write_unit(unitfile, name, root, *, restore_mode="normal"):
+def write_unit(unitfile, name, root, *, restore_mode="normal",
+               restart="on-failure", start_mode="normal"):
+    """Substitute only absolute paths in the lab copy of the ACTUAL unit."""
+    template = (REPOSITORY / "scripts/auto-cpufreq.service").read_text()
+    updates = (
+        (
+            "WorkingDirectory=/opt/auto-cpufreq/current/venv",
+            f"WorkingDirectory={root}",
+        ),
+        (
+            "Environment=PYTHONPATH=/opt/auto-cpufreq/current",
+            f"Environment=PYTHONPATH={REPOSITORY}",
+        ),
+        (
+            "ExecStart=/opt/auto-cpufreq/current/venv/bin/python "
+            "/opt/auto-cpufreq/current/venv/bin/auto-cpufreq --daemon",
+            f"ExecStart=/usr/bin/python3 {root}/current/fixture.py "
+            f"daemon {root} {start_mode}",
+        ),
+        (
+            "RuntimeDirectory=auto-cpufreq",
+            f"RuntimeDirectory={name}",
+        ),
+        (
+            "ExecStopPost=-/opt/auto-cpufreq/current/venv/bin/"
+            "auto-cpufreq-restore-rapl",
+            f"ExecStopPost=-/usr/bin/python3 {root}/current/fixture.py "
+            f"restore {root} {restore_mode}",
+        ),
+        ("Restart=on-failure", "Restart=" + restart),
+    )
+    for old, new in updates:
+        if template.count(old) != 1:
+            raise AssertionError("Production systemd template changed: " + old)
+        template = template.replace(old, new)
+
+    assert "RuntimeDirectoryMode=0700" in template
+    assert "RuntimeDirectoryPreserve=yes" in template
     unitfile.write_text(
-        "[Unit]\n"
-        "Description=Ephemeral auto-cpufreq RAPL real-systemd lab\n"
-        "[Service]\n"
-        "Type=simple\n"
-        "User=root\n"
-        f"Environment=PYTHONPATH={REPOSITORY}\n"
-        f"RuntimeDirectory={name}\n"
-        "RuntimeDirectoryMode=0700\n"
-        "RuntimeDirectoryPreserve=yes\n"
-        f"ExecStart=/usr/bin/python3 {root}/current/fixture.py daemon {root}\n"
-        f"ExecStopPost=-/usr/bin/python3 {root}/current/fixture.py "
-        f"restore {root} {restore_mode}\n"
-        "Restart=on-failure\n"
-        "RestartSec=1s\n"
-        "TimeoutStopSec=15s\n"
+        template.replace(
+            "\n[Install]\n",
+            "\nRestartSec=1s\nTimeoutStopSec=15s\n\n[Install]\n",
+        )
     )
     cmd("systemd-analyze", "verify", str(unitfile))
     cmd("systemctl", "daemon-reload")
