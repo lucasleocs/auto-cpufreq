@@ -157,13 +157,32 @@ def main(monitor, live, daemon, install, update, remove, force, turbo, config, s
                 tlp_service_detect()
             start_battery_daemon()
             conf.notifier.start()
+
+            # Only the installed daemon evaluates optional RAPL writes.
+            # --stats, --monitor, --live and GTK never instantiate this writer.
+            try:
+                from auto_cpufreq.modules.rapl_daemon import RaplDaemonPolicy
+                rapl_runtime = RaplDaemonPolicy()
+            except Exception as exc:
+                print(f"Intel RAPL unavailable; normal CPU policy continues: {exc}",
+                      file=sys.stderr)
+                rapl_runtime = None
+
             while True:
                 try:
                     footer()
                     gov_check()
                     cpufreqctl()
                     print_system_report()
-                    set_autofreq()
+                    selected_profile = set_autofreq()
+                    if rapl_runtime is not None:
+                        try:
+                            rapl_runtime.tick(conf.get_config(), selected_profile)
+                        except Exception as exc:
+                            print("Intel RAPL disabled after unexpected error; "
+                                  f"normal CPU policy continues: {exc}",
+                                  file=sys.stderr)
+                            rapl_runtime = None
                     countdown(2)
                 except KeyboardInterrupt: break
             conf.notifier.stop()
