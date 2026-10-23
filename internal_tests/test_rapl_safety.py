@@ -290,5 +290,65 @@ class RaplSafetyRegressionTests(unittest.TestCase):
         self.assertEqual(self.power_path.read_text().strip(), "15000000")
 
 
+    def test_restore_failure_with_unexpected_external_value_keeps_pending(self):
+        self.assertEqual(self.controller.apply(self.target)[0].action, "acquired")
+        calls = []
+
+        def fail_during_restore(path, value):
+            calls.append(value)
+            self.power_path.write_text("14250000\n")
+            raise OSError("simulated partial/foreign write")
+
+        with patch.object(rapl, "_write_int", side_effect=fail_during_restore):
+            result = self.controller.restore_owned()
+
+        self.assertEqual(result[0].action, "restore-failed")
+        self.assertEqual(calls, [15_000_000])
+        self.assertEqual(self.power_path.read_text().strip(), "14250000")
+        ownership = self.store.load()
+        self.assertEqual(len(ownership), 1, "Uncertain recovery must retain journal")
+        self.assertEqual(ownership[0].original_power_limit_uw, 15_000_000)
+        self.assertIsNotNone(ownership[0].pending_target_uw)
+        retry = self.controller.restore_owned()
+        self.assertEqual(retry[0].action, "restore-failed")
+        self.assertEqual(self.power_path.read_text().strip(), "14250000")
+
+    def test_unexpected_high_readback_does_not_claim_foreign_value(self):
+        initial_write = rapl._write_int
+        calls = []
+
+        def synthetic_write(path, value):
+            calls.append(value)
+            if value == 14_500_000:
+                # The sysfs write is followed by an unexpected higher
+                # value that might come from firmware or another writer.
+                self.power_path.write_text("16000000\n")
+            else:
+                raise AssertionError("No implicit second sysfs write is allowed")
+
+        with patch.object(rapl, "_write_int", side_effect=synthetic_write):
+            result = self.controller.apply(self.target)
+        self.assertEqual(result[0].action, "unsafe-readback-unresolved")
+        self.assertEqual(calls, [14_500_000])
+        self.assertEqual(self.power_path.read_text().strip(), "16000000")
+        record = self.store.load()[0]
+        self.assertEqual(record.original_power_limit_uw, 15_000_000)
+        self.assertEqual(record.last_written_power_limit_uw, 15_000_000)
+        self.assertEqual(record.pending_target_uw, 14_500_000)
+        retry = self.controller.restore_owned()
+        self.assertEqual(retry[0].action, "restore-failed")
+        self.assertEqual(self.power_path.read_text().strip(), "16000000")
+
+    def test_firmware_already_restored_baseline_needs_no_write(self):
+        self.assertEqual(self.controller.apply(self.target)[0].action, "acquired")
+        self.power_path.write_text("15000000\n")
+        with patch.object(rapl, "_write_int", side_effect=AssertionError(
+            "Do not rewrite a baseline already restored by firmware"
+        )):
+            results = self.controller.restore_owned()
+        self.assertEqual(results[0].action, "already-restored")
+        self.assertEqual(self.store.load(), ())
+
+
 if __name__ == "__main__":
     unittest.main()
