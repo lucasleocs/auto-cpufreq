@@ -794,6 +794,19 @@ class IntelRaplController:
                 "Owned RAPL constraint is unreadable; ownership state is retained",
             )
 
+        if record.pending_target_uw is not None:
+            if current in (
+                record.last_written_power_limit_uw,
+                record.pending_target_uw,
+            ):
+                # Previous cycle interrupted during a write. Resolve the old
+                # envelope first; never stack a new write onto uncertainty.
+                return self._restore(ref, record, current, ownership)
+            return RaplApplyResult(
+                identity, "pending-unresolved", current, target, current,
+                "Pending RAPL transaction differs from observed hardware",
+            )
+
         if current != record.last_written_power_limit_uw:
             self._yielded_external.add(identity)
             ownership.pop(identity, None)
@@ -835,36 +848,45 @@ class IntelRaplController:
             action, message = validation
             return RaplApplyResult(identity, action, current, target, current, message)
 
+        pending = RaplOwnershipRecord(
+            identity=identity,
+            original_power_limit_uw=record.original_power_limit_uw,
+            last_written_power_limit_uw=current,
+            pending_target_uw=target,
+        )
+        ownership[identity] = pending
+        try:
+            self._save_ownership(ownership)
+        except RaplStateError:
+            ownership[identity] = record
+            raise
+
         try:
             _write_int(ref.power_limit_path, target)
         except OSError as exc:
             effective = _read_int(ref.power_limit_path)
-            if effective is not None and effective != current:
-                ownership.pop(identity, None)
+            if effective == current:
+                ownership[identity] = record
                 self._save_ownership(ownership)
             return RaplApplyResult(
-                identity,
-                "write-failed",
-                current,
-                target,
-                effective,
-                f"Owned RAPL write failed: {exc}",
+                identity, "write-failed", current, target, effective,
+                f"Owned RAPL write failed; recovery intent retained: {exc}",
             )
 
         effective = _read_int(ref.power_limit_path)
         if effective is None:
-            ownership.pop(identity, None)
-            self._save_ownership(ownership)
             return RaplApplyResult(
                 identity,
                 "readback-failed",
                 current,
                 target,
                 None,
-                "Owned RAPL write could not be verified; ownership was retired",
+                "Owned RAPL write not verifiable; pending recovery remains saved",
             )
 
         if effective == current:
+            ownership[identity] = record
+            self._save_ownership(ownership)
             return RaplApplyResult(
                 identity,
                 "readback-rejected",
@@ -894,8 +916,8 @@ class IntelRaplController:
         try:
             self._save_ownership(ownership)
         except RaplStateError:
-            ownership[identity] = record
-            self._best_effort_rollback(ref, current)
+            # The old durable record still contains the pending transaction.
+            ownership[identity] = pending
             raise
 
         return RaplApplyResult(
