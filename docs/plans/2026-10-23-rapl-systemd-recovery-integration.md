@@ -381,3 +381,20 @@ Restauração verificada.
 **Interpretation:** exit of the writer did **not** automatically restore a Powercap package limit within the measured three-second interval. Successful write and explicit restoration were confirmed by readback. This experiment did **not** test a systemd daemon stop or a full reboot/hibernate cycle, nor does it establish indefinite persistence or rule out later firmware changes.
 
 **Design consequence:** retain a **minimal, independently verified cleanup on daemon service stop**; no justification to remove the RAPL restore hook based on firmware reset assumptions. Do not modify the versioned updater: normal stop invokes cleanup, then the existing installer can switch versions and the restarted daemon may reapply an explicitly enabled profile. Simulated failure tests and recovery-state safety remain mandatory before active-write release; do not add cross-boot restoration or a new update mechanism without separate evidence. The lab controller already has journal/locking experiments, but active RAPL remains unshipped.
+
+
+## Laboratory implementation checkpoint — 2026-10-23
+
+The **laboratory only** branch `lab/intel-rapl-capability-20261023` now has the first P0 recovery corrections and a minimal, independent restore command. Final working commit `492d52c717e62edce70913b275d19137a42fc7df`.
+
+**Corrections already implemented in the lab:**
+- A restore with an uncertain post-write value preserves a durable pending intent. It no longer removes ownership merely because the readback differs from the previous value.
+- An unexpected post-write readback higher than the baseline (or invalid) is not silently claimed as an auto-cpufreq-owned value and is not overwritten in an eager rollback. The controller yields and preserves pending recovery metadata.
+- If firmware has already restored the exact external baseline, cleanup retires the journal entry without writing the sysfs constraint.
+- A dangling `enabled` symlink and malformed `package-...` zone name cannot authorize Powercap writes.
+- RAPL journal, lock and immediate runtime directory now require restrictive permissions, expected service-user ownership and regular-file/directory type checks. Journal reads use `O_NOFOLLOW` and `O_NONBLOCK`; lock opens use `O_NOFOLLOW`. Pre-existing insecure files and directories are rejected instead of silently chmodded. These controls are **not** a proof against all ancestor-directory races; review with systemd-managed RuntimeDirectory before shipping.
+- `auto_cpufreq/bin/auto_cpufreq_restore_rapl.py` implements a separate CLI restore process with no GUI/core/notifier dependency. `pyproject.toml` exposes `auto-cpufreq-restore-rapl` (lab only). It returns nonzero for an unresolved or unreadable journal; normal outputs go to stderr for journald capture.
+
+**Evidence:** three targeted recovery regressions originally failed against the old implementation and passed after the corrections; additional file-permission, symlink, malformed-path and helper tests passed. Lab GitHub Actions `Intel RAPL lab checks` run [#40035814189](https://github.com/lucasleocs/auto-cpufreq/actions/runs/40035814189) PASS **70 tests on Python 3.9 and 3.12**. Read-only feature branch and upstream-aligned fork `master` remain unchanged. The laboratory has not installed a unit, called real Powercap writes, or changed the user notebook.
+
+**Remaining next gate before the active writer is deployable:** validate `ExecStopPost` and `RuntimeDirectoryPreserve` with a real, isolated systemd manager; confirm the helper remains available through source-installer updates and rollbacks; harden startup readiness and eliminate divergent discovery implementations. Any installation-mode not verified with an equivalent restore lifecycle remains RAPL read-only. Keep the installer/versioned `releases/current` flow unchanged unless a narrow, reproducible incompatibility demands it.
