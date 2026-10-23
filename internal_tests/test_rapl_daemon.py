@@ -161,7 +161,7 @@ class RAPLDaemonTests(unittest.TestCase):
         self.mmio.parent.rename(self.root / "mmio-hidden")
         self.msr.parent.rename(self.root / "msr-hidden")
         settings = selected(controller="intel-rapl-mmio")
-        self.assertEqual(self.tick(settings).state, "not_exposed")
+        self.assertEqual(self.tick(settings).state, "no_package_constraints")
         (self.root / "mmio-hidden").rename(self.mmio.parent)
         (self.root / "msr-hidden").rename(self.msr.parent)
         self.assertEqual(self.tick(settings).state, "active")
