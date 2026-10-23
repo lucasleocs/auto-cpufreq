@@ -86,6 +86,31 @@ Useful design patterns in `6.7/applet.js`:
 
 Do **not** port the applet's `EnableChargeThreshold()` writes, Cinnamon-only UI code, permissions workflow, or its minimum Cinnamon version. The applet is a reference, not a runtime dependency or a guarantee that custom percent configuration is available.
 
+## Modern UPower simulation via an isolated private D-Bus — verified (2026-10-23)
+
+Purpose: validate *the full applet-independent Python D-Bus reader*, `SystemInfo.battery_info()`, the `SystemMonitor.format_system_info()` output and the real GTK `SystemReportView` against newer UPower **property shapes**, without changing the installed UPower or charging hardware.
+
+Temporary test branch: `tmp/upower-modern-privatebus-20261023` at `dba4fe0b21ea4ac63c892ff7fd441e2efe383853`.
+Temporary lab: `internal/upower_modern_lab.py`; CI workflow: `.github/workflows/upower-modern-privatebus.yml`.
+CI: https://github.com/lucasleocs/auto-cpufreq/actions/runs/40042055797 — PASS, all four scenarios in GTK+stats under Xvfb. Linux Build and Nix Flake passed for the same temporary revision.
+
+The lab starts its own `dbus-run-session` and sets `DBUS_SYSTEM_BUS_ADDRESS` *inside that child process* to the new private bus address. A read-only mock service owns `org.freedesktop.UPower` on the private bus, implements `EnumerateDevices` and device `Properties.GetAll`, and denies all charge-limit writes. It does **not** upgrade, replace, restart, mask or write to the host's UPower system daemon, kernel attributes, or charging policy.
+
+Tested scenarios (mock values are not hardware-supported preset lists):
+
+| Scenario | UPower properties | GTK + stats confirmed |
+|---|---|---|
+| `end-only` | Supported=true; mask=2; configured stop 80%; enabled=true | Show End threshold and UPower configured Stop: 80% |
+| `start-end` | Supported=true; mask=3; configured start 75%, end 80%; enabled=true | Show Start/End and configured 75–80% |
+| `firmware` | Supported=true; mask=4; percentages unavailable | Show Firmware managed; no invented percentages |
+| `legacy` | Charge-limit properties absent | Existing display only; optional rows hidden |
+
+Crucial honesty: this is **not an execution of UPower 1.91.3**. It verifies the standard D-Bus interface and frontend against valid simulated new properties. Running a newer actual UPower daemon on real hardware requires a separate isolated service/umockdev integration lab and cannot be inferred from these mocks. UPower 1.91.2 introduced end-only kernel support, but whether a specific laptop's threshold properties are available also depends on detection and configuration. Do not update or restart the host UPower merely to make its version number newer.
+
+Observation: `--stats` currently prints `Charging start threshold: None` where GTK says `Unavailable`. This is a pre-existing presentation inconsistency and should be corrected carefully as a small targeted UI follow-up. The mock also intentionally shows **sysfs observed stop=100** separately from **UPower configured stop=80**; simulated configured values are not claims about the real applied battery hardware.
+
+Decision: keep the mock/CI workflow on disposable branches. Neither the private-bus lab nor this internal record belongs in the final contribution PR.
+
 ## Observed GalaxyMint GTK results and separate CPU/fan follow-up (2026-10-23)
 
 Reference: the user tested the experimental `SystemReportView` against their installed GTK on Samsung GalaxyMint (Mint 22.3, kernel 7.2.12-x64v3-xanmod1).

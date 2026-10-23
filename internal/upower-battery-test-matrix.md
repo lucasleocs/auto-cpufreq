@@ -98,6 +98,20 @@ Known baseline:
 
 Validate provider selection with `NativePath`, compare snapshot `UpdateTime`, run GTK and `--stats` while near-full and while genuinely discharging away from AC, and observe behavior after suspend/resume. Do not use sudo, edit charge thresholds, invoke EnableChargeThreshold, or install services as part of this plan.
 
+## Verified private-D-Bus end-to-end frontend test
+
+Source revision: `dba4fe0b21ea4ac63c892ff7fd441e2efe383853` (temporary branch `tmp/upower-modern-privatebus-20261023`).
+Run: https://github.com/lucasleocs/auto-cpufreq/actions/runs/40042055797 (PASS).
+
+- P01: Synthetic modern UPower with end-only mask=2 and configured Stop=80 displayed in `--stats` and GTK. PASS
+- P02: Synthetic start+end mask=3 and configured 75–80 displayed in both. PASS
+- P03: Firmware-only mask=4 with unavailable percentages, no invented percentage. PASS
+- P04: Legacy API without charge properties, no extra rows in GTK/stats. PASS
+- P05: Private D-Bus `EnumerateDevices` / `GetAll` traversed through the real Python provider, not direct `BatteryInfo` injection. PASS
+- P06: No service restart, config edit, privileged helper, threshold write or system bus override outside the private child process. Verified by test harness design; not a runtime observation of every host-side service.
+- P07: Presentational mismatch `None` vs `Unavailable` for the start threshold remains open.
+- P08: Actual newer UPower daemon/udev detection on physical Samsung was **not** tested. Do not conflate the mock with a real upgraded UPower service.
+
 ## Real GTK comparison and deferred fan-speed anomaly
 
 Observed on Samsung GalaxyMint: UPower integration gave 99%, Fully charged, 0.00 W; baseline GTK gave Not charging, 99%, 0.00 W. Both reported start unavailable and stop 100. Confirmed with the live GTK instance that optional `protection` and `controls` labels were invisible.
