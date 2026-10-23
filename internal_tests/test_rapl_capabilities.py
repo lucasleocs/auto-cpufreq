@@ -56,7 +56,7 @@ class RaplCapabilityTests(unittest.TestCase):
         self._write(core / "name", "core")
         self._add_limit(core, 0, "long_term", 10_000_000)
         result = inspect_rapl(self.root)
-        self.assertEqual(result.state, "available")
+        self.assertEqual(result.state, "observed")
         self.assertEqual([(x.constraint_name, x.constraint_index) for x in result.limits],
                          [("long_term", 3), ("short_term", 8)])
         self.assertEqual(result.limits[0].limit_uw, 15_500_000)
@@ -107,7 +107,7 @@ class RaplCapabilityTests(unittest.TestCase):
         self._add_limit(zone, 0, "long_term", "malformed")
         self._write(zone / "constraint_1_name", "short_term")
         result = inspect_rapl(self.root)
-        self.assertEqual(result.state, "unavailable")
+        self.assertEqual(result.state, "unreadable")
         self.assertTrue(all(x.limit_uw is None for x in result.limits))
 
     def test_one_valid_limit_survives_missing_other_limit(self):
@@ -115,16 +115,34 @@ class RaplCapabilityTests(unittest.TestCase):
         self._add_limit(zone, 0, "long_term", 12_000_000)
         self._write(zone / "constraint_1_name", "short_term")
         result = inspect_rapl(self.root)
-        self.assertEqual(result.state, "available")
+        self.assertEqual(result.state, "observed")
         self.assertEqual([x.state for x in result.limits],
-                         ["available", "unreadable"])
+                         ["observed", "unreadable"])
+
+    def test_rejects_symlink_escape_from_control_tree(self):
+        (self.root / "intel-rapl").mkdir()
+        outsider = self.root / "unrelated" / "intel-rapl:0"
+        outsider.mkdir(parents=True)
+        self._write(outsider / "name", "package-0")
+        self._add_limit(outsider, 0, "long_term", 50_000_000)
+        (self.root / "intel-rapl:0").symlink_to(
+            outsider, target_is_directory=True
+        )
+        result = inspect_rapl(self.root)
+        self.assertEqual(result.state, "no_package_constraints")
+        self.assertEqual(len(result.limits), 0)
+
+    def test_rejects_malformed_package_name(self):
+        zone = self._make_package(package="package-foo")
+        self._add_limit(zone, 0, "long_term", 15_000_000)
+        self.assertEqual(inspect_rapl(self.root).state, "no_package_constraints")
 
     def test_inspection_does_not_write_files(self):
         zone = self._make_package()
         self._add_limit(zone, 0, "long_term", 15_000_000)
         with patch.object(Path, "write_text", side_effect=AssertionError("write")):
             result = inspect_rapl(self.root)
-        self.assertEqual(result.state, "available")
+        self.assertEqual(result.state, "observed")
 
 
 if __name__ == "__main__":
