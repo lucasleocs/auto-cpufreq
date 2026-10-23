@@ -269,6 +269,8 @@ class SystemReportView(Gtk.Box):
             name_label, value_label = _add_row(self.battery_grid, offset, name)
             self.battery_capability_names[key] = name_label
             self.battery_capability_values[key] = value_label
+            name_label.set_no_show_all(True)
+            value_label.set_no_show_all(True)
             name_label.hide()
             value_label.hide()
         self.right_column.pack_start(battery_frame, False, False, 0)
