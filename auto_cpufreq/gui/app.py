@@ -260,6 +260,17 @@ class SystemReportView(Gtk.Box):
             )
             self.battery_names[key] = name_label
             self.battery_values[key] = value_label
+        self.battery_capability_names = {}
+        self.battery_capability_values = {}
+        for offset, (key, name) in enumerate((
+            ("protection", "Charge protection"),
+            ("controls", "Supported controls"),
+        ), start=len(self.battery_names)):
+            name_label, value_label = _add_row(self.battery_grid, offset, name)
+            self.battery_capability_names[key] = name_label
+            self.battery_capability_values[key] = value_label
+            name_label.hide()
+            value_label.hide()
         self.right_column.pack_start(battery_frame, False, False, 0)
 
         stats_frame, stats_grid = _new_section("System Statistics")
@@ -471,6 +482,24 @@ class SystemReportView(Gtk.Box):
                 if battery.power_watts is not None
                 else "Unavailable"
             )
+
+        supported = battery is not None and battery.charge_protection_supported
+        for key, name_label in self.battery_capability_names.items():
+            value_label = self.battery_capability_values[key]
+            if not supported:
+                name_label.hide()
+                value_label.hide()
+                continue
+            value = (
+                "Enabled" if battery.charge_protection_enabled is True else
+                "Disabled" if battery.charge_protection_enabled is False else
+                "Unknown"
+            ) if key == "protection" else (
+                ", ".join(battery.charge_control_types) or "Unavailable"
+            )
+            value_label.set_text(value)
+            name_label.show()
+            value_label.show()
 
         self.stats_values["usage"].set_text(
             f"{report.cpu_usage:.1f}%"

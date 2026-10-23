@@ -20,6 +20,7 @@ from auto_cpufreq.globals import (
     IS_INSTALLED_WITH_SNAP,
     POWER_SUPPLY_DIR,
 )
+from auto_cpufreq.modules.battery_upower import read_upower_battery
 from auto_cpufreq.modules.platform_profile import (
     PlatformProfileSnapshot,
     platform_profile,
@@ -46,6 +47,10 @@ class BatteryInfo:
     battery_level: int | None
     power_watts: float | None
     status: str | None = None
+    source: str = "sysfs"
+    charge_protection_supported: bool = False
+    charge_protection_enabled: bool | None = None
+    charge_control_types: tuple[str, ...] = ()
 
     def __repr__(self) -> str:
         return battery_status_label(self)
@@ -60,6 +65,10 @@ def battery_status_label(battery: BatteryInfo | None) -> str:
         "discharging": "Discharging",
         "not charging": "Not charging",
         "full": "Full",
+        "fully charged": "Fully charged",
+        "pending charge": "Pending charge",
+        "pending discharge": "Pending discharge",
+        "empty": "Empty",
         "unknown": "Unknown",
     }
     if status in states:
@@ -772,6 +781,13 @@ class SystemInfo:
         charging_stop_threshold = int(charge_stop_threshold) if charge_stop_threshold \
             and charge_stop_threshold.isdigit() else None
 
+        upower = read_upower_battery(battery_path)
+        if upower is not None:
+            battery_status = upower.status
+            battery_level = upower.percentage
+            power_watts = upower.power_watts
+            is_charging = battery_status == "Charging"
+
         return BatteryInfo(
             is_charging=is_charging,
             is_ac_plugged=is_ac_plugged,
@@ -780,6 +796,10 @@ class SystemInfo:
             battery_level=battery_level,
             power_watts=power_watts,
             status=battery_status,
+            source="upower" if upower is not None else "sysfs",
+            charge_protection_supported=upower.charge_protection_supported if upower else False,
+            charge_protection_enabled=upower.charge_protection_enabled if upower else None,
+            charge_control_types=upower.charge_control_types if upower else (),
         )
 
     @staticmethod

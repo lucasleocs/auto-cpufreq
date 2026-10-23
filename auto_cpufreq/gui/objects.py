@@ -389,6 +389,10 @@ class BatteryInfoBox(Gtk.Box):
         self.pack_start(self.start_threshold_label, False, False, 0)
         self.pack_start(self.stop_threshold_label, False, False, 0)
 
+        self.protection_label = Gtk.Label(label="")
+        self.protection_label.set_halign(Gtk.Align.START)
+        self.pack_start(self.protection_label, False, False, 0)
+
         self.refresh()
 
     def refresh(self):
@@ -420,6 +424,15 @@ class BatteryInfoBox(Gtk.Box):
             else:
                 stop_text = "Unknown"
             self.stop_threshold_label.set_label(f"Charging stop threshold: {stop_text}")
+
+            if battery_info.charge_protection_supported:
+                enabled = battery_info.charge_protection_enabled
+                state = "Enabled" if enabled is True else "Disabled" if enabled is False else "Unknown"
+                controls = ", ".join(battery_info.charge_control_types) or "Unavailable"
+                self.protection_label.set_label(f"Charge protection: {state} ({controls})")
+                self.protection_label.show()
+            else:
+                self.protection_label.hide()
 
         except Exception:
             self.status_label.set_label("Battery status: Unknown")

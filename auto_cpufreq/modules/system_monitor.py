@@ -319,6 +319,19 @@ class SystemMonitor:
                 ]
             )
 
+        if report.battery_info.charge_protection_supported:
+            battery = report.battery_info
+            protection = (
+                "Enabled" if battery.charge_protection_enabled is True else
+                "Disabled" if battery.charge_protection_enabled is False else
+                "Unknown"
+            )
+            controls = ", ".join(battery.charge_control_types) or "Unavailable"
+            self.right_content.extend([
+                aligned_text(f"Charge protection: {protection}"),
+                aligned_text(f"Supported controls: {controls}"),
+            ])
+
         # Platform Profile
         self.right_content.append(
             urwid.AttrMap(aligned_text("Platform Profile"), "header")

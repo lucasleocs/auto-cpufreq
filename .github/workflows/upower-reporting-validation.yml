@@ -1,0 +1,22 @@
+name: UPower reporting validation (temporary)
+
+on:
+  push:
+    branches:
+      - tmp/upower-reporting-integration-20261023
+  workflow_dispatch:
+
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.9", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - run: python -m pip install dbus-next==0.2.3
+      - run: python -m compileall -q auto_cpufreq/modules/battery_upower.py auto_cpufreq/modules/system_info.py auto_cpufreq/modules/system_monitor.py auto_cpufreq/gui/app.py auto_cpufreq/gui/objects.py
+      - run: python -m unittest discover -s internal -p 'test_upower_reporting.py' -v
