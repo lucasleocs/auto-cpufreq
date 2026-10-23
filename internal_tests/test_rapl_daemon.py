@@ -415,6 +415,11 @@ class LifecycleGuardTests(unittest.TestCase):
             self.addCleanup(obj.stop)
         self.systemd_output = (
             "MainPID=1234\nActiveState=active\nDropInPaths=\n"
+            "NeedDaemonReload=no\n"
+            f"FragmentPath={self.unit}\n"
+            "ExecStopPost={ path=" + str(self.helper)
+            + " ; argv[]=" + str(self.helper)
+            + " ; ignore_errors=yes ; start_time=[n/a] }\n"
         )
 
     def check_guard(self, output=None, *, uid=0):
@@ -432,6 +437,34 @@ class LifecycleGuardTests(unittest.TestCase):
 
     def test_valid_root_managed_unit(self):
         self.assertTrue(self.check_guard())
+
+    def test_loaded_manager_pending_reload_cannot_write(self):
+        self.assertFalse(self.check_guard(
+            self.systemd_output.replace("NeedDaemonReload=no",
+                                        "NeedDaemonReload=yes")
+        ))
+
+    def test_loaded_manager_without_cleanup_hook_cannot_write(self):
+        self.assertFalse(self.check_guard(
+            self.systemd_output.replace(
+                "ExecStopPost={ path=", "ExecStopPost={ removed_path="
+            )
+        ))
+
+    def test_loaded_manager_replaced_cleanup_cannot_write(self):
+        self.assertFalse(self.check_guard(
+            self.systemd_output.replace(
+                f"argv[]={self.helper}", "argv[]=/usr/bin/true"
+            )
+        ))
+
+    def test_loaded_manager_other_fragment_cannot_write(self):
+        self.assertFalse(self.check_guard(
+            self.systemd_output.replace(
+                f"FragmentPath={self.unit}",
+                "FragmentPath=/etc/systemd/system/not-our-unit.service"
+            )
+        ))
 
     def test_manual_nonroot_daemon_cannot_write(self):
         self.assertFalse(self.check_guard(uid=1000))
