@@ -42,6 +42,31 @@ This is a **planning correction only**. Existing code, updater and service on th
 **Status:** research and design only; no service/daemon changes authorized by this document.  
 **Owner constraints:** functional final upstream PR only. No development tests, plans, logs, or internal documentation in the final PR. The GTK UI remains read-only. RAPL writes are opt-in and initially disabled. Do not modify the user's running notebook while preparing or validating this plan.
 
+## 0A. Hardware/firmware resets and proportional recovery (23 October 2026)
+
+**Design clarification prompted by existing notebook observations:** The kernel Powercap ABI **does not promise that a sysfs RAPL constraint reverts on daemon exit or stops being effective when its writer disappears**. A Powercap write targets platform power controls, not a daemon-scoped lease. Conversely, firmware/EC/thermal drivers **may** reset or rewrite limits on reboot, suspend/hibernate, charger changes, thermal events, and platform-profile transitions. An Intel power-profiles guide documents RAPL register reinitialization on reboot for its specific Panther Lake configuration, not as a guarantee on all CPUs.
+
+References:
+- https://docs.kernel.org/power/powercap/powercap.html
+- https://docs.kernel.org/admin-guide/laptops/samsung-galaxybook.html
+- https://docs.kernel.org/userspace-api/sysfs-platform_profile.html
+- https://docs.openedgeplatform.intel.com/2026.2/edge-ai-suites/ai-suite-federal-and-aerospace/handheld-multi-modal-application/infrastructure/power-profiles.html
+
+The Samsung `samsung-galaxybook` driver maps `low-power`, `quiet`, `balanced`, and `performance` to platform-specific ACPI/firmware performance modes. The generic ABI makes **no promise** that selecting a mode overwrites Powercap PL1/PL2. In the notebook's earlier tests, Fn+F11 platform-profile transitions did not visibly modify 28/41 W MSR values; hibernation did restore MSR 28/41 W and MMIO 15/41 W. The prior `/usr/local/sbin/apply-intel-rapl-limits` script was intended to **apply** 18/30 W, not a generic kernel-default reset; the associated services were later masked. These findings distinguish firmware reinitialization from a property of daemon stop.
+
+**Revised engineering priority: choose the simplest recovery that passes tests.**
+
+1. Start by experimentally establishing whether the platform/other daemons rewrite package limits after **ordinary user-space process exit**, **service stop**, **platform-profile transitions**, and **resume**; collect read-only before/after snapshots. Never infer the stop case from reboot/resume behavior.
+2. Require a minimal **owner-aware restore on normal service stop** as first candidate: capture the pre-write baseline, journal the pending value before writing, compare current with last known owned value, and restore only where ownership is still credible. The small independent `ExecStopPost` helper may suffice; avoid inventing another init system, new release-management infrastructure, long-lived watchdog, or persistent cross-boot rescue service.
+3. For unexpected termination, first verify whether normal systemd `ExecStopPost` already covers the cases at issue (including SIGKILL of the daemon, **not** a host-wide power loss). If it does, do not add a redundant recovery framework. Keep only the journal/lock features actually required by tested interruption points.
+4. If the original power cap has *already been restored by firmware*, journal retirement must be idempotent and must not write the same value again. When external drift cannot be explained, do not overwrite firmware values or reapply RAPL; warn and continue ordinary CPU policy.
+5. Maintain same-boot, short-lived state as needed to recognize known in-flight operations. Do not attempt cross-reboot restoration of old values: the firmware may set new safe caps at boot. Avoid blocking ordinary version updates; if cleanup fails, retain an explicit warning and suspend only RAPL in the new process.
+6. **Do not eliminate restoration solely because the user's Samsung usually resets limits.** Upstream must also work on machines where Powercap changes remain active indefinitely after a writer exits. If the minimal approach cannot be proven safe, keep active RAPL unimplemented/read-only rather than overengineering the updater.
+
+**Validation gate:** compare the *observed* PL1 and PL2 of each recognized MSR/MMIO package at service stop and after ordinary service restart, with both the old 18/30 W script and any other known RAPL actor inactive. Validate on a mocked sysfs/systemd lab first. Do not change the user's actual notebook during this planning step.
+
+---
+
 ## 1. Sources and what they actually guarantee
 
 1. [systemd.service(5) — ExecStop and ExecStopPost](https://www.freedesktop.org/software/systemd/man/latest/systemd.service.html)
