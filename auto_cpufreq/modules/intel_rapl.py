@@ -23,7 +23,7 @@ SHORT_TERM_OPTION = "rapl_package_short_term_w"
 SUPPORTED_CONTROL_TYPES = frozenset({"intel-rapl", "intel-rapl-mmio"})
 SUPPORTED_PACKAGE_CONSTRAINTS = frozenset({"long_term", "short_term"})
 RAPL_STATE_VERSION = 1
-DEFAULT_RAPL_STATE_PATH = Path("/run/auto-cpufreq/power-state.json")
+DEFAULT_RAPL_STATE_PATH = Path("/run/auto-cpufreq-rapl/power-state.json")
 
 
 class RaplConfigError(ValueError):
