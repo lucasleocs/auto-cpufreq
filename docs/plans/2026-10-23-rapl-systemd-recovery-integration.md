@@ -268,3 +268,16 @@ Port only validated functional code into `feat/intel-rapl-gtk-stats` on upstream
 - Official kernel Powercap: https://docs.kernel.org/power/powercap/powercap.html
 - Linux flock(2): https://man7.org/linux/man-pages/man2/flock.2.html
 - Intel datasheet: https://edc.intel.com/content/www/us/en/design/platforms/core-processor-series-3-datasheet-volume-1-of-2/002/package-power-control/
+
+## Field diagnostic — GalaxyMint, 2026-10-23 (read-only; no write validation)
+
+Observed notebook: Linux XanMod 7.2.12-x64v3-xanmod1, Samsung platform profile `performance`; active upstream `auto-cpufreq.service`, inactive `thermald`, `power-profiles-daemon`, `tuned`.
+
+Kernel sysfs readback this boot: `intel-rapl:0` package PL1 28 W, PL2 41 W; `intel-rapl-mmio:0` PL1 15 W, PL2 41 W. Both zones `enabled=1`. Original custom apply script at `/usr/local/sbin/apply-intel-rapl-limits` targeted **both** MSR and MMIO with PL1 17 W and PL2 35 W; raising MMIO PL1 from OEM 15 W to 17 W would violate the new policy. Do not reuse or invoke it as the new writer.
+
+`intel-rapl-custom-clamp.service` was installed/enabled but **skipped** at +25.928651 seconds, because `ConditionPathExists=/sys/class/powercap/intel-rapl:0/constraint_0_power_limit_uw` was false. Kernel journal first logged Intel RAPL discovery at +26.285184 seconds, then MSR support at +26.888886 seconds; by the time the user manually checked, sysfs attributes existed. **Likely startup race (not proof of a universal probe time):** systemd conditions are evaluated when the start job executes; `After=auto-cpufreq.service` only orders the daemon service, not Powercap/driver availability. Avoid a startup-only condition that can silently skip optional RAPL indefinitely.
+
+The `intel-rapl-resume.service` and `intel-rapl-custom-clamp.service` both were observed enabled but inactive, and were subsequently disabled manually; the systemd status confirmed both disabled. The RAPL limits at defaults this boot **do not prove automatic restoration after a writer exits**, because the writer was skipped before any successful write. Do not use this boot as evidence that a restore helper is unnecessary.
+
+**Next tests:** observe PL1/PL2 read-only before and after manual platform-profile transitions; do not run the old script. To establish daemon-stop persistence, a future separately authorized test must make a reversible downward write to *one* selected interface, then observe process/service exit and readback; ensure restoration/fault handling before proceeding.
+
