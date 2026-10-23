@@ -8,6 +8,14 @@ WorkingDirectory=/opt/auto-cpufreq/current/venv
 Environment=PYTHONPATH=/opt/auto-cpufreq/current
 ExecStart=/opt/auto-cpufreq/current/venv/bin/python /opt/auto-cpufreq/current/venv/bin/auto-cpufreq --daemon
 Restart=on-failure
+# RAPL journal lives only for this boot and must survive daemon restarts
+# and source-release switches. Normal CPU policy remains independent.
+RuntimeDirectory=auto-cpufreq
+RuntimeDirectoryMode=0700
+RuntimeDirectoryPreserve=yes
+# Optional recovery must never make normal daemon removal or update fail.
+# The helper returns nonzero and logs if ownership remains unresolved.
+ExecStopPost=-/opt/auto-cpufreq/current/venv/bin/auto-cpufreq-restore-rapl
 
 [Install]
 WantedBy=multi-user.target
