@@ -362,5 +362,42 @@ class RaplSafetyRegressionTests(unittest.TestCase):
         self.assertEqual(self.store.load(), ())
 
 
+    def test_symlink_journal_is_not_trusted_for_recovery(self):
+        self.assertEqual(self.controller.apply(self.target)[0].action, "acquired")
+        saved = self.root / "externally-managed-state.json"
+        self.store.path.rename(saved)
+        self.store.path.symlink_to(saved)
+        with self.assertRaises(rapl.RaplStateError):
+            self.controller.restore_owned()
+        self.assertEqual(self.power_path.read_text().strip(), "14500000")
+
+    def test_world_readable_journal_is_rejected(self):
+        self.assertEqual(self.controller.apply(self.target)[0].action, "acquired")
+        self.store.path.chmod(0o644)
+        with self.assertRaises(rapl.RaplStateError):
+            self.controller.restore_owned()
+        self.assertEqual(self.power_path.read_text().strip(), "14500000")
+
+    def test_untrusted_parent_directory_is_rejected_without_chmod(self):
+        parent = self.store.path.parent
+        parent.mkdir(mode=0o700)
+        parent.chmod(0o777)
+        with self.assertRaises(rapl.RaplStateError):
+            self.controller.apply(self.target)
+        self.assertEqual(parent.stat().st_mode & 0o777, 0o777)
+        self.assertEqual(self.power_path.read_text().strip(), "15000000")
+
+    def test_world_readable_lock_file_is_rejected_without_chmod(self):
+        parent = self.store.path.parent
+        parent.mkdir(mode=0o700)
+        lockfile = Path(str(self.store.path) + ".lock")
+        lockfile.write_text("external-owner\n")
+        lockfile.chmod(0o644)
+        with self.assertRaises(rapl.RaplStateError):
+            self.controller.apply(self.target)
+        self.assertEqual(lockfile.stat().st_mode & 0o777, 0o644)
+        self.assertEqual(self.power_path.read_text().strip(), "15000000")
+
+
 if __name__ == "__main__":
     unittest.main()
