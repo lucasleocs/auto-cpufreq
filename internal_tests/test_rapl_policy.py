@@ -2,6 +2,11 @@
 from configparser import ConfigParser
 import unittest
 
+from auto_cpufreq.modules.intel_rapl import (
+    RaplConfigError,
+    parse_rapl_policy_config,
+)
+
 from auto_cpufreq.modules.rapl_capabilities import (
     RaplCapabilities,
     RaplPackageLimit,
@@ -97,6 +102,32 @@ class PolicyParsingTests(unittest.TestCase):
                     "3.1234567", " 2 2 ", ".5", "10,4", ""):
             with self.subTest(raw=raw), self.assertRaises(RaplPolicyError):
                 request(pl1=raw)
+
+    def test_compatibility_parser_delegates_to_canonical_policy(self):
+        settings = conf("enable_rapl_envelopes = true\\n"
+                        "rapl_control_type = intel-rapl-mmio\\n"
+                        "rapl_package = package-0\\n")
+        settings.set("charger", "rapl_package_long_term_w", "12.000001")
+        canonical = parse_rapl_configuration(settings, "charger")
+        legacy = parse_rapl_policy_config(settings, "charger")
+        self.assertEqual(legacy.enabled, canonical.enabled)
+        self.assertEqual(legacy.targets.long_term_uw,
+                         canonical.targets.long_term_uw)
+        self.assertEqual(legacy.targets.short_term_uw,
+                         canonical.targets.short_term_uw)
+
+    def test_compatibility_parser_cannot_bypass_scope_validation(self):
+        for bad in ("both", "other", "../package-0"):
+            settings = conf("enable_rapl_envelopes = true\\n")
+            settings.set("intel_power", "rapl_control_type", bad)
+            with self.subTest(bad=bad), self.assertRaises(RaplConfigError):
+                parse_rapl_policy_config(settings, "charger")
+
+    def test_compatibility_parser_rejects_scientific_power(self):
+        settings = conf("enable_rapl_envelopes = true\\n")
+        settings.set("charger", "rapl_package_long_term_w", "1e6")
+        with self.assertRaises(RaplConfigError):
+            parse_rapl_policy_config(settings, "charger")
 
     def test_no_targets_does_not_infer_values(self):
         selection = resolve_rapl_selection(
