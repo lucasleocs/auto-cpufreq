@@ -1,6 +1,9 @@
+import fcntl
 import json
 import os
+import stat
 import tempfile
+from contextlib import contextmanager
 from configparser import ConfigParser
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
@@ -295,6 +298,38 @@ class RaplStateStore:
     def __init__(self, path: Path = DEFAULT_RAPL_STATE_PATH) -> None:
         self.path = Path(path)
 
+    @contextmanager
+    def locked(self):
+        """Serialize journal and sysfs operations across local processes.
+
+        The advisory lock is cooperative; it cannot lock out firmware, other
+        tools or competing privileged writers that do not use this lock.
+        """
+        parent = self.path.parent
+        try:
+            parent.mkdir(parents=True, mode=0o700, exist_ok=True)
+            parent_mode = parent.lstat().st_mode
+            if not stat.S_ISDIR(parent_mode):
+                raise RaplStateError("RAPL state directory is not a real directory")
+            os.chmod(parent, 0o700)
+            flags = os.O_CREAT | os.O_RDWR | os.O_CLOEXEC | os.O_NOFOLLOW
+            fd = os.open(str(self.path) + ".lock", flags, 0o600)
+            try:
+                os.fchmod(fd, 0o600)
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except OSError:
+                os.close(fd)
+                raise
+        except OSError as exc:
+            raise RaplStateError(
+                f"Unable to acquire exclusive RAPL journal lock: {exc}"
+            ) from exc
+        try:
+            yield
+        finally:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+            os.close(fd)
+
     def load(self) -> tuple[RaplOwnershipRecord, ...]:
         try:
             with self.path.open("r", encoding="utf-8") as handle:
@@ -486,6 +521,10 @@ class IntelRaplController:
         )
 
     def apply(self, targets: RaplEnvelopeTargets) -> tuple[RaplApplyResult, ...]:
+        with self.state_store.locked():
+            return self._apply_locked(targets)
+
+    def _apply_locked(self, targets: RaplEnvelopeTargets) -> tuple[RaplApplyResult, ...]:
         ownership = {
             record.identity: record
             for record in self.state_store.load()
@@ -523,6 +562,10 @@ class IntelRaplController:
         return tuple(results)
 
     def restore_owned(self) -> tuple[RaplApplyResult, ...]:
+        with self.state_store.locked():
+            return self._restore_owned_locked()
+
+    def _restore_owned_locked(self) -> tuple[RaplApplyResult, ...]:
         ownership = {
             record.identity: record
             for record in self.state_store.load()
