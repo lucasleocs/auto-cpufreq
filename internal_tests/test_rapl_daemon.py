@@ -316,6 +316,60 @@ class RAPLDaemonTests(unittest.TestCase):
         self.assertEqual(int(self.mmio.read_text()), 15_000_000)
         self.assertEqual(self.engine.state_store.load(), ())
 
+    def test_partial_pl2_failure_restores_already_applied_pl1(self):
+        zone = self.mmio.parent
+        (zone / "constraint_1_name").write_text("short_term\n")
+        second = zone / "constraint_1_power_limit_uw"
+        second.write_text("41000000\n")
+        settings = selected(controller="intel-rapl-mmio")
+        settings.set("charger", "rapl_package_short_term_w", "35")
+        real_write = rapl._write_int
+
+        def fail_second(path, value):
+            if path == second and value == 35_000_000:
+                raise OSError("injected PL2 write failure")
+            real_write(path, value)
+
+        with patch.object(rapl, "_write_int", side_effect=fail_second):
+            self.assertEqual(self.tick(settings).state, "blocked")
+        self.assertEqual(int(self.mmio.read_text()), 15_000_000)
+        self.assertEqual(int(second.read_text()), 41_000_000)
+        self.assertEqual(self.engine.state_store.load(), ())
+
+    def test_above_original_reload_restores_prior_owned_limit(self):
+        settings = selected(controller="intel-rapl-mmio")
+        self.assertEqual(self.tick(settings).state, "active")
+        raised = selected(charger="18", controller="intel-rapl-mmio")
+        self.assertEqual(self.tick(raised).state, "blocked")
+        self.assertEqual(int(self.mmio.read_text()), 15_000_000)
+        self.assertEqual(self.engine.state_store.load(), ())
+
+    def test_unexpected_policy_exception_attempts_recovery(self):
+        settings = selected(controller="intel-rapl-mmio")
+        self.assertEqual(self.tick(settings).state, "active")
+        with redirect_stderr(io.StringIO()):
+            self.policy.handle_unexpected_failure(RuntimeError("injected"))
+        self.assertEqual(int(self.mmio.read_text()), 15_000_000)
+        self.assertEqual(self.engine.state_store.load(), ())
+        self.assertEqual(self.tick(settings).state, "blocked")
+
+    def test_exception_during_initial_acquisition_recovers_pending_journal(self):
+        settings = selected(controller="intel-rapl-mmio")
+        original = self.engine._save_ownership
+        calls = [0]
+
+        def fail_after_first_hardware_write(state):
+            calls[0] += 1
+            if calls[0] == 2:
+                raise rapl.RaplStateError("injected journal finalization failure")
+            return original(state)
+
+        with patch.object(self.engine, "_save_ownership",
+                          side_effect=fail_after_first_hardware_write):
+            self.assertEqual(self.tick(settings).state, "blocked")
+        self.assertEqual(int(self.mmio.read_text()), 15_000_000)
+        self.assertEqual(self.engine.state_store.load(), ())
+
     def test_no_writes_to_explicitly_disabled_zone(self):
         (self.mmio.parent / "enabled").write_text("0\n")
         self.assertEqual(self.tick(selected(controller="intel-rapl-mmio")).state,
