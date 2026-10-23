@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Optional
 
 from auto_cpufreq.modules.intel_power import IntelPowerDiscovery
+from auto_cpufreq.modules.rapl_capabilities import _package_zones
 
 
 MICROWATTS_PER_WATT = Decimal("1000000")
@@ -503,70 +504,80 @@ class IntelRaplController:
     def discover_package_constraints(self) -> tuple[RaplConstraintRef, ...]:
         refs: list[RaplConstraintRef] = []
 
-        for zone_path, control_type in self.discovery.powercap_zone_paths():
-            if control_type not in SUPPORTED_CONTROL_TYPES:
-                continue
-
-            zone_name = _read_text(zone_path / "name")
-            if zone_name is None or re.fullmatch(r"package-[0-9]+", zone_name) is None:
-                continue
-
-            try:
-                zone_id = str(zone_path.relative_to(self.discovery.powercap_root))
-            except ValueError:
-                continue
-
-            try:
-                name_paths = sorted(
-                    zone_path.glob("constraint_*_name"),
-                    key=lambda path: path.name,
-                )
-            except OSError:
-                continue
-
-            for name_path in name_paths:
-                suffix = name_path.name.removeprefix("constraint_").removesuffix(
-                    "_name"
-                )
-                if not suffix.isdigit():
-                    continue
-
-                constraint_name = _read_text(name_path)
-                if constraint_name not in SUPPORTED_PACKAGE_CONSTRAINTS:
-                    continue
-
-                index = int(suffix)
-                power_limit_path = zone_path / f"constraint_{index}_power_limit_uw"
-                try:
-                    has_power_limit = power_limit_path.is_file()
-                except OSError:
-                    has_power_limit = False
-                if not has_power_limit:
-                    continue
-
-                refs.append(
-                    RaplConstraintRef(
-                        control_type=control_type,
-                        zone_id=zone_id,
-                        zone_name=zone_name,
-                        constraint_index=index,
-                        constraint_name=constraint_name,
-                        power_limit_path=power_limit_path,
-                        min_power_path=zone_path / f"constraint_{index}_min_power_uw",
-                        max_power_path=zone_path / f"constraint_{index}_max_power_uw",
-                    )
-                )
+        # This is the exact physical package-zone discovery used by the
+        # --stats/GTK reader. Generic intel_power discovery also traverses
+        # subzones and may label direct class aliases with control_type=None;
+        # neither behavior is appropriate for a package-cap writer.
+        for control_type in sorted(SUPPORTED_CONTROL_TYPES):
+            for zone_path, _control_enabled in _package_zones(
+                self.discovery.powercap_root, control_type
+            ):
+                refs.extend(self._refs_for_package_zone(zone_path, control_type))
 
         return tuple(
-            sorted(
-                refs,
-                key=lambda ref: (
-                    ref.control_type,
-                    ref.zone_id,
-                    ref.constraint_index,
-                ),
-            )
+            sorted(refs, key=lambda ref: (
+                ref.control_type, ref.zone_id, ref.constraint_index,
+            ))
         )
+
+    def _refs_for_package_zone(
+        self, zone_path: Path, control_type: str
+    ) -> tuple[RaplConstraintRef, ...]:
+        refs: list[RaplConstraintRef] = []
+        zone_name = _read_text(zone_path / "name")
+        if zone_name is None or re.fullmatch(r"package-[0-9]+", zone_name) is None:
+            return ()
+
+        # The class alias and canonical directory name refer to the same
+        # kernel package. Keep an alias-invariant, same-boot journal identity.
+        zone_id = zone_path.name
+        try:
+            name_paths = sorted(
+                zone_path.glob("constraint_*_name"),
+                key=lambda path: path.name,
+            )
+        except OSError:
+            return ()
+
+        for name_path in name_paths:
+            if name_path.is_symlink():
+                # A real Powercap constraint is a sysfs attribute, not an
+                # arbitrary symlink to a writable file outside the zone.
+                continue
+            suffix = name_path.name.removeprefix("constraint_").removesuffix(
+                "_name"
+            )
+            if not suffix.isdigit():
+                continue
+            constraint_name = _read_text(name_path)
+            if constraint_name not in SUPPORTED_PACKAGE_CONSTRAINTS:
+                continue
+
+            index = int(suffix)
+            power_limit_path = zone_path / f"constraint_{index}_power_limit_uw"
+            try:
+                has_power_limit = (
+                    power_limit_path.is_file()
+                    and not power_limit_path.is_symlink()
+                )
+            except OSError:
+                has_power_limit = False
+            if not has_power_limit:
+                continue
+
+            refs.append(
+                RaplConstraintRef(
+                    control_type=control_type,
+                    zone_id=zone_id,
+                    zone_name=zone_name,
+                    constraint_index=index,
+                    constraint_name=constraint_name,
+                    power_limit_path=power_limit_path,
+                    min_power_path=zone_path / f"constraint_{index}_min_power_uw",
+                    max_power_path=zone_path / f"constraint_{index}_max_power_uw",
+                )
+            )
+        return tuple(refs)
 
     def apply(
         self,
