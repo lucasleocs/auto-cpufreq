@@ -7,19 +7,14 @@ import tempfile
 from contextlib import contextmanager
 from configparser import ConfigParser
 from dataclasses import dataclass
-from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Optional
 
 from auto_cpufreq.modules.intel_power import IntelPowerDiscovery
 from auto_cpufreq.modules.rapl_capabilities import _package_zones
+from auto_cpufreq.modules.rapl_policy import RaplPolicyError, parse_rapl_configuration
 
 
-MICROWATTS_PER_WATT = Decimal("1000000")
-INTEL_POWER_SECTION = "intel_power"
-ENABLE_RAPL_OPTION = "enable_rapl_envelopes"
-LONG_TERM_OPTION = "rapl_package_long_term_w"
-SHORT_TERM_OPTION = "rapl_package_short_term_w"
 SUPPORTED_CONTROL_TYPES = frozenset({"intel-rapl", "intel-rapl-mmio"})
 SUPPORTED_PACKAGE_CONSTRAINTS = frozenset({"long_term", "short_term"})
 RAPL_STATE_VERSION = 1
@@ -87,69 +82,24 @@ class RaplApplyResult:
     message: str
 
 
-def _watts_to_microwatts(raw: str, option: str) -> int:
-    try:
-        watts = Decimal(raw.strip())
-    except InvalidOperation as exc:
-        raise RaplConfigError(f"Invalid value for '{option}': {raw}") from exc
-
-    if not watts.is_finite() or watts <= 0:
-        raise RaplConfigError(f"Invalid value for '{option}': {raw}")
-
-    microwatts = watts * MICROWATTS_PER_WATT
-    if microwatts != microwatts.to_integral_value():
-        raise RaplConfigError(
-            f"'{option}' has precision below one microwatt: {raw}"
-        )
-
-    return int(microwatts)
-
-
-def _rapl_enabled(conf: ConfigParser) -> bool:
-    if not conf.has_option(INTEL_POWER_SECTION, ENABLE_RAPL_OPTION):
-        return False
-
-    try:
-        return conf.getboolean(INTEL_POWER_SECTION, ENABLE_RAPL_OPTION)
-    except ValueError as exc:
-        raw = conf.get(INTEL_POWER_SECTION, ENABLE_RAPL_OPTION, fallback="")
-        raise RaplConfigError(
-            f"Invalid value for '{ENABLE_RAPL_OPTION}': {raw}"
-        ) from exc
-
-
-def _optional_target(
-    conf: ConfigParser,
-    profile: str,
-    option: str,
-) -> Optional[int]:
-    if not conf.has_option(profile, option):
-        return None
-    return _watts_to_microwatts(conf.get(profile, option), option)
-
-
 def parse_rapl_policy_config(
     conf: ConfigParser,
     profile: str,
 ) -> RaplPolicyConfig:
-    """Parse opt-in package RAPL limits for one power-source profile.
+    """Compatibility adapter around the single validated RAPL parser.
 
-    RAPL targets are intentionally ignored while the feature is disabled so
-    existing or example configuration cannot cause validation errors, much
-    less hardware writes, without the explicit global opt-in.
+    Keep this old public entry point while preventing divergent validation
+    of selectors, decimal limits and opt-in between daemon and writer.
     """
-    enabled = _rapl_enabled(conf)
-    if not enabled:
-        return RaplPolicyConfig(
-            enabled=False,
-            targets=RaplEnvelopeTargets(),
-        )
-
+    try:
+        parsed = parse_rapl_configuration(conf, profile)
+    except RaplPolicyError as exc:
+        raise RaplConfigError(str(exc)) from exc
     return RaplPolicyConfig(
-        enabled=True,
+        enabled=parsed.enabled,
         targets=RaplEnvelopeTargets(
-            long_term_uw=_optional_target(conf, profile, LONG_TERM_OPTION),
-            short_term_uw=_optional_target(conf, profile, SHORT_TERM_OPTION),
+            long_term_uw=parsed.targets.long_term_uw,
+            short_term_uw=parsed.targets.short_term_uw,
         ),
     )
 
