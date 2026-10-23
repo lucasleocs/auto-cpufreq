@@ -281,3 +281,23 @@ The `intel-rapl-resume.service` and `intel-rapl-custom-clamp.service` both were 
 
 **Next tests:** observe PL1/PL2 read-only before and after manual platform-profile transitions; do not run the old script. To establish daemon-stop persistence, a future separately authorized test must make a reversible downward write to *one* selected interface, then observe process/service exit and readback; ensure restoration/fault handling before proceeding.
 
+
+## Field diagnostic follow-up — Samsung platform profile transition
+
+The user manually changed the Samsung platform profile with Fn+F11 from `performance` (19:19:04) to `low-power` (19:19:15) with no direct RAPL write. All four package limits remained unchanged:
+
+| Controller | PL1 before | PL1 after | PL2 before | PL2 after |
+| --- | ---: | ---: | ---: | ---: |
+| `intel-rapl` | 28 W | 28 W | 41 W | 41 W |
+| `intel-rapl-mmio` | 15 W | 15 W | 41 W | 41 W |
+
+Interpretation: **this particular platform-profile change does not reprogram the exposed PL1/PL2 limits**. It does not rule out EC fan/temperature controls, thermal throttling, different policy behavior under load, later asynchronous changes, or changes during suspend/hibernate. In particular it does **not** establish that the kernel resets a value written by a process when that process exits.
+
+Upstream Linux docs:
+- https://docs.kernel.org/admin-guide/laptops/samsung-galaxybook.html — the platform profile selects Samsung ACPI-specific firmware performance modes, not a specified set of Powercap writes.
+- https://docs.kernel.org/userspace-api/sysfs-platform_profile.html — the generic interface is for selecting platform power/temperature/fan policy, and it does not expose every resulting hardware policy decision.
+
+This strengthens the earlier decision to **avoid requiring profile-based restoration** of a written RAPL value. For a definitive process-exit persistence test, use a separately authorized, individually bounded **downward** write to *one* selected constraint, performed by a short-lived subprocess and observed by an independent parent/supervisor that restores the recorded baseline only if it still owns the value. Validate against fake sysfs first. Do not reuse the legacy script, which writes to both controllers and raises the 15 W MMIO baseline to 17 W.
+
+---
+
