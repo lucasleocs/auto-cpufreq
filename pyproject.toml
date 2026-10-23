@@ -47,6 +47,7 @@ build-backend = "poetry_dynamic_versioning.backend"
 [tool.poetry.scripts]
 auto-cpufreq = "auto_cpufreq.bin.auto_cpufreq:main"
 auto-cpufreq-gtk = "auto_cpufreq.bin.auto_cpufreq_gtk:main"
+auto-cpufreq-restore-rapl = "auto_cpufreq.bin.auto_cpufreq_restore_rapl:main"
 
 # https://github.com/mtkennerly/poetry-dynamic-versioning
 [tool.poetry-dynamic-versioning]
