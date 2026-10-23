@@ -1,6 +1,61 @@
 # Intel RAPL — systemd recovery and installation integration
 Internal implementation plan — 2026-10-23
 
+## 0B. Pre-implementation audit: minimum safe implementation (2026-10-23)
+
+**Result: plan refined after checking the current Intel Powercap implementation, systemd documentation, versioned installer and experimental writer. This section overrides less precise recommendations later in the document; no production implementation was made.**
+
+### Definitive implementation choice
+
+Retain **exactly one independently executable recovery helper** invoked by the existing managed systemd unit via `ExecStopPost=`, plus a **small, same-boot ownership journal and one cooperative lock**. No separate long-lived rescue daemon, watchdog, custom updater, release symlink logic, direct MSR access, persistent cross-reboot recovery, or new GUI controls. Keep all non-RAPL CPU policies independent.
+
+For normal version updates: old daemon stops -> recovery helper runs while the old release is installed -> original versioned updater continues -> new daemon discovers fresh hardware/config and may opt in again. A restoration failure is reported but **must not fail the service's stop operation solely because RAPL is optional**. The standard systemd command prefix `-` is available to record a nonzero cleanup command result without treating it as an operation failure; test the actual unit and installer path. Never use that masking as a substitute for journal reconciliation or a user-visible warning.
+
+### Required code fixes before wiring any service (P0)
+
+1. **Do not discard journal on ambiguous restoration failure.** Current lab `intel_rapl.py::_restore()` deletes the ownership record after certain failed writes if a positive readback differs from the pre-write value even though the original baseline was **not** restored. Fix: retain a pending/uncertain record and prohibit further writes; delete only on proven baseline readback or well-defined external ownership loss. On an already-original readback, retire without an unnecessary sysfs write.
+2. **Do not claim unexpected readback as owned.** Current `_recover_unsafe_readback()` may assign any positive unexpected hardware value to `last_written_power_limit_uw`. That value may have come from firmware or another writer; preserve an unresolved observation and decline new writes, without laundering uncertainty into confirmed ownership.
+3. **Do not let an unverified `enabled` attribute authorize writes.** The lab `_zone_write_allowed()` only checks `path.exists()`. Distinguish (a) explicitly disabled, (b) present-but-unreadable, and (c) legitimately absent optional `enabled` attribute; do not automatically assume present-but-unreadable means enabled. When absent, use the documented ABI and an explicit compatibility test rather than blindly failing all legitimate platforms.
+4. **Stop conflicting Powercap discovery implementations.** Experimental `intel_power.py` and clean `rapl_capabilities.py` have different zone/alias and canonical-path logic. Refactor toward one shared, pure discovery/identity implementation for telemetry and writing. Named `long_term`/`short_term` constraints are authoritative: never assume indexes 0/1; do not follow unrelated links out of the expected control tree. Validate absent, late, renamed and disappearing zones.
+5. **Harden ownership storage.** The experimental lock uses `O_NOFOLLOW` for the leaf but the entire root-owned directory ancestry, pre-existing file owner/type and schema must be checked. Test `os.replace`, file/parent fsync, unlink/fsync, invalid JSON, unexpected file type, and stale identity. A failed fsync *after* a successful atomic replace is not equivalent to proof of rollback. Avoid destructive cleanup when state durability is uncertain.
+6. **Handle quantized or ignored writes.** After sysfs write, read back and compare to original baseline and requested target. If the driver rounds a target to a safe lower-than-baseline value, store the *actual* verified readback and do not rewrite it on every daemon tick. If it ignores, rejects or raises the value, preserve/recover safely. Do not invent fixed power tolerances without evidence.
+7. **Handle early boot correctly.** The user's custom unit was skipped at ~25.929 s because the Powercap file was not yet present; the kernel discovered RAPL at ~26.285–26.889 s. Do not gate the **whole auto-cpufreq daemon** on a once-only `ConditionPathExists=` for RAPL. Start ordinary governor/EPP policies normally and retry lightweight discovery until the driver appears; opt-in writer remains inactive until full capability/readiness checks pass. Do not modprobe/load the driver or write a probe cap.
+8. **Lifecycle readiness must be real.** An arbitrary `AUTO_CPUFREQ_RAPL_FAILSAFE=1` environment variable cannot prove a compatible cleanup hook. The active writer must only arm in the audited installed systemd variant, and must be disabled on unsupported init/install types. Test that a manually invoked `--daemon` cannot bypass the lifecycle safeguard.
+
+### systemd implementation boundaries (P1)
+
+- **`ExecStopPost=`:** designed for post-mortem cleanup after standard stop, crash or failed startup. It is not a power-loss handler. `ExecStop=` alone is insufficient. Use a small independent entry point, no `core.py` imports or GUI/config dependency, and idempotent no-op when the journal is empty.
+- **`RuntimeDirectory=auto-cpufreq`, `RuntimeDirectoryMode=0700`, `RuntimeDirectoryPreserve=yes`:** same-boot ownership records survive stops and updates. No cross-reboot replay from `/var/lib` by default. Verify root-only `0600` journal and helper's ability to access it at cleanup time.
+- **`ExecStopPost=-...`:** **candidate** to keep optional RAPL failures from blocking versioned updates. Helper still returns correct nonzero failures, logs and retains pending state. Test that normal stop and `--update` really proceed; verify startup refuses RAPL on unresolved journal rather than assuming a successful `systemctl stop` means restored.
+- **Timeouts:** validate real command termination and `ExecStopPost` behavior with systemd; do not assume an unbounded helper will run forever. Test SIGTERM/SIGKILL, canceled start, helper timeout and post-failure restart. Keep `Restart=on-failure` upstream. No `WatchdogSec` unless the daemon actually implements and tests `sd_notify WATCHDOG=1`.
+- **Installer:** first implementation leaves `auto-cpufreq-installer`, `releases/`, atomic `current` and rollback untouched. Test managed-unit `cmp` checks as already written by upstream. Any discovered incompatibility must be reproduced and justify a **narrow** separate change.
+- **Packaging:** `systemd-analyze verify` validates syntax and dependency/executable references, **not** stop/restart semantics. Real-manager tests belong in an isolated VM/container that genuinely runs systemd as PID 1; plain GitHub Actions Python/unit tests cannot prove systemd lifecycle. NixOS/AUR/Snap/other init environments remain read-only until independently verified.
+
+### Test design and clear GO/NO-GO gates (P1)
+
+| Gate | Test | Must pass |
+| --- | --- | --- |
+| A | Recovery state-machine faults (before journal, after journal, before/after sysfs write, readback failure, changed hardware, failed fsync) | Never delete uncertain recovery state or overwrite unrelated external values |
+| B | Two-controller/multi-package, disabled/locked BIOS, optional/malformed `enabled`, missing named PL1/PL2, late driver probe | Only explicitly selected and safely writable constraints can change |
+| C | Normal stop/restart, SIGTERM/SIGKILL of **daemon**, failed service start, helper failure/timeout, stale journal within same boot | Idempotent helper; new daemon can run other CPU optimizations while RAPL stays unarmed |
+| D | Existing upstream versioned update with RAPL off/on, error recovery, failed activation/rollback, unit ownership verification | No change to usual updater semantics, exit codes or release layout caused by optional RAPL failures |
+| E | Config disabled, AC/battery switch, config hot reload, stale controller selector, driver appears after boot, script conflict | Bounded, non-spamming warnings, no unintended reacquisition or forced equality |
+| F | One explicitly authorized hardware test after A–E, with read-only baseline and a small downward change to **one** constraint | Exact safe restoration verified; other interface and PL2 unchanged |
+
+**Hard stop:** previous 55 synthetic tests and one successful 15 -> 12 -> 15 W MMIO experiment are useful but **do not** validate A–E. Do not port active writer to contribution branch, enable it on the notebook, or submit an upstream PR until the gaps are closed.
+
+### Primary references checked
+
+- Linux Power Capping Framework: https://docs.kernel.org/power/powercap/powercap.html
+- Linux Intel driver (BIOS may lock limits but keep them readable): https://github.com/torvalds/linux/blob/master/drivers/powercap/intel_rapl_common.c
+- systemd.service: https://www.freedesktop.org/software/systemd/man/latest/systemd.service.html
+- systemd.exec: https://www.freedesktop.org/software/systemd/man/latest/systemd.exec.html
+- systemd-analyze verify: https://www.freedesktop.org/software/systemd/man/latest/systemd-analyze.html
+- Linux flock(2), advisory locking: https://man7.org/linux/man-pages/man2/flock.2.html
+- Exact upstream source: `AdnanHodzic/auto-cpufreq`, version 3.2.0; source-installed unit points at `/opt/auto-cpufreq/current/venv`, and versioned releases switch via the existing `current` symlink.
+
+---
+
 ## 0. October 23 clarification: updater non-interference is mandatory
 
 **User decision overrides earlier conservative proposals that could block an ordinary version update.** Upstream's versioned `/opt/auto-cpufreq/releases/` layout and atomic `current` activation must be preserved. The RAPL feature may pause during an update, just like existing CPU governor/EPP management, and safely reapply the opt-in configuration after the daemon starts again.
