@@ -834,11 +834,7 @@ class IntelRaplController:
             )
 
         max_uw = _read_int(ref.max_power_path)
-        if (
-            max_uw is not None
-            and max_uw > 0
-            and current <= max_uw < target
-        ):
+        if max_uw is not None and max_uw > 0 and target > max_uw:
             return (
                 "rejected-max",
                 f"Requested value {target} exceeds kernel-reported maximum {max_uw}",
