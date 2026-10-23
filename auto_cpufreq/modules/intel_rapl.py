@@ -520,18 +520,73 @@ class IntelRaplController:
             )
         )
 
-    def apply(self, targets: RaplEnvelopeTargets) -> tuple[RaplApplyResult, ...]:
+    def apply(
+        self,
+        targets: RaplEnvelopeTargets,
+        *,
+        control_type: Optional[str] = None,
+        package: Optional[str] = None,
+    ) -> tuple[RaplApplyResult, ...]:
         with self.state_store.locked():
-            return self._apply_locked(targets)
+            return self._apply_locked(targets, control_type, package)
 
-    def _apply_locked(self, targets: RaplEnvelopeTargets) -> tuple[RaplApplyResult, ...]:
+    def _apply_locked(
+        self,
+        targets: RaplEnvelopeTargets,
+        control_type: Optional[str],
+        package: Optional[str],
+    ) -> tuple[RaplApplyResult, ...]:
         ownership = {
             record.identity: record
             for record in self.state_store.load()
         }
-        results: list[RaplApplyResult] = []
+        discovered = self.discover_package_constraints()
+        controls = {ref.control_type for ref in discovered}
+        if not controls:
+            return ()
+        if control_type is None:
+            if len(controls) != 1:
+                raise RaplStateError(
+                    "Ambiguous Intel RAPL control types; select MSR or MMIO explicitly"
+                )
+            control_type = next(iter(controls))
+        elif control_type not in controls:
+            raise RaplStateError(
+                f"Selected Intel RAPL control type is not exposed: {control_type}"
+            )
 
-        for ref in self.discover_package_constraints():
+        relevant = tuple(
+            ref for ref in discovered if ref.control_type == control_type
+        )
+        packages = {ref.zone_name for ref in relevant}
+        if not packages:
+            return ()
+        if package is None:
+            if len(packages) != 1:
+                raise RaplStateError(
+                    "Multiple Intel RAPL packages; select an exact package"
+                )
+            package = next(iter(packages))
+        elif package not in packages:
+            raise RaplStateError(
+                f"Selected Intel RAPL package is not exposed: {package}"
+            )
+
+        # Switching selection while holding an old/unfinished transaction
+        # could strand its restore state. Require explicit reconciliation.
+        if any(
+            identity.control_type != control_type
+            or identity.zone_name != package
+            for identity in ownership
+        ):
+            raise RaplStateError(
+                "RAPL ownership exists outside selected scope; restore it first"
+            )
+
+        results: list[RaplApplyResult] = []
+        for ref in relevant:
+            if ref.zone_name != package:
+                continue
             identity = self._identity(ref)
             target = self._target_for(ref, targets)
             record = ownership.get(identity)
