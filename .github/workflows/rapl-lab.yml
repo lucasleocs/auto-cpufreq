@@ -1,0 +1,23 @@
+name: Intel RAPL lab checks
+
+on:
+  push:
+    branches:
+      - lab/intel-rapl-capability-20261023
+  workflow_dispatch:
+
+jobs:
+  synthetic-sysfs:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.9", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Validate read-only discovery
+        run: python -m unittest discover -s internal_tests -p 'test_rapl_*.py' -v
+      - name: Compile Python module
+        run: python -m compileall -q auto_cpufreq/modules/rapl_capabilities.py
