@@ -108,10 +108,10 @@ class BatteryStatusTests(unittest.TestCase):
         system = self.ns["SystemInfo"]
         data = {"status": "Discharging", "capacity": "91"}
         with (
-            patch.object(system, "get_battery_path", return_value="/virtual/BAT0"),
-            patch.object(system, "external_power_state", return_value=True),
+            patch.object(system, "get_battery_path", return_value="/virtual/BAT0", create=True),
+            patch.object(system, "external_power_state", return_value=True, create=True),
             patch.object(system, "_battery_power_watts", return_value=0.0),
-            patch.object(system, "read_file", side_effect=lambda path: data.get(os.path.basename(path))),
+            patch.object(system, "read_file", side_effect=lambda path: data.get(os.path.basename(path)), create=True),
         ):
             info = system.battery_info()
         self.assertEqual(info.status, "Discharging")
@@ -122,7 +122,7 @@ class BatteryStatusTests(unittest.TestCase):
         system = self.ns["SystemInfo"]
         data = {"power_now": "0", "current_now": "2000000", "voltage_now": "12000000"}
         with patch.object(
-            system, "read_file", side_effect=lambda path: data.get(os.path.basename(path))
+            system, "read_file", side_effect=lambda path: data.get(os.path.basename(path)), create=True
         ):
             self.assertEqual(system._battery_power_watts("/virtual/BAT0"), 0.0)
             data.pop("power_now")
