@@ -631,6 +631,27 @@ class IntelRaplController:
                 f"Selected Intel RAPL package is not exposed: {package}"
             )
 
+        # A package name is the user's selector, not a guarantee that
+        # there is only one physical Powercap zone with that name. Reject
+        # duplicated package names and duplicate requested constraint names
+        # BEFORE any sysfs write or ownership-journal mutation.
+        selected_refs = tuple(
+            ref for ref in relevant if ref.zone_name == package
+        )
+        if len({ref.zone_id for ref in selected_refs}) != 1:
+            raise RaplStateError(
+                "Multiple Powercap zones expose the selected package name"
+            )
+        selected_names = [
+            ref.constraint_name for ref in selected_refs
+            if self._target_for(ref, targets) is not None
+            or self._identity(ref) in ownership
+        ]
+        if len(selected_names) != len(set(selected_names)):
+            raise RaplStateError(
+                "Duplicate named Powercap constraints in selected package"
+            )
+
         # Switching selection while holding an old/unfinished transaction
         # could strand its restore state. Require explicit reconciliation.
         if any(
