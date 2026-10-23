@@ -74,3 +74,48 @@ Fork `master` and `AdnanHodzic/auto-cpufreq@5a1683037a583785f802b5d039022127b9b1
 8. Existing physical hardware tests from September 2026 are useful evidence, but are not substitutes for fresh synthetic tests on the current tree/kernel. Commit runnable regression coverage before merging.
 
 This is a design/audit commit only. No RAPL writes, runtime modifications, or upstream merge were performed.
+
+## October 23, 2026 follow-up: unsupported CPUs and kernels
+
+**Principle:** Optional functionality must fail gracefully and not affect existing CPU policy; even an explicit unsupported RAPL configuration must never fail the entire daemon or attempt a sysfs write. A requested-but-unavailable feature should produce a concise, informative warning, not silent success.
+
+### HWP Dynamic Boost precedent
+
+Current `master:core.py` checks `/sys/devices/system/cpu/intel_pstate/hwp_dynamic_boost` in `get_hwp_dynamic_boost_target()` and again in `set_hwp_dynamic_boost()`. If missing, it skips the write and (when explicitly configured) explains that the feature is unsupported. `get_hwp_dynamic_boost()` returns `None` for absent, unreadable or unknown content. The Linux `intel_pstate` documentation says the knob exists only in active mode with HWP enabled. This is a useful no-crash precedent, but RAPL needs zone-level detection rather than a single `.exists()` test. RAPL must also remain **disabled by default**, unlike the existing auto-selected Dynamic Boost policy defaults.
+
+### RAPL capability assessment
+
+Implement read-only discovery before considering configuration or writes, using the kernel Powercap sysfs ABI:
+
+- Discover actual Intel RAPL **control types** (`intel-rapl`, `intel-rapl-mmio`); do not infer support from CPU model, vendor string, HWP state, the `intel_pstate` driver or an empty `/sys/class/powercap` directory.
+- Resolve package zones and named `long_term`/`short_term` constraints; use canonical deduplicated paths, forbid symlink escapes and never mistake subzones for packages. Independent MSR/MMIO limits can coexist and differ.
+- Distinguish missing control type, no package zone, no named PL1/PL2, readable-only limits, unreadable/permission errors, zone/control disabled (where `enabled` is exposed), and temporarily unavailable or dynamically removed files. Never automatically enable a disabled zone or load a kernel module.
+- Test `enabled` when available, but don't assume that successful path discovery or an existing power-limit file proves it accepts writes. A firmware-locked or read-only attribute can reject privileged writes. Only an **explicit opt-in** can reach the write path, and the backend must handle write errors and verify readback.
+- Support partially available systems: one recognized constraint remains usable even if another is absent or locked, provided safety preconditions hold. Distinguish 'feature supported for telemetry' from 'safe for policy control'.
+- Presence of Intel RAPL is not equivalent to active Intel HWP. Detach RAPL capability and opt-in dispatch from `ModernIntelHwpPolicy`, retaining the normal legacy CPU governor policy on machines without HWP. On no-RAPL hardware, RAPL is a no-op, not a daemon startup failure.
+- Preserve crash-safe restoration as a hard prerequisite for writes. An environment variable on its own is not a comprehensive proof of recovery; install/packaging and actual systemd unit lifecycle must be verified.
+- If configuration is absent or globally disabled: no RAPL warnings and no writes. If configuration explicitly requests unsupported RAPL: report a concise warning on startup or meaningful state changes, suppress repeated messages in periodic loops and reflect the reason in `--stats` and GTK. Status should distinguish `disabled_by_config`, `not_exposed_by_kernel`, `no_package_constraints`, `zone_disabled`, `read_only_or_locked`, `unreadable`, `unsafe_to_apply`, `available`, `active`, and `external_override`; avoid inventing hardware claims from missing data.
+
+### Test strategy to commit **with implementation**
+
+Prefer deterministic stdlib `unittest` plus `tempfile.TemporaryDirectory` and injected fake-sysfs paths as the project currently declares no pytest development dependency. If future maintainers prefer pytest, keep new test dependencies optional and isolated. Test names and cases are more important than the framework choice.
+
+1. AMD/ARM and Intel hardware with no `intel-rapl` control type: defaults and explicit opt-in, daemon remains running, all existing governor features continue, no write attempts.
+2. `intel_pstate` active/HWP available but no RAPL; Intel RAPL available while HWP is absent/passive; independent feature gates behave correctly.
+3. Package zone without any PL1/PL2, PL1-only, PL2-only, MSR-only, MMIO-only, both, multiple packages, different named constraint indexes and read-only energy-only zones.
+4. Powercap directory missing, unreadable, renamed, dynamically disappeared, a symlink alias, an escape outside allowed sysfs boundaries, and malformed/absent `name`/limit attributes.
+5. Control type or zone `enabled=0`; invalid/unknown `enabled`, missing `enabled`, and a file readable but unwritable as root. Do not try to enable a zone; show capability/reason correctly.
+6. Invalid configured power values; opt-in false; config requested but no recognized limits; changed AC/battery profile; service without proven restoration; zero RAPL writes in read-only monitor, GTK and `--stats`.
+7. Privileged writes rejected (EACCES, EROFS, EPERM), partial accepted/quantized writes, failed readback, persistence/fsync failure, failed rollback, drift and re-acquisition suppression; verify original baseline restoration and clear unresolved diagnostics.
+8. Dedicated snapshot, shared renderer and GTK smoke tests verifying unsupported/partial/available states; do not block the GTK main loop or require GTK in headless test suites.
+
+CI should run runnable behavior tests alongside installation/build checks. Only focused tests and user-facing documentation belong in the eventual upstream PR; do not commit these internal task plans, retrospective development gates, machine-specific logs or internal workflow notes to the feature branch.
+
+### Source documentation
+
+- Powercap sysfs API: https://docs.kernel.org/power/powercap/powercap.html
+- Intel P-state/HWP sysfs attributes: https://docs.kernel.org/admin-guide/pm/intel_pstate.html
+
+### Branch policy
+
+This planning document is retained only under `internal/intel-rapl-review-notes`, independently of the clean `feat/intel-rapl-gtk-stats` integration branch. Future implementation commits and **runnable regression tests** should land on the latter; before any upstream PR, inspect `git diff upstream/master...HEAD --name-status` and `git log upstream/master..HEAD --oneline` and confirm internal docs are absent from both the final changed-file list and implementation commit history.
