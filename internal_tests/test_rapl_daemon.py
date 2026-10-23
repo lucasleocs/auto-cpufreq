@@ -118,6 +118,23 @@ class RAPLDaemonTests(unittest.TestCase):
         self.assertEqual(self.tick(settings, "battery").state, "restored")
         self.assertEqual(int(self.mmio.read_text()), 15_000_000)
 
+    def test_remove_last_owned_pl1_when_only_unowned_pl2_remains(self):
+        # PL2 happens to equal the external baseline and has never been
+        # modified; withdrawing PL1 should retire the last owned entry.
+        zone = self.mmio.parent
+        (zone / "constraint_1_name").write_text("short_term\n")
+        (zone / "constraint_1_power_limit_uw").write_text("41000000\n")
+        settings = selected(controller="intel-rapl-mmio")
+        settings.set("charger", "rapl_package_short_term_w", "41")
+        self.assertEqual(self.tick(settings).state, "active")
+        self.assertEqual(int(self.mmio.read_text()), 12_000_000)
+        settings.remove_option("charger", "rapl_package_long_term_w")
+        self.assertEqual(self.tick(settings).state, "no-change")
+        self.assertEqual(int(self.mmio.read_text()), 15_000_000)
+        self.assertEqual(self.engine.state_store.load(), ())
+        self.assertEqual(self.tick(config()).state, "disabled")
+        self.assertEqual(int(self.mmio.read_text()), 15_000_000)
+
     def test_config_hot_reload_target_change_does_not_reset_baseline(self):
         self.assertEqual(self.tick(selected(charger="14", controller="intel-rapl-mmio")).state, "active")
         self.assertEqual(self.tick(selected(charger="11", controller="intel-rapl-mmio")).state, "active")
