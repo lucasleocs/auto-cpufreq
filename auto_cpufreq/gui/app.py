@@ -14,6 +14,7 @@ from auto_cpufreq.config.config import config
 from auto_cpufreq.core import check_for_update, daemon_is_running
 from auto_cpufreq.globals import GITHUB, IS_INSTALLED_WITH_SNAP
 from auto_cpufreq.gui.objects import BluetoothBootControl, DaemonNotRunningView, DropDownMenu, MonitorModeView, RadioButtonView, CPUTurboOverride, UpdateDialog
+from auto_cpufreq.modules.rapl_capabilities import format_rapl_capabilities
 from auto_cpufreq.modules.system_info import (
     battery_power_label,
     format_platform_profile_choices,
@@ -249,6 +250,17 @@ class SystemReportView(Gtk.Box):
         _set_row_visible(self.power_grid, 3, False)
         self.right_column.pack_start(power_frame, False, False, 0)
 
+        # Observational display only: no GTK control writes Powercap attributes.
+        rapl_frame, self.rapl_grid = _new_section("Intel RAPL (read-only)")
+        _, self.rapl_value = _add_row(
+            self.rapl_grid, 0, "Package limits"
+        )
+        self.rapl_value.set_max_width_chars(44)
+        self.rapl_value.set_line_wrap(True)
+        self.rapl_value.set_line_wrap_mode(Pango.WrapMode.WORD_CHAR)
+        self.rapl_value.set_selectable(True)
+        self.right_column.pack_start(rapl_frame, False, False, 0)
+
         battery_frame, self.battery_grid = _new_section("Battery")
         self.battery_names = {}
         self.battery_values = {}
@@ -439,6 +451,10 @@ class SystemReportView(Gtk.Box):
             self.power_values["turbo"].set_text(
                 _turbo_status(report)
             )
+
+        self.rapl_value.set_text(
+            "\n".join(format_rapl_capabilities(report.rapl_capabilities))
+        )
 
         battery = report.battery_info
         self.battery_values["status"].set_text(
