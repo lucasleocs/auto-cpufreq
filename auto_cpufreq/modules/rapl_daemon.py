@@ -110,6 +110,34 @@ class RaplDaemonPolicy:
         self._blocked = True
         return self._event("blocked", f"RAPL writes disabled for this daemon: {exc}")
 
+    def _fail_and_reconcile(self, exc: Exception) -> RaplDaemonEvent:
+        """Disable new writes and recover all recoverable in-flight entries.
+
+        A constraint can be changed before apply() returns a result, so
+        _ever_owned alone is insufficient. The startup journal check gates
+        this method from accidentally restoring a predecessor's state.
+        """
+        details = str(exc)
+        if self._startup_inspected:
+            try:
+                results = self.controller.restore_owned()
+                with self.controller.state_store.locked():
+                    remaining = self.controller.state_store.load()
+                if remaining:
+                    details += (
+                        f"; {len(remaining)} RAPL recovery entries remain pending"
+                    )
+                elif results:
+                    self._ever_owned = False
+                    self._scope = None
+            except (OSError, RaplStateError) as recovery_error:
+                details += f"; immediate RAPL recovery failed: {recovery_error}"
+        return self._disable_on_fault(RaplStateError(details))
+
+    def handle_unexpected_failure(self, exc: Exception) -> RaplDaemonEvent:
+        """Used by the --daemon loop before abandoning a failed RAPL cycle."""
+        return self._fail_and_reconcile(exc)
+
     def _check_initial_state(self) -> bool:
         if self._startup_inspected:
             return not self._blocked
@@ -230,50 +258,39 @@ class RaplDaemonPolicy:
             results = self.controller.apply(
                 target, control_type=scope[0], package=scope[1],
             )
-            # A BIOS/driver may silently ignore a write or quantize the
-            # request. Never attempt the same unsupported value each daemon
-            # tick, and never label a nonmatching readback as a successful cap.
-            verified_owned = any(
+            # Refuse an envelope if any requested constraint failed.
+            # Even an exception mid-apply may have modified PL1 before PL2;
+            # read and reconcile the durable ownership journal immediately.
+            if any(
                 r.action in {"acquired", "updated", "unchanged-owned"}
                 for r in results
-            )
-            if verified_owned:
+            ):
                 self._ever_owned = True
                 self._scope = scope
-            rejected = any(
-                r.action == "readback-rejected" for r in results
-            )
             quantized = any(
                 r.action in {"acquired", "updated"}
                 and r.effective_uw != r.requested_uw
                 for r in results
             )
-            if rejected or quantized:
-                if self._ever_owned:
-                    self._restore_ours()
-                return self._disable_on_fault(RaplStateError(
-                    "Kernel rejected or adjusted the requested RAPL limit"
-                ))
-            if any(r.action in {
-                "write-failed", "readback-failed",
+            bad_actions = {
+                "readback-rejected", "write-failed", "readback-failed",
                 "unsafe-readback-unresolved", "restore-failed",
-                "pending-unresolved", "unavailable",
-            } for r in results):
-                return self._disable_on_fault(
-                    RaplStateError(
-                        "RAPL write/ownership could not be verified: "
-                        + ", ".join(r.action for r in results)
-                    )
-                )
-            if any(r.action in {"drift", "retired-drift", "yielded-external"}
-                   for r in results):
-                return self._disable_on_fault(
-                    RaplStateError("Another controller changed the RAPL envelope")
-                )
-            if any(r.action in {"acquired", "updated", "unchanged-owned"}
-                   for r in results):
-                self._ever_owned = True
-                self._scope = scope
+                "pending-unresolved", "unavailable", "skipped-zone-disabled",
+                "rejected-min", "rejected-max", "skipped-above-original",
+                "skipped-external-limit",
+            }
+            if quantized or any(r.action in bad_actions for r in results):
+                return self._fail_and_reconcile(RaplStateError(
+                    "RAPL envelope rejected or only partially verified: "
+                    + ", ".join(r.action for r in results)
+                ))
+            if any(
+                r.action in {"drift", "retired-drift", "yielded-external"}
+                for r in results
+            ):
+                return self._fail_and_reconcile(RaplStateError(
+                    "Another controller changed the RAPL envelope"
+                ))
             if self._ever_owned and any(
                 r.action in {"restored", "already-restored"} for r in results
             ):
@@ -291,4 +308,4 @@ class RaplDaemonPolicy:
                 + ", ".join(r.action for r in results),
             )
         except (RaplStateError, RaplPolicyError, OSError) as exc:
-            return self._disable_on_fault(exc)
+            return self._fail_and_reconcile(exc)
