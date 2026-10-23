@@ -370,6 +370,15 @@ class RAPLDaemonTests(unittest.TestCase):
         self.assertEqual(int(self.mmio.read_text()), 15_000_000)
         self.assertEqual(self.engine.state_store.load(), ())
 
+    def test_max_power_attribute_rejects_out_of_range_target(self):
+        (self.mmio.parent / "constraint_0_max_power_uw").write_text("10000000\n")
+        self.assertEqual(
+            self.tick(selected(charger="12", controller="intel-rapl-mmio")).state,
+            "blocked",
+        )
+        self.assertEqual(int(self.mmio.read_text()), 15_000_000)
+        self.assertEqual(self.engine.state_store.load(), ())
+
     def test_no_writes_to_explicitly_disabled_zone(self):
         (self.mmio.parent / "enabled").write_text("0\n")
         self.assertEqual(self.tick(selected(controller="intel-rapl-mmio")).state,
