@@ -232,7 +232,20 @@ def test_lab():
         cmd("systemctl", "stop", unit)
         assert_restored(root)
 
-        print("SYSTEMD RAPL LAB PASS: 7 real-manager lifecycle scenarios",
+        print("Case 8: failed daemon startup invokes ExecStopPost recovery",
+              flush=True)
+        write_unit(unitfile, name, root,
+                   start_mode="fail-after-apply", restart="no")
+        before = lines(root).count("restore:0:v1")
+        cmd("systemctl", "start", unit, check=False)
+        poll("cleanup after failed startup",
+             lambda: ("daemon-failed-after-apply:v1" in lines(root)
+                      and lines(root).count("restore:0:v1") > before))
+        assert_restored(root)
+        assert root.exists()
+        cmd("systemctl", "reset-failed", unit, check=False)
+
+        print("SYSTEMD RAPL LAB PASS: 8 real-manager lifecycle scenarios",
               flush=True)
     finally:
         # Always dismantle ONLY this unique fixture/unit.
