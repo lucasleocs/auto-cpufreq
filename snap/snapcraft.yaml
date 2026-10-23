@@ -67,6 +67,7 @@ apps:
     plugs:
       - cpu-control
       - system-observe
+      - upower-observe
       - hardware-observe
       - etc-auto-cpufreq-conf
 
@@ -81,6 +82,7 @@ apps:
     plugs:
       - cpu-control
       - system-observe
+      - upower-observe
       - hardware-observe
       - desktop
       - desktop-legacy
@@ -91,6 +93,7 @@ apps:
     plugs:
       - cpu-control
       - system-observe
+      - upower-observe
       - hardware-observe
     environment:
       LC_ALL: C.UTF-8
