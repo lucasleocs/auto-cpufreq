@@ -157,5 +157,41 @@ class RaplSafetyRegressionTests(unittest.TestCase):
         self.assertEqual(self.power_path.read_text().strip(), "15000000")
 
 
+    def test_concurrent_apply_refuses_when_journal_locked(self):
+        with self.store.locked():
+            with self.assertRaises(rapl.RaplStateError):
+                self.controller.apply(self.target)
+        self.assertEqual(self.power_path.read_text().strip(), "15000000")
+        self.assertEqual(self.store.load(), ())
+
+    def test_concurrent_restore_refuses_when_journal_locked(self):
+        self.assertEqual(self.controller.apply(self.target)[0].action, "acquired")
+        with self.store.locked():
+            with self.assertRaises(rapl.RaplStateError):
+                self.controller.restore_owned()
+        self.assertEqual(self.power_path.read_text().strip(), "14500000")
+        self.assertEqual(len(self.store.load()), 1)
+        self.assertEqual(self.controller.restore_owned()[0].action, "restored")
+        self.assertEqual(self.power_path.read_text().strip(), "15000000")
+
+    def test_lock_file_is_private_and_symlink_safe(self):
+        self.assertFalse((self.root / "state").exists())
+        with self.store.locked():
+            lock_file = Path(str(self.store.path) + ".lock")
+            self.assertEqual(lock_file.stat().st_mode & 0o777, 0o600)
+        self.assertEqual((self.root / "state").stat().st_mode & 0o777, 0o700)
+
+        # Replacement by a symlink must not redirect a root-owned journal
+        # operation to a user-chosen destination.
+        lock_file.unlink()
+        destination = self.root / "unrelated"
+        destination.write_text("do-not-touch")
+        lock_file.symlink_to(destination)
+        with self.assertRaises(rapl.RaplStateError):
+            self.controller.apply(self.target)
+        self.assertEqual(destination.read_text(), "do-not-touch")
+        self.assertEqual(self.power_path.read_text().strip(), "15000000")
+
+
 if __name__ == "__main__":
     unittest.main()
