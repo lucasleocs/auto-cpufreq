@@ -392,6 +392,18 @@ class IntelRaplController:
     ) -> None:
         self.discovery = discovery or IntelPowerDiscovery()
         self.state_store = state_store if state_store is not None else RaplStateStore()
+        # This must live across daemon policy cycles (cache controller in core).
+        self._yielded_external: set[RaplConstraintIdentity] = set()
+
+    def _zone_write_allowed(self, ref: RaplConstraintRef) -> bool:
+        """Do not attempt writes to explicitly disabled/unreadable enabled nodes."""
+        for path in (
+            self.discovery.powercap_root / ref.control_type / "enabled",
+            ref.power_limit_path.parent / "enabled",
+        ):
+            if path.exists() and _read_text(path) != "1":
+                return False
+        return True
 
     def discover_package_constraints(self) -> tuple[RaplConstraintRef, ...]:
         refs: list[RaplConstraintRef] = []
@@ -473,6 +485,19 @@ class IntelRaplController:
             target = self._target_for(ref, targets)
             record = ownership.get(identity)
             current = _read_int(ref.power_limit_path)
+
+            if identity in self._yielded_external:
+                results.append(RaplApplyResult(
+                    identity, "yielded-external", current, target, current,
+                    "RAPL control suspended after external interference",
+                ))
+                continue
+            if not self._zone_write_allowed(ref):
+                results.append(RaplApplyResult(
+                    identity, "skipped-zone-disabled", current, target, current,
+                    "RAPL zone or control is disabled or unavailable",
+                ))
+                continue
 
             if record is not None:
                 results.append(
@@ -739,6 +764,7 @@ class IntelRaplController:
             )
 
         if current != record.last_written_power_limit_uw:
+            self._yielded_external.add(identity)
             ownership.pop(identity, None)
             self._save_ownership(ownership)
             return RaplApplyResult(
