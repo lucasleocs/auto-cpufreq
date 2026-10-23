@@ -15,7 +15,7 @@ import time
 from auto_cpufreq.config.config import config, find_config_file
 from auto_cpufreq.core import distro_info, get_formatted_version, get_override, get_turbo_override, sysinfo
 from auto_cpufreq.globals import GITHUB, IS_INSTALLED_WITH_AUR, IS_INSTALLED_WITH_SNAP
-from auto_cpufreq.modules.system_info import system_info
+from auto_cpufreq.modules.system_info import system_info, upower_charge_limits_label
 from auto_cpufreq.power_helper import bluetoothctl_exists
 
 auto_cpufreq_stats_path = ("/var/snap/auto-cpufreq/current" if IS_INSTALLED_WITH_SNAP else "/var/run") + "/auto-cpufreq.stats"
@@ -429,7 +429,9 @@ class BatteryInfoBox(Gtk.Box):
                 enabled = battery_info.charge_protection_enabled
                 state = "Enabled" if enabled is True else "Disabled" if enabled is False else "Unknown"
                 controls = ", ".join(battery_info.charge_control_types) or "Unavailable"
-                self.protection_label.set_label(f"Charge protection: {state} ({controls})")
+                configured = upower_charge_limits_label(battery_info)
+                extra = f"; {configured}" if configured else ""
+                self.protection_label.set_label(f"Charge protection: {state} ({controls}{extra})")
                 self.protection_label.show()
             else:
                 self.protection_label.hide()

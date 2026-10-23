@@ -8,6 +8,7 @@ import time
 from .system_info import (
     SystemReport,
     battery_power_label,
+    upower_charge_limits_label,
     format_platform_profile_summary,
     system_info,
 )
@@ -331,6 +332,11 @@ class SystemMonitor:
                 aligned_text(f"Charge protection: {protection}"),
                 aligned_text(f"Supported controls: {controls}"),
             ])
+            configured_limits = upower_charge_limits_label(battery)
+            if configured_limits is not None:
+                self.right_content.append(
+                    aligned_text(f"UPower configured limits: {configured_limits}")
+                )
 
         # Platform Profile
         self.right_content.append(

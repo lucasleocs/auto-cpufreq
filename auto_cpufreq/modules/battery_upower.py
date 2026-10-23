@@ -31,6 +31,8 @@ class UPowerBattery:
     charge_protection_enabled: bool | None = None
     charge_control_types: tuple[str, ...] = ()
     charge_protection_supported: bool = False
+    configured_start_threshold: int | None = None
+    configured_end_threshold: int | None = None
 
 
 def _match_battery(native_path: object, sysfs_path: str) -> bool:
@@ -74,6 +76,16 @@ def _decode(properties: dict, sysfs_path: str) -> UPowerBattery | None:
         if supported and type(mask) is int and mask >= 0
         else ()
     )
+    start = properties.get("ChargeStartThreshold")
+    end = properties.get("ChargeEndThreshold")
+    start_limit = (
+        start if supported and type(mask) is int and mask & 1
+        and type(start) is int and 0 <= start <= 100 else None
+    )
+    end_limit = (
+        end if supported and type(mask) is int and mask & 2
+        and type(end) is int and 0 <= end <= 100 else None
+    )
     return UPowerBattery(
         status=STATES[state],
         percentage=int(round(percentage)),
@@ -81,6 +93,8 @@ def _decode(properties: dict, sysfs_path: str) -> UPowerBattery | None:
         charge_protection_enabled=enabled,
         charge_control_types=control_types,
         charge_protection_supported=supported,
+        configured_start_threshold=start_limit,
+        configured_end_threshold=end_limit,
     )
 
 

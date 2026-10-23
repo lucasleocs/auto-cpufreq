@@ -91,6 +91,20 @@ class UPowerBatteryTests(unittest.TestCase):
         self.assertTrue(value.charge_protection_supported)
         self.assertTrue(value.charge_protection_enabled)
         self.assertEqual(value.charge_control_types, ("End threshold", "Firmware managed"))
+        self.assertIsNone(value.configured_start_threshold)
+        self.assertIsNone(value.configured_end_threshold)
+
+    def test_valid_modern_configured_limits_are_filtered_by_capability(self):
+        vals = props(ChargeThresholdSupported=True,
+                     ChargeThresholdEnabled=True,
+                     ChargeThresholdSettingsSupported=3,
+                     ChargeStartThreshold=75, ChargeEndThreshold=80)
+        value = _decode(vals, BAT1)
+        self.assertEqual((value.configured_start_threshold, value.configured_end_threshold), (75, 80))
+        value = _decode(dict(vals, ChargeThresholdSettingsSupported=2), BAT1)
+        self.assertEqual((value.configured_start_threshold, value.configured_end_threshold), (None, 80))
+        value = _decode(dict(vals, ChargeEndThreshold=4294967295), BAT1)
+        self.assertIsNone(value.configured_end_threshold)
         self.assertEqual(_decode(props(ChargeThresholdSupported=True), BAT1).charge_control_types, ())
 
     def test_missing_upower_client_falls_back(self):

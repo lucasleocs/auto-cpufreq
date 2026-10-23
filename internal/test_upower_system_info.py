@@ -62,3 +62,4 @@ class BatteryIntegrationTests(TestCase):
         self.assertEqual(info.charge_control_types, ("End threshold",))
         self.assertEqual(info.charging_stop_threshold, 100)
         self.assertEqual(battery_status_label(info), "Charging")
+        self.assertIsNone(info.upower_configured_end)

@@ -51,6 +51,8 @@ class BatteryInfo:
     charge_protection_supported: bool = False
     charge_protection_enabled: bool | None = None
     charge_control_types: tuple[str, ...] = ()
+    upower_configured_start: int | None = None
+    upower_configured_end: int | None = None
 
     def __repr__(self) -> str:
         return battery_status_label(self)
@@ -76,6 +78,18 @@ def battery_status_label(battery: BatteryInfo | None) -> str:
     if battery.is_charging is True:
         return "Charging"
     return "Unknown"
+
+
+def upower_charge_limits_label(battery: BatteryInfo | None) -> str | None:
+    """Report configured UPower limits, not allowed percentage choices."""
+    if battery is None or not battery.charge_protection_supported:
+        return None
+    parts = []
+    if battery.upower_configured_start is not None:
+        parts.append(f"Start: {battery.upower_configured_start}%")
+    if battery.upower_configured_end is not None:
+        parts.append(f"Stop: {battery.upower_configured_end}%")
+    return ", ".join(parts) if parts else None
 
 
 def battery_power_label(battery: BatteryInfo | None) -> str:
@@ -800,6 +814,8 @@ class SystemInfo:
             charge_protection_supported=upower.charge_protection_supported if upower else False,
             charge_protection_enabled=upower.charge_protection_enabled if upower else None,
             charge_control_types=upower.charge_control_types if upower else (),
+            upower_configured_start=upower.configured_start_threshold if upower else None,
+            upower_configured_end=upower.configured_end_threshold if upower else None,
         )
 
     @staticmethod

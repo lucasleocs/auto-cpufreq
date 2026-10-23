@@ -17,6 +17,7 @@ from auto_cpufreq.gui.objects import BluetoothBootControl, DaemonNotRunningView,
 from auto_cpufreq.modules.system_info import (
     battery_power_label,
     battery_status_label,
+    upower_charge_limits_label,
     format_platform_profile_choices,
     system_info,
 )
@@ -265,6 +266,7 @@ class SystemReportView(Gtk.Box):
         for offset, (key, name) in enumerate((
             ("protection", "Charge protection"),
             ("controls", "Supported controls"),
+            ("limits", "UPower configured limits"),
         ), start=len(self.battery_names)):
             name_label, value_label = _add_row(self.battery_grid, offset, name)
             self.battery_capability_names[key] = name_label
@@ -486,19 +488,23 @@ class SystemReportView(Gtk.Box):
             )
 
         supported = battery is not None and battery.charge_protection_supported
+        configured_limits = upower_charge_limits_label(battery)
         for key, name_label in self.battery_capability_names.items():
             value_label = self.battery_capability_values[key]
-            if not supported:
+            if not supported or (key == "limits" and configured_limits is None):
                 name_label.hide()
                 value_label.hide()
                 continue
-            value = (
-                "Enabled" if battery.charge_protection_enabled is True else
+            if key == "limits":
+                value = configured_limits
+            else:
+                value = (
+                    "Enabled" if battery.charge_protection_enabled is True else
                 "Disabled" if battery.charge_protection_enabled is False else
                 "Unknown"
-            ) if key == "protection" else (
-                ", ".join(battery.charge_control_types) or "Unavailable"
-            )
+                ) if key == "protection" else (
+                    ", ".join(battery.charge_control_types) or "Unavailable"
+                )
             value_label.set_text(value)
             name_label.show()
             value_label.show()

@@ -81,8 +81,22 @@ class StatsFrontendTests(unittest.TestCase):
         text = _text(self.monitor.right_content)
         self.assertIn("Charge protection: Enabled", text)
         self.assertIn("Supported controls: End threshold", text)
+        self.assertNotIn("UPower configured limits:", text)
         self.assertNotIn("Supported percentages", text)
         self.assertNotIn("Select threshold", text)
+
+    def test_configured_upower_limits_are_distinct_from_sysfs(self):
+        b = _battery(
+            charge_protection_supported=True,
+            charge_protection_enabled=True,
+            charge_control_types=("Start threshold", "End threshold"),
+            upower_configured_start=75,
+            upower_configured_end=80,
+        )
+        self.monitor.format_system_info(_report(b))
+        output = _text(self.monitor.right_content)
+        self.assertIn("UPower configured limits: Start: 75%, Stop: 80%", output)
+        self.assertIn("Charging stop threshold: 100", output)
 
     def test_firmware_control_no_invented_limit(self):
         upower = _decode({
@@ -145,12 +159,18 @@ class GtkFrontendTests(unittest.TestCase):
             view.apply_report(_report(modern))
             self.assertEqual(view.battery_capability_values["protection"].get_text(), "Enabled")
             self.assertEqual(view.battery_capability_values["controls"].get_text(), "End threshold")
+            self.assertFalse(view.battery_capability_names["limits"].get_visible())
             for key in ("protection", "controls"):
                 self.assertTrue(view.battery_capability_names[key].get_visible())
                 self.assertTrue(view.battery_capability_values[key].get_visible())
 
+            configured = replace(modern, upower_configured_end=80)
+            view.apply_report(_report(configured))
+            self.assertTrue(view.battery_capability_names["limits"].get_visible())
+            self.assertEqual(view.battery_capability_values["limits"].get_text(), "Stop: 80%")
+
             view.apply_report(_report(_battery()))
-            for key in ("protection", "controls"):
+            for key in ("protection", "controls", "limits"):
                 self.assertFalse(view.battery_capability_names[key].get_visible())
                 self.assertFalse(view.battery_capability_values[key].get_visible())
         finally:
