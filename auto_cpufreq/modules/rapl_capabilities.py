@@ -5,12 +5,14 @@ necessarily writable: firmware, drivers, or policy can lock a constraint.
 """
 from dataclasses import dataclass
 from pathlib import Path
+import re
 from typing import Optional
 
 
 CONTROL_TYPES = ("intel-rapl", "intel-rapl-mmio")
 PACKAGE_CONSTRAINTS = frozenset(("long_term", "short_term"))
 DEFAULT_POWERCAP_ROOT = Path("/sys/class/powercap")
+PACKAGE_NAME = re.compile(r"package-[0-9]+\Z")
 
 
 @dataclass(frozen=True)
@@ -30,7 +32,7 @@ class RaplPackageLimit:
             return "disabled"
         if self.limit_uw is None:
             return "unreadable"
-        return "available"
+        return "observed"
 
 
 @dataclass(frozen=True)
@@ -44,11 +46,11 @@ class RaplCapabilities:
             return "not_exposed"
         if not self.limits:
             return "no_package_constraints"
-        if any(limit.state == "available" for limit in self.limits):
-            return "available"
+        if any(limit.state == "observed" for limit in self.limits):
+            return "observed"
         if all(limit.state == "disabled" for limit in self.limits):
             return "disabled"
-        return "unavailable"
+        return "unreadable"
 
 
 def _read_text(path: Path) -> Optional[str]:
@@ -95,6 +97,11 @@ def _package_zones(
     controls = root / control_type
     control_is_dir = controls.is_dir()
     control_enabled = _read_enabled(controls / "enabled") if control_is_dir else None
+    try:
+        control_real = controls.resolve(strict=True) if control_is_dir else None
+        root_real = root.resolve(strict=True)
+    except (OSError, RuntimeError):
+        return ()
     candidates = []
 
     if control_is_dir:
@@ -119,12 +126,18 @@ def _package_zones(
             resolved = zone.resolve(strict=True)
         except (OSError, RuntimeError):
             continue
+        # Kernel class aliases may resolve outside /sys/class/powercap,
+        # but should remain under their recognized control's canonical tree.
+        # With no control directory, allow direct zones under the given root.
+        expected_parent = control_real if control_real is not None else root_real
+        if not resolved.is_relative_to(expected_parent):
+            continue
         if resolved in seen:
             continue
-        seen.add(resolved)
         zone_name = _read_text(zone / "name")
-        if zone_name is None or not zone_name.startswith("package-"):
+        if zone_name is None or not PACKAGE_NAME.fullmatch(zone_name):
             continue
+        seen.add(resolved)
         zones.append((zone, control_enabled))
 
     return tuple(zones)
@@ -194,6 +207,6 @@ def format_rapl_capabilities(snapshot: RaplCapabilities) -> tuple[str, ...]:
         lines.append(
             f"{entry.control_type} / {entry.package} / "
             f"{entry.constraint_name}: {watts}"
-            + (f" ({entry.state})" if entry.state != "available" else "")
+            + (f" ({entry.state})" if entry.state != "observed" else "")
         )
     return tuple(lines)
