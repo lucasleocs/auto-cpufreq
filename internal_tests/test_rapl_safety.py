@@ -46,6 +46,18 @@ class RaplSafetyRegressionTests(unittest.TestCase):
             "An explicitly disabled Powercap zone must not be enabled or written",
         )
 
+    def test_broken_enabled_symlink_fails_closed(self):
+        (self.zone / "enabled").symlink_to(self.root / "missing-enabled")
+        result = self.controller.apply(self.target)
+        self.assertEqual(result[0].action, "skipped-zone-disabled")
+        self.assertEqual(self.power_path.read_text().strip(), "15000000")
+
+    def test_malformed_package_zone_is_not_writable(self):
+        (self.zone / "name").write_text("package-not-an-index\n")
+        results = self.controller.apply(self.target)
+        self.assertEqual(results, ())
+        self.assertEqual(self.power_path.read_text().strip(), "15000000")
+
     def test_external_drift_suspends_reacquisition(self):
         acquired = self.controller.apply(self.target)
         self.assertEqual(acquired[0].action, "acquired")
