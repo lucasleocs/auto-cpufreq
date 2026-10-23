@@ -49,7 +49,7 @@ def event(root, label):
         os.fsync(handle.fileno())
 
 
-def daemon(root):
+def daemon(root, start_mode="normal"):
     engine = controller(root)
     version = Path(__file__).resolve().parent.name
     journal = engine.state_store.load()
@@ -62,6 +62,12 @@ def daemon(root):
         if len(results) != 1 or results[0].action != "acquired":
             raise RuntimeError("Fake RAPL acquisition failed: " + repr(results))
         event(root, "daemon-applied:" + version)
+
+    if start_mode == "fail-after-apply":
+        event(root, "daemon-failed-after-apply:" + version)
+        return 42
+    if start_mode != "normal":
+        raise RuntimeError("Unknown fake daemon start mode")
 
     def stop(_sig, _frame):
         raise SystemExit(0)
@@ -113,7 +119,7 @@ def main():
         power.write_text(str(BASELINE) + "\n")
         return 0
     if command == "daemon":
-        return daemon(root)
+        return daemon(root, sys.argv[3] if len(sys.argv) > 3 else "normal")
     if command == "restore":
         return restore(root, sys.argv[3] if len(sys.argv) > 3 else "normal")
     raise SystemExit("Unsupported lab fixture mode")
