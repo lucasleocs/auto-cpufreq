@@ -62,7 +62,7 @@ def _decode(properties: dict, sysfs_path: str) -> UPowerBattery | None:
         return None
     if not _valid_percent(percentage):
         return None
-    if type(rate) not in (int, float) or not math.isfinite(rate) or rate < 0:
+    if type(rate) not in (int, float) or not math.isfinite(rate):
         return None
 
     supported = properties.get("ChargeThresholdSupported") is True
@@ -89,7 +89,7 @@ def _decode(properties: dict, sysfs_path: str) -> UPowerBattery | None:
     return UPowerBattery(
         status=STATES[state],
         percentage=int(round(percentage)),
-        power_watts=float(rate),
+        power_watts=abs(float(rate)),
         charge_protection_enabled=enabled,
         charge_control_types=control_types,
         charge_protection_supported=supported,

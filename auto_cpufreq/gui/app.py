@@ -17,7 +17,7 @@ from auto_cpufreq.gui.objects import BluetoothBootControl, DaemonNotRunningView,
 from auto_cpufreq.modules.system_info import (
     battery_power_label,
     battery_status_label,
-    upower_charge_limits_label,
+    battery_threshold_display,
     format_platform_profile_choices,
     system_info,
 )
@@ -261,20 +261,13 @@ class SystemReportView(Gtk.Box):
             )
             self.battery_names[key] = name_label
             self.battery_values[key] = value_label
-        self.battery_capability_names = {}
-        self.battery_capability_values = {}
-        for offset, (key, name) in enumerate((
-            ("protection", "Charge protection"),
-            ("controls", "Supported controls"),
-            ("limits", "UPower configured limits"),
-        ), start=len(self.battery_names)):
-            name_label, value_label = _add_row(self.battery_grid, offset, name)
-            self.battery_capability_names[key] = name_label
-            self.battery_capability_values[key] = value_label
-            name_label.set_no_show_all(True)
-            value_label.set_no_show_all(True)
-            name_label.hide()
-            value_label.hide()
+        self.charge_limit_name, self.charge_limit_value = _add_row(
+            self.battery_grid, len(self.battery_names), "Charge limit"
+        )
+        self.charge_limit_name.set_no_show_all(True)
+        self.charge_limit_value.set_no_show_all(True)
+        self.charge_limit_name.hide()
+        self.charge_limit_value.hide()
         self.right_column.pack_start(battery_frame, False, False, 0)
 
         stats_frame, stats_grid = _new_section("System Statistics")
@@ -468,16 +461,9 @@ class SystemReportView(Gtk.Box):
                 if battery.is_ac_plugged is False
                 else "Unknown"
             )
-            self.battery_values["start"].set_text(
-                str(battery.charging_start_threshold)
-                if battery.charging_start_threshold is not None
-                else "Unavailable"
-            )
-            self.battery_values["stop"].set_text(
-                str(battery.charging_stop_threshold)
-                if battery.charging_stop_threshold is not None
-                else "Unavailable"
-            )
+            limits = battery_threshold_display(battery)
+            self.battery_values["start"].set_text(limits.start)
+            self.battery_values["stop"].set_text(limits.stop)
             self.battery_names["power"].set_text(
                 battery_power_label(battery)
             )
@@ -487,27 +473,24 @@ class SystemReportView(Gtk.Box):
                 else "Unavailable"
             )
 
-        supported = battery is not None and battery.charge_protection_supported
-        configured_limits = upower_charge_limits_label(battery)
-        for key, name_label in self.battery_capability_names.items():
-            value_label = self.battery_capability_values[key]
-            if not supported or (key == "limits" and configured_limits is None):
-                name_label.hide()
-                value_label.hide()
-                continue
-            if key == "limits":
-                value = configured_limits
+        limits = battery_threshold_display(battery)
+        for key in ("start", "stop"):
+            self.battery_names[key].set_no_show_all(True)
+            self.battery_values[key].set_no_show_all(True)
+            if limits.firmware_only:
+                self.battery_names[key].hide()
+                self.battery_values[key].hide()
             else:
-                value = (
-                    "Enabled" if battery.charge_protection_enabled is True else
-                "Disabled" if battery.charge_protection_enabled is False else
-                "Unknown"
-                ) if key == "protection" else (
-                    ", ".join(battery.charge_control_types) or "Unavailable"
-                )
-            value_label.set_text(value)
-            name_label.show()
-            value_label.show()
+                self.battery_names[key].show()
+                self.battery_values[key].show()
+
+        if limits.charge_limit is not None:
+            self.charge_limit_value.set_text(limits.charge_limit)
+            self.charge_limit_name.show()
+            self.charge_limit_value.show()
+        else:
+            self.charge_limit_name.hide()
+            self.charge_limit_value.hide()
 
         self.stats_values["usage"].set_text(
             f"{report.cpu_usage:.1f}%"

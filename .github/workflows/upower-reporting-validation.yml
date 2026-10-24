@@ -3,7 +3,7 @@ name: UPower reporting validation (temporary)
 on:
   push:
     branches:
-      - tmp/upower-reporting-integration-20261023
+      - tmp/upower-compact-validation-20261023
   workflow_dispatch:
 
 jobs:

@@ -80,16 +80,60 @@ def battery_status_label(battery: BatteryInfo | None) -> str:
     return "Unknown"
 
 
-def upower_charge_limits_label(battery: BatteryInfo | None) -> str | None:
-    """Report configured UPower limits, not allowed percentage choices."""
-    if battery is None or not battery.charge_protection_supported:
-        return None
-    parts = []
-    if battery.upower_configured_start is not None:
-        parts.append(f"Start: {battery.upower_configured_start}%")
-    if battery.upower_configured_end is not None:
-        parts.append(f"Stop: {battery.upower_configured_end}%")
-    return ", ".join(parts) if parts else None
+@dataclass(frozen=True)
+class BatteryThresholdDisplay:
+    """Read-only labels; configured UPower limits are not necessarily applied."""
+    start: str
+    stop: str
+    charge_limit: str | None = None
+    firmware_only: bool = False
+
+
+def battery_threshold_display(battery: BatteryInfo | None) -> BatteryThresholdDisplay:
+    if battery is None:
+        return BatteryThresholdDisplay("Unavailable", "Unavailable")
+
+    def observed(value: int | None) -> str:
+        return f"{value}%" if value is not None else "Unavailable"
+
+    start = observed(battery.charging_start_threshold)
+    stop = observed(battery.charging_stop_threshold)
+    if not battery.charge_protection_supported:
+        return BatteryThresholdDisplay(start, stop)
+
+    controls = battery.charge_control_types
+    firmware = "Firmware managed" in controls
+    numeric = "Start threshold" in controls or "End threshold" in controls
+    enabled = battery.charge_protection_enabled
+
+    if firmware and not numeric:
+        status = ("active" if enabled is True else
+                  "disabled" if enabled is False else "state unknown")
+        return BatteryThresholdDisplay(
+            start, stop, f"Firmware managed ({status})", firmware_only=True
+        )
+
+    if enabled is False:
+        return BatteryThresholdDisplay(start, stop, "Supported (disabled)")
+    if enabled is None:
+        return BatteryThresholdDisplay(start, stop, "Supported (state unknown)")
+
+    def described(observed_limit: int | None, configured_limit: int | None) -> str:
+        if configured_limit is None:
+            return observed(observed_limit)
+        if observed_limit is None or observed_limit == configured_limit:
+            return f"{configured_limit}% (UPower)"
+        return (
+            f"{observed_limit}% (kernel) · "
+            f"{configured_limit}% configured (UPower)"
+        )
+
+    if "Start threshold" in controls:
+        start = described(battery.charging_start_threshold, battery.upower_configured_start)
+    if "End threshold" in controls:
+        stop = described(battery.charging_stop_threshold, battery.upower_configured_end)
+
+    return BatteryThresholdDisplay(start, stop)
 
 
 def battery_power_label(battery: BatteryInfo | None) -> str:
