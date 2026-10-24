@@ -248,6 +248,10 @@ class ReportRefreshCoordinator:
             try:
                 _PROCESS_LANE.enqueue(self, generation_next, requested_next)
             except RuntimeError as error:
+                with self._lock:
+                    if generation_next == self._generation:
+                        self._running = False
+                        self._requested_at = None
                 # Worker creation can fail after the previous report has
                 # already been presented. The next periodic UI tick can
                 # safely retry; do not leak this failure into GTK/Urwid.
