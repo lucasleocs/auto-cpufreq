@@ -2,9 +2,9 @@
 import logging
 import os
 import pyinotify
+import pwd
 import sys
 from configparser import ConfigParser, Error as ConfigError
-from subprocess import PIPE, run
 
 from auto_cpufreq.config.config_event_handler import ConfigEventHandler
 
@@ -16,10 +16,14 @@ def find_config_file(args_config_file) -> str:
     """Select explicit, user, then system configuration (unchanged order)."""
     # Match the pre-existing sudo/user precedence without changing daemon
     # policy or implicitly making the GUI user's file authoritative for root.
-    home = run(
-        ["getent passwd ${SUDO_USER:-$USER} | cut -d: -f6"],
-        shell=True, stdout=PIPE, universal_newlines=True,
-    ).stdout.rstrip()
+    username = os.environ.get("SUDO_USER") or os.environ.get("USER")
+    try:
+        home = (
+            pwd.getpwnam(username).pw_dir
+            if username else pwd.getpwuid(os.getuid()).pw_dir
+        )
+    except KeyError:
+        home = pwd.getpwuid(os.getuid()).pw_dir
     user_config_dir = os.getenv(
         "XDG_CONFIG_HOME", default=os.path.join(home, ".config")
     )
