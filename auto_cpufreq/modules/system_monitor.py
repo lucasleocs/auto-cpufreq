@@ -105,16 +105,24 @@ class SystemMonitor:
         self._refresh_pipe_fd: int | None = None
         self._alarm_handle = None
         self._refresh_results = SimpleQueue()
+        self._pipe_delivery_error = None
         self._refresh_coordinator = ReportRefreshCoordinator(
             self._collect_report_data,
             self._dispatch_report_result,
             thread_name="urwid-report-refresh",
+            on_dispatch_error=self._report_dispatch_error,
         )
 
     def update(self, loop: urwid.MainLoop, user_data: dict) -> None:
         self._alarm_handle = None
-        if self.running:
-            self._refresh_coordinator.request()
+        if not self.running:
+            return
+        # Periodic fallback keeps the terminal responsive even if the
+        # watch_pipe writer breaks after a collection has completed.
+        self._refresh_ready(b"")
+        self._refresh_coordinator.request()
+        if self._alarm_handle is None:
+            self._alarm_handle = self.loop.set_alarm_in(2, self.update)
 
     def _collect_report_data(self):
         report = system_info.generate_system_report()
@@ -125,6 +133,11 @@ class SystemMonitor:
             suggested_governor = None
             suggested_turbo = None
         return report, suggested_governor, suggested_turbo
+
+    def _report_dispatch_error(self, error):
+        self._pipe_delivery_error = str(error)[:160]
+        if self._diagnostics:
+            self._diagnostics.warning("Urwid report dispatch error: %s", error)
 
     def _dispatch_report_result(self, result):
         # Called in a worker. The Urwid watch_pipe callback owns UI updates.
@@ -138,9 +151,11 @@ class SystemMonitor:
         self._refresh_results.put(result)
         try:
             os.write(wakeup_fd, b"1")
-        except OSError:
-            # The terminal may have closed while collection was in flight.
-            self._refresh_coordinator.acknowledge(result.generation)
+            self._pipe_delivery_error = None
+        except OSError as error:
+            # Keep the result in the queue. The periodic Urwid alarm will
+            # deliver it even when the pipe's write end is unavailable.
+            self._report_dispatch_error(error)
 
     def _surface_diagnostic_error(self):
         if not self._diagnostics:
@@ -155,6 +170,11 @@ class SystemMonitor:
         )
 
     def _refresh_ready(self, _data):
+        if self._pipe_delivery_error:
+            self.footer_text.set_text(
+                "Report pipe unavailable; using periodic refresh: "
+                f"{self._pipe_delivery_error[:100]} | Press Q to quit"
+            )
         try:
             result = self._refresh_results.get_nowait()
         except Empty:
@@ -464,6 +484,8 @@ class SystemMonitor:
             self._refresh_pipe_fd = self.loop.watch_pipe(
                 self._refresh_ready
             )
+            # A full or orphaned watch pipe must never block the collector.
+            os.set_blocking(self._refresh_pipe_fd, False)
             self._alarm_handle = self.loop.set_alarm_in(
                 0,
                 self.update,
