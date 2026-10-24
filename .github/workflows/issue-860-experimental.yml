@@ -7,6 +7,7 @@ on:
     paths:
       - tests/regression/issue_860/**
       - auto_cpufreq/gui/**
+      - auto_cpufreq/modules/diagnostics.py
       - auto_cpufreq/bin/auto_cpufreq_gtk.py
       - .github/workflows/issue-860-experimental.yml
   workflow_dispatch:
@@ -26,7 +27,7 @@ jobs:
       - name: Install isolated terminal UI dependency
         run: python -m pip install 'urwid>=3.0.2,<5.0.0'
       - name: Compile regression test
-        run: python -m py_compile tests/regression/issue_860/test_stats_lifecycle.py tests/regression/issue_860/sample_process.py tests/regression/issue_860/test_sampler.py
+        run: python -m py_compile auto_cpufreq/modules/diagnostics.py tests/regression/issue_860/test_shared_diagnostics.py tests/regression/issue_860/test_stats_lifecycle.py tests/regression/issue_860/sample_process.py tests/regression/issue_860/test_sampler.py
       - name: Exercise terminal lifecycle
         run: python -m unittest discover -s tests/regression/issue_860 -p 'test_*.py' -v
 
@@ -40,6 +41,6 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y python3-gi gir1.2-gtk-3.0 gir1.2-gdkpixbuf-2.0 xvfb xauth
       - name: Compile GTK regression test
-        run: /usr/bin/python3 -m py_compile auto_cpufreq/gui/diagnostics.py auto_cpufreq/gui/app.py auto_cpufreq/gui/objects.py auto_cpufreq/bin/auto_cpufreq_gtk.py tests/regression/issue_860/gtk_refresh_checks.py tests/regression/issue_860/gtk_logging_ui_checks.py
+        run: /usr/bin/python3 -m py_compile auto_cpufreq/modules/diagnostics.py auto_cpufreq/gui/diagnostics.py auto_cpufreq/gui/app.py auto_cpufreq/gui/objects.py auto_cpufreq/bin/auto_cpufreq_gtk.py tests/regression/issue_860/gtk_refresh_checks.py tests/regression/issue_860/gtk_logging_ui_checks.py
       - name: Exercise GLib refresh and worker cleanup
         run: xvfb-run -a /usr/bin/python3 -m unittest discover -s tests/regression/issue_860 -p 'gtk_*_checks.py' -v
