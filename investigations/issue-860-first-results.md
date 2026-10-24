@@ -122,3 +122,24 @@ The user suspended the laptop for several seconds and resumed successfully with 
 The surviving two samples, 22:05:46 and 22:05:48 -03:00, both reported 1.00% CPU of one logical core, 41.27 MiB RSS, five threads, and 15 open FDs. This does not reproduce the high-CPU condition, but the sample is too short to characterize post-resume stability. The difference from the earlier 61.66 MiB / six-thread last sample is not evidence of a regression or leak.
 
 Next: perform a new 60-sample capture while leaving the same resumed GTK process running, saving under a timestamped filename to prevent accidental overwrite. Repeating the physical suspension is not required for this immediate observation; a later multi-resume stress test may be useful if the symptom remains intermittent.
+
+
+## Cinnamon post-resume — complete 60-sample capture
+
+After resuming from a short system suspend, the original GTK process PID 207115 remained alive and responsive. The user collected a new complete two-minute reading, leaving the interface idle:
+
+- CSV stored locally as ~/auto-cpufreq-issue860/gtk-pos-suspensao-20261023-220944.csv (not uploaded into this repository).
+- Sample count: 60, one every 2 seconds.
+- CPU mean: 1.32% of one logical core.
+- CPU median: 1.50%.
+- CPU maximum: 2.50%.
+- Samples at or above 50%: 0/60.
+- RSS: 40.91 MiB initially, 40.92 MiB finally and at maximum.
+- Threads: 6 throughout.
+- Open FDs: 15 throughout.
+
+For comparison, pre-suspend CPU averaged 1.76% (maximum 6.99%, occurring during user interaction with Advanced Settings/About). The post-suspend run showed lower CPU usage and near-constant memory, with no high-CPU reproduction. Different GUI interaction and memory conditions prevent attributing the memory difference directly to suspend/resume.
+
+Scope limitation: this was one short suspend/resume cycle on an installed build at 35d8015afc1b, not an extended multiple-cycle stress test, and does not confirm the upstream issue fixed. The user's local CSV is not present in the GitHub branch; values here are from the user-provided summary.
+
+Next: consider several ordinary suspend/resume cycles with a fresh, timestamped process measurement after the last resume, and/or investigate the distinct real-terminal --stats hangup report. Avoid modifying sysfs, RAPL, daemon services or the production installation.
