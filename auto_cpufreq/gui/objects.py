@@ -986,6 +986,9 @@ class MonitorModeView(Gtk.Box):
                 self._show_error(str(result.error))
             else:
                 self._update_display(*result.report)
+        except Exception as error:
+            diagnostics.exception("GTK monitor presentation failed")
+            self._show_error(str(error))
         finally:
             self._refresh_coordinator.acknowledge(result.generation)
         return False
