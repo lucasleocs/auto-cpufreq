@@ -64,6 +64,9 @@ Example of `auto-cpufreq --stats` CLI output (v3.2.0)
   - [monitor](#monitor)
   - [live](#live)
   - [GUI](#gui)
+    - [GTK debug logging](#gtk-debug-logging)
+    - [Optional terminal diagnostics](#optional-terminal-diagnostics)
+    - [Collecting a complete troubleshooting report](#collecting-a-complete-troubleshooting-report)
   - [overriding governor](#overriding-governor)
   - [overriding turbo mode](#overriding-turbo-mode)
   - [Install - auto-cpufreq daemon](#install---auto-cpufreq-daemon)
@@ -1011,5 +1014,10 @@ Bitcoin address: `bc1qlncmgdjyqy8pe4gad4k2s6xtyr8f2r3ehrnl87`
 ### Code contribution
 
 Other ways of supporting the project consist of making a code or documentation contribution. If you have an idea for a new feature or you want to implement some of the existing feature requests or fix some of the [bugs & issues](https://github.com/AdnanHodzic/auto-cpufreq/issues), please make your changes and submit a [pull request](https://github.com/AdnanHodzic/auto-cpufreq/pulls). I'll be glad to review it and, if your changes are accepted, you'll be credited on the [releases page](https://github.com/AdnanHodzic/auto-cpufreq/releases).
+
+For development setup, the current module ownership map, frontend/diagnostic
+architecture, and reproducible tests, consult [CONTRIBUTING.md](CONTRIBUTING.md).
+The frontend regression suite can be run with `python -m unittest discover
+-s tests -p 'test_*.py' -v` in an isolated development checkout.
 
 **Please note: auto-cpufreq is looking for co-maintainers & open source developers to [help shape the future of the project!](https://github.com/AdnanHodzic/auto-cpufreq/discussions/312)**
