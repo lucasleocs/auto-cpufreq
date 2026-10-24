@@ -76,7 +76,7 @@ import sys
 from auto_cpufreq import core
 from auto_cpufreq.bin import auto_cpufreq as cli
 assert os.geteuid() == 0
-assert os.path.isfile(os.environ["VM_TAG_REMOTE"])
+assert os.path.isdir(os.environ["VM_TAG_REMOTE"])
 core.GITHUB = "file://" + os.environ["VM_TAG_REMOTE"].removesuffix(".git")
 cli.check_for_update = lambda: "v3.2.1"
 builtins.input = lambda prompt="": "y"
