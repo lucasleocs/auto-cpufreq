@@ -99,7 +99,10 @@ assert_active() {
     [ -f "$IMG_FILE" ] || return 85
 }
 mkdir -p "$APPLICATIONS_PATH"
-tool_install >/dev/null || exit 101
+tool_install > "$LAB_ROOT/first.log" 2>&1 || {
+  cat "$LAB_ROOT/first.log"
+  exit 101
+}
 assert_active "3.2.0" || exit 102
 first="$(readlink -f "$CURRENT_PATH")"
 [ -f "$first/.complete" ] || exit 103
