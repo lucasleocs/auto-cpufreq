@@ -13,6 +13,10 @@ from threading import Thread
 import time
 
 from auto_cpufreq.config.config import config, find_config_file
+from auto_cpufreq.gui.diagnostics import diagnostics
+# Keep existing import path for downstream consumers while the implementation
+# lives next to the other view-specific GTK code.
+from auto_cpufreq.gui.monitor_view import MonitorModeView
 from auto_cpufreq.core import distro_info, get_formatted_version, get_override, get_turbo_override, sysinfo
 from auto_cpufreq.globals import GITHUB, IS_INSTALLED_WITH_AUR, IS_INSTALLED_WITH_SNAP
 from auto_cpufreq.modules.system_info import system_info
@@ -591,14 +595,17 @@ class SystemStatsLabel(Gtk.Label):
         self.refresh()
 
     def refresh(self):
-        # change stdout and store label text to file-like object
+        # Legacy widget: always restore process stdout, including on errors.
+        # Current dashboard uses SystemReport instead of this print capture.
         old_stdout = sys.stdout
         text = StringIO()
-        sys.stdout = text
-        distro_info()
-        sysinfo()
-        self.set_label(text.getvalue())
-        sys.stdout = old_stdout
+        try:
+            sys.stdout = text
+            distro_info()
+            sysinfo()
+            self.set_label(text.getvalue())
+        finally:
+            sys.stdout = old_stdout
     
 class CPUFreqStatsLabel(Gtk.Label):
     def __init__(self):
@@ -634,12 +641,59 @@ class DropDownMenu(Gtk.MenuButton):
         daemon.connect("activate", self._remove_daemon, parent)
         menu.append(daemon)
 
+        debug = Gtk.CheckMenuItem(label="Enable debug logging")
+        debug.set_active(diagnostics.enabled)
+        debug.connect("toggled", self._toggle_debug_logging, parent)
+        menu.append(debug)
+
+        log_location = Gtk.MenuItem(label="Debug log location")
+        log_location.connect("activate", self._show_debug_log_location, parent)
+        menu.append(log_location)
+
         about = Gtk.MenuItem(label="About")
         about.connect("activate", self.about_dialog, parent)
         menu.append(about)
 
         menu.show_all()
         return menu
+
+    def _toggle_debug_logging(self, item, parent):
+        if getattr(self, "_syncing_debug_logging", False):
+            return
+        try:
+            diagnostics.set_enabled(item.get_active())
+        except OSError as error:
+            self._syncing_debug_logging = True
+            try:
+                item.set_active(diagnostics.enabled)
+            finally:
+                self._syncing_debug_logging = False
+
+            dialog = Gtk.MessageDialog(
+                transient_for=parent,
+                message_type=Gtk.MessageType.ERROR,
+                buttons=Gtk.ButtonsType.OK,
+                text="Unable to change debug logging",
+            )
+            dialog.format_secondary_text(str(error))
+            dialog.set_destroy_with_parent(True)
+            dialog.connect("response", lambda widget, _response: widget.destroy())
+            dialog.show_all()
+
+    def _show_debug_log_location(self, _item, parent):
+        dialog = Gtk.MessageDialog(
+            transient_for=parent,
+            message_type=Gtk.MessageType.INFO,
+            buttons=Gtk.ButtonsType.OK,
+            text="GUI debug log location",
+        )
+        dialog.format_secondary_text(
+            f"{diagnostics.log_path}\n"
+            "Each session uses a separate log with three 1 MiB backups. "
+            "Review the contents before sharing."
+        )
+        dialog.run()
+        dialog.destroy()
 
     def about_dialog(self, MenuItem, parent):
         dialog = AboutDialog(parent)
@@ -770,279 +824,6 @@ class ConfirmDialog(Gtk.Dialog):
         self.show_all()
 
 
-class MonitorModeView(Gtk.Box):
-    def __init__(
-        self,
-        parent,
-        report_view,
-        refresh_interval=5,
-    ):
-        super().__init__(
-            orientation=Gtk.Orientation.VERTICAL,
-            spacing=12,
-        )
-        self.parent = parent
-        self.report_view = report_view
-        self.running = True
-        self.refresh_interval = refresh_interval
-        self.refresh_id = None
-
-        self.header = Gtk.Box(
-            orientation=Gtk.Orientation.HORIZONTAL
-        )
-        self.header.set_margin_bottom(2)
-
-        self.title = Gtk.Label(
-            label="Monitor Mode",
-            name="bold",
-        )
-        self.title.set_halign(Gtk.Align.START)
-        self.header.pack_start(
-            self.title, True, True, 0
-        )
-
-        self.back_button = Gtk.Button.new_with_label(
-            "Back"
-        )
-        self.back_button.connect(
-            "clicked",
-            self.on_back_clicked,
-        )
-        self.header.pack_end(
-            self.back_button, False, False, 0
-        )
-
-        self.pack_start(
-            self.header, False, False, 0
-        )
-
-        self.error_label = Gtk.Label(label="")
-        self.error_label.set_halign(Gtk.Align.START)
-        self.error_label.set_xalign(0)
-        self.error_label.set_no_show_all(True)
-        self.pack_start(
-            self.error_label, False, False, 0
-        )
-
-        suggestions = Gtk.Frame()
-        heading = Gtk.Label(
-            label="Suggestions",
-            name="bold",
-        )
-        heading.set_halign(Gtk.Align.START)
-        suggestions.set_label_widget(heading)
-
-        grid = Gtk.Grid()
-        grid.set_column_spacing(18)
-        grid.set_row_spacing(4)
-        grid.set_margin_top(8)
-        grid.set_margin_bottom(8)
-        grid.set_margin_start(10)
-        grid.set_margin_end(10)
-        suggestions.add(grid)
-
-        governor_name = Gtk.Label(label="Governor")
-        governor_name.set_halign(Gtk.Align.START)
-        governor_name.set_xalign(0)
-
-        self.governor_suggestion = Gtk.Label(
-            label="—"
-        )
-        self.governor_suggestion.set_halign(
-            Gtk.Align.START
-        )
-        self.governor_suggestion.set_xalign(0)
-
-        grid.attach(governor_name, 0, 0, 1, 1)
-        grid.attach(
-            self.governor_suggestion,
-            1, 0, 1, 1,
-        )
-
-        self.turbo_name = Gtk.Label(
-            label="Turbo Boost"
-        )
-        self.turbo_name.set_halign(Gtk.Align.START)
-        self.turbo_name.set_xalign(0)
-        self.turbo_name.set_no_show_all(True)
-
-        self.turbo_suggestion = Gtk.Label(
-            label="—"
-        )
-        self.turbo_suggestion.set_halign(
-            Gtk.Align.START
-        )
-        self.turbo_suggestion.set_xalign(0)
-        self.turbo_suggestion.set_no_show_all(True)
-
-        grid.attach(self.turbo_name, 0, 1, 1, 1)
-        grid.attach(
-            self.turbo_suggestion,
-            1, 1, 1, 1,
-        )
-
-        self.report_view.prepend_right(
-            suggestions
-        )
-
-        self.scrolled = Gtk.ScrolledWindow()
-        self.scrolled.set_policy(
-            Gtk.PolicyType.NEVER,
-            Gtk.PolicyType.AUTOMATIC,
-        )
-        self.scrolled.set_can_focus(True)
-        self.scrolled.add(self.report_view)
-
-        self.pack_start(
-            self.scrolled, True, True, 0
-        )
-
-        self.refresh_in_thread()
-
-    def refresh_in_thread(self):
-        self.refresh_id = None
-
-        if not self.running:
-            return False
-
-        Thread(
-            target=self._refresh,
-            daemon=True,
-        ).start()
-
-        return False
-
-    def _refresh(self):
-        try:
-            report = (
-                system_info.generate_system_report()
-            )
-            suggested_governor = (
-                system_info.governor_suggestion(report)
-            )
-
-            suggested_turbo = None
-            if report.is_turbo_on[0] is not None:
-                suggested_turbo = (
-                    system_info.turbo_on_suggestion(
-                        report
-                    )
-                )
-
-        except Exception as error:
-            if self.running:
-                GLib.idle_add(
-                    self._show_error,
-                    str(error),
-                )
-            return
-
-        if self.running:
-            GLib.idle_add(
-                self._update_display,
-                report,
-                suggested_governor,
-                suggested_turbo,
-            )
-
-    def _show_error(self, message):
-        if not self.running:
-            return False
-
-        self.error_label.set_text(
-            "Unable to refresh system information: "
-            f"{message}"
-        )
-        self.error_label.show()
-
-        self.refresh_id = (
-            GLib.timeout_add_seconds(
-                self.refresh_interval,
-                self.refresh_in_thread,
-            )
-        )
-        return False
-
-    def _update_display(
-        self,
-        report,
-        suggested_governor,
-        suggested_turbo,
-    ):
-        if not self.running:
-            return False
-
-        self.error_label.hide()
-        self.title.set_text(
-            "Monitor Mode - "
-            f"{time.strftime('%H:%M:%S')}"
-        )
-
-        # Same observed-state renderer as the normal GTK dashboard.
-        self.report_view.apply_report(report)
-
-        if (
-            report.current_gov is not None
-            and suggested_governor is not None
-            and suggested_governor
-            != report.current_gov
-        ):
-            self.governor_suggestion.set_text(
-                f"Use {suggested_governor}"
-            )
-        else:
-            self.governor_suggestion.set_text(
-                "No change suggested"
-            )
-
-        turbo_available = (
-            report.is_turbo_on[0] is not None
-        )
-
-        if turbo_available:
-            self.turbo_name.show()
-            self.turbo_suggestion.show()
-
-            if (
-                suggested_turbo is not None
-                and suggested_turbo
-                != report.is_turbo_on[0]
-            ):
-                self.turbo_suggestion.set_text(
-                    "Turn on"
-                    if suggested_turbo
-                    else "Turn off"
-                )
-            else:
-                self.turbo_suggestion.set_text(
-                    "No change suggested"
-                )
-        else:
-            self.turbo_name.hide()
-            self.turbo_suggestion.hide()
-
-        self.refresh_id = (
-            GLib.timeout_add_seconds(
-                self.refresh_interval,
-                self.refresh_in_thread,
-            )
-        )
-        return False
-
-    def on_back_clicked(self, _button):
-        self.cleanup()
-        self.parent.remove(self)
-        self.parent.daemon_not_running()
-        self.parent.show_all()
-
-    def cleanup(self):
-        self.running = False
-
-        if self.refresh_id is not None:
-            GLib.source_remove(self.refresh_id)
-            self.refresh_id = None
-
-
 class DaemonNotRunningView(Gtk.Box):
     def __init__(self, parent):
         super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=10, halign=Gtk.Align.CENTER, valign=Gtk.Align.CENTER)
@@ -1063,6 +844,33 @@ class DaemonNotRunningView(Gtk.Box):
         self.pack_start(self.label, False, False, 0)
         self.pack_start(self.sublabel, False, False, 0)
         self.pack_start(self.button_box, False, False, 0)
+
+        self.debug_logging_button = Gtk.CheckButton(
+            label="Enable debug logging"
+        )
+        self.debug_logging_button.set_active(diagnostics.enabled)
+        self.debug_logging_button.connect(
+            "toggled", self._toggle_debug_logging, parent
+        )
+        self.pack_start(self.debug_logging_button, False, False, 0)
+
+    def _toggle_debug_logging(self, button, parent):
+        if button.get_active() == diagnostics.enabled:
+            return
+        try:
+            diagnostics.set_enabled(button.get_active())
+        except OSError as error:
+            button.set_active(diagnostics.enabled)
+            dialog = Gtk.MessageDialog(
+                transient_for=parent,
+                message_type=Gtk.MessageType.ERROR,
+                buttons=Gtk.ButtonsType.OK,
+                text="Unable to change debug logging",
+            )
+            dialog.format_secondary_text(str(error))
+            dialog.set_destroy_with_parent(True)
+            dialog.connect("response", lambda widget, _response: widget.destroy())
+            dialog.show_all()
 
     def start_monitor(self, button, parent):
         parent.remove(self)
