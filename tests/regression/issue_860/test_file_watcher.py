@@ -177,6 +177,99 @@ class FileWatcherTests(unittest.TestCase):
             self.wait_for("state-after-lost-events")
 
 
+    def test_new_regular_file_remains_unpublished_until_close(self):
+        self.start_clean()
+        self.path.unlink()
+        self.wait_for(None)
+        with self.event_lock:
+            self.events.clear()
+        with self.path.open("w") as stream:
+            stream.write("partial-new-file")
+            stream.flush()
+            time.sleep(0.18)
+            self.assertNotIn("partial-new-file", self.events_now())
+        self.wait_for("partial-new-file")
+
+    def test_symlink_creation_is_observed_without_close_write(self):
+        self.start_clean()
+        self.path.unlink()
+        self.wait_for(None)
+        destination = self.root / "linked"
+        destination.write_text("link-content")
+        self.path.symlink_to(destination)
+        self.wait_for("link-content")
+
+    def test_chmod_retriggers_callback(self):
+        self.start_clean()
+        previous = self.path.stat().st_mode
+        try:
+            self.path.chmod(previous ^ 0o100)
+            self.wait_for("initial")
+        finally:
+            self.path.chmod(previous)
+
+    def test_failed_initialization_recovers_with_visible_state(self):
+        from inotify_simple import INotify as RealINotify
+
+        attempts = []
+        def intermittently_unavailable(**kwargs):
+            attempts.append(1)
+            if len(attempts) <= 2:
+                raise OSError("temporary inotify initialization failure")
+            return RealINotify(**kwargs)
+
+        with patch("auto_cpufreq.config.file_watcher.INotify",
+                   intermittently_unavailable):
+            self.watcher.start()
+            self.assertIn(self.watcher.state, ("starting", "recovering"))
+            deadline = time.monotonic() + 3
+            while time.monotonic() < deadline:
+                if self.watcher.state == "watching":
+                    break
+                time.sleep(0.01)
+            self.assertEqual(self.watcher.state, "watching")
+            self.assertGreaterEqual(len(attempts), 3)
+            self.path.write_text("recovered")
+            self.wait_for("recovered")
+
+    def test_stop_during_callback_rejects_restart_until_worker_exits(self):
+        callback_entered = threading.Event()
+        callback_release = threading.Event()
+
+        def slow_callback():
+            callback_entered.set()
+            callback_release.wait(3)
+
+        self.watcher.start()
+        self.watcher._on_change = slow_callback
+        self.path.write_text("trigger")
+        self.assertTrue(callback_entered.wait(2))
+        stopped = threading.Thread(target=self.watcher.stop)
+        stopped.start()
+        try:
+            deadline = time.monotonic() + 1
+            while time.monotonic() < deadline and self.watcher.state != "stopping":
+                time.sleep(0.01)
+            self.assertEqual(self.watcher.state, "stopping")
+            with self.assertRaises(RuntimeError):
+                self.watcher.start()
+        finally:
+            callback_release.set()
+            stopped.join(timeout=2)
+        self.assertFalse(stopped.is_alive())
+        self.assertEqual(self.watcher.state, "stopped")
+        self.watcher.start()
+        self.assertEqual(self.watcher.state, "watching")
+
+    def test_multiple_atomic_replacements_reach_latest_revision(self):
+        self.start_clean()
+        for index in range(25):
+            staged = self.root / ("new-%d" % index)
+            staged.write_text("revision-%d" % index)
+            os.replace(staged, self.path)
+        self.wait_for("revision-24")
+
+
     @unittest.skipUnless(Path("/proc/self/fd").is_dir(), "Linux /proc required")
     def test_repeated_start_stop_does_not_leak_descriptors(self):
         before = len(list(Path("/proc/self/fd").iterdir()))
