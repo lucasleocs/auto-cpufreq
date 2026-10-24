@@ -46,10 +46,28 @@ from threading import Thread
 @click.option("--donate", is_flag=True, help="Support the project")
 def main(monitor, live, daemon, install, update, remove, force, turbo, config, stats, pp, get_state,
           bluetooth_boot_off, bluetooth_boot_on, diagnostic_log, debug, version, donate):
-    if diagnostic_log and not (stats or monitor or live):
+    interactive_modes = sum(bool(value) for value in (stats, monitor, live))
+    if debug and interactive_modes:
         raise click.UsageError(
-            "--diagnostic-log requires --stats, --monitor or --live"
+            "--debug is a separate one-shot command; run it independently "
+            "of --stats, --monitor or --live"
         )
+    if diagnostic_log:
+        if interactive_modes != 1:
+            raise click.UsageError(
+                "--diagnostic-log requires --stats, --monitor or --live "
+                "(choose exactly one)"
+            )
+        if (
+            daemon or install or update is not None or remove
+            or force is not None or turbo is not None
+            or pp or get_state or bluetooth_boot_off or bluetooth_boot_on
+            or version or donate
+        ):
+            raise click.UsageError(
+                "--diagnostic-log cannot be combined with management, "
+                "override or noninteractive options"
+            )
 
     # display info if config file is used
     config_path = find_config_file(config)
