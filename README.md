@@ -593,10 +593,11 @@ When the daemon is running, the GUI provides a live overview of system, CPU, bat
 
 The dashboard refresh interval can be changed from the menu between 1, 2 and 5 seconds.
 
+If the daemon is not running, the GUI offers daemon installation or Monitor Mode for read-only system information and recommendations. The Monitor view is not a separate panel in the running-daemon dashboard.
 
 #### GTK debug logging
 
-Use **Enable debug logging** in the GTK menu to start recording a diagnostic session. Logging is disabled by default, but the GTK preference is remembered across launches. The **Debug log location** dialog displays the selected log filename, its directory, and whether the session is active or has already ended. **Copy full path** copies the filename; **Open folder** opens its directory through the desktop's registered file manager. The folder icon beside the GTK configuration path opens the configuration file's parent directory.
+Use **Enable debug logging** in the GTK menu to start recording a diagnostic session. Logging is disabled by default, but the GTK preference is remembered across launches. The **Debug log location** dialog displays the selected log filename, its directory, and whether the session is active or has already ended. **Copy full path** copies the absolute path of the log file (not just the filename or folder); **Open folder** opens its directory through the desktop's registered file manager. The folder icon beside the GTK configuration path opens the configuration file's parent directory.
 
 **No diagnostic directory or log file is created until debug logging is first enabled.** If the directory does not exist, the location dialog and the Open folder error explain that logging must be enabled first. Once created, the folder remains accessible even when logging is disabled. Each time logging is enabled, the program starts a new session log; opening the folder does not enable logging.
 
@@ -628,7 +629,7 @@ both sources close together, as two **separate commands**:
 
 1. Run `auto-cpufreq --stats --diagnostic-log` and observe the Stats screen. Press `Q` to close it, then keep the `stats-*.log` file in `~/.local/state/auto-cpufreq/` (or your `XDG_STATE_HOME` location).
 2. If a maintainer asks for the traditional hardware/system report, run `auto-cpufreq --debug` **separately** and save its terminal output. The historical `--debug` command requires root privileges and invokes `cpufreqctl()`, which can perform system setup; **do not run it on a working production installation merely to collect routine read-only monitoring data**. Review its implementation and effects before using it with `sudo`.
-3. Share the Stats log and, when explicitly collected, the Debug text with the relevant error description, auto-cpufreq version and approximate collection time. Remove private paths and other identifying information first.
+3. Share the Stats log and, when explicitly collected, the Debug text with the relevant error description, auto-cpufreq version and approximate collection time. A Python stack trace is recorded by optional diagnostics only when its trigger conditions occur, not in every session. Review and redact private paths and other identifying information before sharing.
 
 The commands are complementary, not simultaneous: `--stats --debug` is
 rejected, and `--diagnostic-log` is only valid with exactly one of
@@ -636,8 +637,6 @@ rejected, and `--diagnostic-log` is only valid with exactly one of
 installation, removal or power overrides. Do **not** use `--live` as a
 troubleshooting alternative to Stats: Live may change CPU power settings.
 
-
-If the daemon is not running, the GUI allows you to either install it for persistent automatic optimization or open Monitor Mode to preview system state and auto-cpufreq recommendations without applying changes.
 
 ### Overriding governor
 
