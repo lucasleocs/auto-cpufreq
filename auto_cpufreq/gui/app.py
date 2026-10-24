@@ -18,7 +18,7 @@ from auto_cpufreq.gui.report_view import SystemReportView
 from auto_cpufreq.config.config import config
 from auto_cpufreq.core import check_for_update, daemon_is_running
 from auto_cpufreq.globals import GITHUB, IS_INSTALLED_WITH_SNAP
-from auto_cpufreq.gui.objects import BluetoothBootControl, DaemonNotRunningView, DropDownMenu, MonitorModeView, RadioButtonView, CPUTurboOverride, UpdateDialog
+from auto_cpufreq.gui.objects import BluetoothBootControl, DaemonNotRunningView, DropDownMenu, MonitorModeView, RadioButtonView, CPUTurboOverride, UpdateDialog, open_containing_folder
 from auto_cpufreq.modules.system_info import system_info
 from auto_cpufreq.power_helper import bluetoothctl_exists
 
@@ -198,15 +198,31 @@ class ToolWindow(Gtk.Window):
                 self.bluetooth_control, False, False, 0
             )
 
+        config_row = Gtk.Box(
+            orientation=Gtk.Orientation.HORIZONTAL, spacing=6
+        )
         self.config_label = Gtk.Label(
             label=_configuration_label_text()
         )
         self.config_label.set_halign(Gtk.Align.START)
         self.config_label.set_xalign(0)
         self.config_label.set_line_wrap(True)
-        controls_box.pack_start(
-            self.config_label, False, False, 0
+        config_row.pack_start(self.config_label, True, True, 0)
+
+        self.config_folder_button = Gtk.Button.new_from_icon_name(
+            "folder-open-symbolic", Gtk.IconSize.BUTTON
         )
+        self.config_folder_button.set_relief(Gtk.ReliefStyle.NONE)
+        self.config_folder_button.set_tooltip_text(
+            "Open configuration folder"
+        )
+        self.config_folder_button.connect(
+            "clicked", self._open_config_folder
+        )
+        config_row.pack_start(
+            self.config_folder_button, False, False, 0
+        )
+        controls_box.pack_start(config_row, False, False, 0)
 
         self.report_view.prepend_right(controls_frame)
 
@@ -298,6 +314,9 @@ class ToolWindow(Gtk.Window):
         self.pending_power_updates.discard(key)
         self.refresh_in_thread()
         return False
+
+    def _open_config_folder(self, _button):
+        open_containing_folder(self, config.path)
 
     def _add_refresh_interval_menu(self):
         refresh_item = Gtk.MenuItem(
