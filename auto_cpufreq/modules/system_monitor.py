@@ -558,40 +558,51 @@ class SystemMonitor:
             )
             self.loop.run()
         except KeyboardInterrupt:
+            # Logging is optional, including during signal handling.
             if self._diagnostics:
-                self._diagnostics.info("Terminal interrupted by Ctrl+C")
+                try:
+                    self._diagnostics.info("Terminal interrupted by Ctrl+C")
+                except Exception:
+                    pass
             sys.exit(0)
         finally:
             self.running = False
-            if self._diagnostics:
-                self._diagnostics.info("%s UI stopped", self.type)
-            self._refresh_coordinator.close()
+            callback, self.on_quit = self.on_quit, None
 
-            callback = self.on_quit
-            self.on_quit = None
-
+            # Release each resource even when a different cleanup step
+            # fails. Diagnostics must not interfere with closing the
+            # coordinator, alarm or watched pipe.
             try:
-                alarm_handle = self._alarm_handle
-                self._alarm_handle = None
-
-                if alarm_handle is not None:
-                    self.loop.remove_alarm(alarm_handle)
-
-                wakeup_fd = self._refresh_pipe_fd
-                self._refresh_pipe_fd = None
-
-                if wakeup_fd is not None:
+                try:
+                    self._refresh_coordinator.close()
+                finally:
+                    alarm_handle, self._alarm_handle = self._alarm_handle, None
                     try:
-                        self.loop.remove_watch_pipe(wakeup_fd)
+                        if alarm_handle is not None:
+                            self.loop.remove_alarm(alarm_handle)
                     finally:
-                        try:
-                            os.close(wakeup_fd)
-                        except OSError:
-                            pass
+                        wakeup_fd, self._refresh_pipe_fd = (
+                            self._refresh_pipe_fd, None
+                        )
+                        if wakeup_fd is not None:
+                            try:
+                                self.loop.remove_watch_pipe(wakeup_fd)
+                            finally:
+                                try:
+                                    os.close(wakeup_fd)
+                                except OSError:
+                                    pass
             finally:
                 try:
                     if callback:
                         callback()
                 finally:
                     if self._diagnostics:
-                        self._diagnostics.shutdown()
+                        try:
+                            self._diagnostics.info("%s UI stopped", self.type)
+                        except Exception:
+                            pass
+                        try:
+                            self._diagnostics.shutdown()
+                        except Exception:
+                            pass
