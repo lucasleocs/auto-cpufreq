@@ -23,9 +23,9 @@ event loop or changing privileged power policy.
 - Both GTK views own one periodic `GtkRefreshTimer` per active view. A busy
   periodic tick checks for stalls but never queues an additional collection;
   explicit user/configuration requests may coalesce one successor.
-- The same periodic tick can detect suspend/resume gaps by comparing Linux
-  CLOCK_BOOTTIME and CLOCK_MONOTONIC, without catching up missed ticks.
-  The optional diagnostic heartbeat remains independent of report collection.
+- Suspend/resume detection belongs to the optional GUI diagnostic heartbeat,
+  which compares Linux CLOCK_BOOTTIME and CLOCK_MONOTONIC. A periodic refresh
+  timer does not duplicate those readings or catch up missed ticks.
 - The main GTK view can hold a field in **Applying…** until a fresh
   report confirms the observed state. Refactoring refresh must not override
   this transaction state with an older snapshot.
