@@ -1,0 +1,35 @@
+name: Full GTK with private UPower (temporary)
+
+on:
+  push:
+    branches:
+      - tmp/upower-full-gtk-privatebus-20261024
+  workflow_dispatch:
+
+jobs:
+  full-gtk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install GTK and virtual display
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends python3-venv python3-gi gir1.2-gtk-3.0 xvfb xauth dbus
+      - name: Install package in disposable environment
+        run: |
+          /usr/bin/python3 -m venv --system-site-packages .venv
+          POETRY_DYNAMIC_VERSIONING_BYPASS=3.2.0 .venv/bin/python -m pip install -e .
+      - name: Compile private GTK test
+        run: .venv/bin/python -m py_compile internal/upower_full_gtk_preview.py
+      - name: Verify full GTK with actual D-Bus messages from private mock
+        run: |
+          for scenario in charging-55 reached-80 full-100 start-end; do
+            echo "TEST: $scenario"
+            xvfb-run -a timeout 40s .venv/bin/python internal/upower_full_gtk_preview.py --scenario "$scenario" --mock-kernel-stop 80 --mock-battery --check
+          done
+          for scenario in firmware firmware-disabled disabled legacy; do
+            echo "TEST: $scenario"
+            xvfb-run -a timeout 40s .venv/bin/python internal/upower_full_gtk_preview.py --scenario "$scenario" --mock-battery --check
+          done
