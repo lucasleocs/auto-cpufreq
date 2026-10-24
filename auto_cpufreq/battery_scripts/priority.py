@@ -8,7 +8,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import os
 
-from auto_cpufreq.modules.battery_upower import read_upower_battery
+from auto_cpufreq.battery_scripts.probe import probe_charge_service
 from auto_cpufreq.modules.system_info import SystemInfo
 
 
@@ -37,12 +37,18 @@ def resolve_charge_control(
     An unavailable UPower service differs from a healthy service explicitly
     reporting charge control unsupported. Fail closed on unknown ownership.
     """
-    info = read_upower_battery(battery_path)
-    if info is None:
+    probe = probe_charge_service(battery_path)
+    if probe.status == "absent":
         return ChargeControlDecision(
-            "blocked", "UPower state unavailable; cannot rule out an active controller"
+            "apply", "UPower service confirmed absent on a healthy system bus"
+        )
+    if probe.status != "ready" or probe.capabilities is None:
+        return ChargeControlDecision(
+            "blocked", "UPower service or battery capability unavailable: "
+            + (probe.reason or probe.status)
         )
 
+    info = probe.capabilities
     if not info.charge_protection_supported:
         return ChargeControlDecision("apply", "UPower reports no charge-limit control")
 

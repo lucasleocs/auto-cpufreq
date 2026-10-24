@@ -6,6 +6,7 @@ from typing import Any
 from auto_cpufreq.config.config import config
 from auto_cpufreq.globals import POWER_SUPPLY_DIR
 from auto_cpufreq.battery_scripts.priority import resolve_charge_control
+from auto_cpufreq.battery_scripts.conflicts import (ChargeDriftGuard, competing_charge_manager)
 
 # The charge_control_{start,end}_threshold files
 # are officially documented and preferred,
@@ -22,6 +23,8 @@ CHARGE_STOP_THRESHOLD_FILES = [
 
 class BatteryDevice:
     def __init__(self):
+        self._drift_guard = ChargeDriftGuard()
+        self._reported_conflicts = set()
         self.batteries = self._get_batteries()
         self.start_paths = {
             bat: path
@@ -222,7 +225,28 @@ class BatteryDevice:
             print("WARNING: no batteries found to set thresholds for")
             return
 
+        competitor = competing_charge_manager()
+        if competitor.blocked:
+            if competitor.reason not in self._reported_conflicts:
+                print(f"WARNING: charge control paused: {competitor.reason}")
+                self._reported_conflicts.add(competitor.reason)
+            return
+
         for bat in self.batteries:
+            signature = (
+                parsed_config["start_threshold"],
+                parsed_config["stop_threshold"],
+                parsed_config.get("ideapad_conservation_mode"),
+            )
+            current = self.get_current_threshold(bat)
+            drift = self._drift_guard.ready(bat, signature, current)
+            if drift.blocked:
+                key = (bat, drift.reason)
+                if key not in self._reported_conflicts:
+                    print(f"WARNING: skipping {bat}: {drift.reason}")
+                    self._reported_conflicts.add(key)
+                continue
+
             # All generic and manufacturer writers pass through this single
             # ownership check when invoked by the daemon.
             request = resolve_charge_control(
@@ -240,3 +264,11 @@ class BatteryDevice:
                 continue
             if not self.apply_threshold_settings_to_bat(bat, parsed_config):
                 print(f"ERROR: failed to set thresholds for battery {bat}")
+                continue
+            updated = self.get_current_threshold(bat)
+            # Track only readbacks corresponding to an actual numeric writer.
+            # Firmware modes without observable numeric values cannot claim a
+            # verified percentage and must not be marked as such.
+            if (updated != current and updated[1] is not None
+                    and parsed_config.get("ideapad_conservation_mode") is None):
+                self._drift_guard.record(bat, signature, updated)
