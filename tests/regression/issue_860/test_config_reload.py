@@ -44,6 +44,41 @@ class ConfigContractTests(unittest.TestCase):
     def governor(self):
         return self.config.get_config().get("battery", "governor", fallback=None)
 
+    def test_selected_config_order_is_explicit_then_user_then_system(self):
+        home = self.root / "mockhome"
+        user_file = home / ".config/auto-cpufreq/auto-cpufreq.conf"
+        user_file.parent.mkdir(parents=True)
+        user_file.write_text("[battery]\\ngovernor=powersave\\n")
+        with patch.dict(os.environ, {
+            "USER": "test-account",
+            "SUDO_USER": "",
+        }, clear=True), patch(
+            "auto_cpufreq.config.config.pwd.getpwnam",
+            return_value=SimpleNamespace(pw_dir=str(home)),
+        ):
+            self.assertEqual(find_config_file(None), str(user_file))
+            self.assertEqual(
+                find_config_file(str(self.config_path)),
+                str(self.config_path),
+            )
+
+    def test_bad_account_name_uses_current_uid_home_fallback(self):
+        home = self.root / "fallback"
+        user_file = home / ".config/auto-cpufreq/auto-cpufreq.conf"
+        user_file.parent.mkdir(parents=True)
+        user_file.write_text("[charger]\\ngovernor=performance\\n")
+        with patch.dict(os.environ, {
+            "USER": "not-a-real-account",
+            "SUDO_USER": "",
+        }, clear=True), patch(
+            "auto_cpufreq.config.config.pwd.getpwnam",
+            side_effect=KeyError("missing account"),
+        ), patch(
+            "auto_cpufreq.config.config.pwd.getpwuid",
+            return_value=SimpleNamespace(pw_dir=str(home)),
+        ):
+            self.assertEqual(find_config_file(None), str(user_file))
+
     def test_successful_reload_publishes_new_snapshot(self):
         original = self.config.get_config()
         self.config_path.write_text("[battery]\ngovernor=performance\n")
