@@ -134,6 +134,9 @@ class HealthSamplerTests(unittest.TestCase):
             logger, read=read, interval=0.02
         )
         sampler.start()
+        deadline = time.monotonic() + 1.0
+        while not calls and time.monotonic() < deadline:
+            time.sleep(0.005)
         self.assertTrue(calls)
         sampler.stop()
         self.assertFalse(any(
