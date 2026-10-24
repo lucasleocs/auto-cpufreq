@@ -601,7 +601,21 @@ Diagnostic preferences are stored in `$XDG_CONFIG_HOME/auto-cpufreq/gtk-debug.js
 
 When enabled, logging records errors and slow or stalled refreshes. It summarizes GTK queueing, data collection, delivery and rendering times approximately once a minute. The process-health sampler runs every 5 seconds and summarizes CPU usage (relative to one logical CPU), memory, thread count and open file descriptors approximately once a minute. It does **not** continuously log per-thread CPU usage or stacks. Sustained process CPU usage above 70% of one logical CPU for three consecutive samples can trigger a report of the hottest thread and its Python stack; an unresponsive GTK main loop may also produce a stack trace.
 
-This optional GTK logging does not alter the daemon's power policy. The CLI's existing `--debug` mode is separate; `--stats` and `--monitor` do not automatically enable persistent diagnostics.
+This optional GTK logging does not alter the daemon's power policy. The CLI's existing `--debug` mode remains separate from persistent diagnostic logging.
+
+#### Optional terminal diagnostics
+
+To record an independent diagnostic session for a terminal screen, add `--diagnostic-log` to `--stats`, `--monitor` or `--live`:
+
+```bash
+auto-cpufreq --stats --diagnostic-log
+```
+
+The terminal option is **off by default** and does not share the GTK preference. It uses the same bounded rotating log writer and process-health sampling as GTK. On unprivileged runs, the log is stored under `$XDG_STATE_HOME/auto-cpufreq/` (or `~/.local/state/auto-cpufreq/`). For terminal modes run with `sudo`, logs go to the **root account's** `~/.local/state/auto-cpufreq/` rather than the invoking user's home; access requires appropriate permissions. Review log contents before sharing. The option is not valid for install, remove, daemon or other noninteractive operations. It does not enable logging for the built-in `--debug` command.
+
+`--stats` observes the running daemon without requesting power-policy changes. Unlike `--stats`, the existing `--monitor` and `--live` modes have service and privilege preconditions; do not use them as casual diagnostics of a production system.
+
+GTK diagnostic sessions now start only when the GTK entrypoint attaches its main loop; merely importing GTK modules will not launch diagnostic workers.
 
 If the daemon is not running, the GUI allows you to either install it for persistent automatic optimization or open Monitor Mode to preview system state and auto-cpufreq recommendations without applying changes.
 
