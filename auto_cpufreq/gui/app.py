@@ -24,6 +24,7 @@ from auto_cpufreq.gui.objects import (
     BluetoothBootControl, CPUTurboOverride, DaemonNotRunningView,
     DropDownMenu, RadioButtonView, UpdateDialog,
 )
+from auto_cpufreq.modules.report_presentation import configuration_file_text
 from auto_cpufreq.modules.system_info import system_info
 from auto_cpufreq.power_helper import bluetoothctl_exists
 
@@ -48,9 +49,7 @@ CONTROL_APPLY_DELAY_SECONDS = 3
 
 
 def _configuration_label_text():
-    if config.has_config():
-        return f"Configuration file: {config.path}"
-    return f"Configuration file (not found): {config.path}"
+    return configuration_file_text(config.path, config.has_config())
 
 
 class ToolWindow(Gtk.Window):
