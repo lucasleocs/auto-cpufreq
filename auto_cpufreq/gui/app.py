@@ -1060,6 +1060,12 @@ class ToolWindow(Gtk.Window):
             else:
                 self._apply_refresh(result.report)
         finally:
+            if result.requested_at:
+                diagnostics.record_duration(
+                    "GTK dashboard end-to-end refresh",
+                    max(0.0, time.monotonic() - result.requested_at),
+                    slow_after=max(2.0, self.refresh_interval * 2),
+                )
             try:
                 self._run_pending_refresh()
             except Exception:
