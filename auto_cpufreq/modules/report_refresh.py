@@ -161,6 +161,9 @@ class ReportRefreshCoordinator:
         except RuntimeError:
             with self._lock:
                 if generation == self._generation:
+                    # A concurrent explicit request may have set _pending
+                    # while enqueue() attempted to start the worker.
+                    self._pending = False
                     self._running = False
                     self._requested_at = None
             raise
@@ -250,6 +253,9 @@ class ReportRefreshCoordinator:
             except RuntimeError as error:
                 with self._lock:
                     if generation_next == self._generation:
+                        # A new explicit request can arrive while this
+                        # successor worker is being started.
+                        self._pending = False
                         self._running = False
                         self._requested_at = None
                 # Worker creation can fail after the previous report has
