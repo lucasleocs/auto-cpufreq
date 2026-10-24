@@ -124,6 +124,19 @@ class GuiDiagnosticsTests(unittest.TestCase):
         diagnostics.shutdown()
         self.assertEqual(glib.removed, [134])
 
+    def test_suspend_gap_is_distinguished_from_main_loop_delay(self):
+        diagnostics = self.diagnostics
+        glib = MockGLib()
+        diagnostics.attach_mainloop(glib)
+        diagnostics.set_enabled(True)
+        diagnostics._last_boottime = 100.0
+        diagnostics._last_heartbeat = time.monotonic() - 5.0
+        with patch.object(MODULE, "_boottime", return_value=150.0):
+            self.assertTrue(glib.callback())
+        content = diagnostics.log_path.read_text()
+        self.assertIn("System suspend/resume detected", content)
+        self.assertNotIn("unresponsive for at least", content)
+
     def test_watchdog_thread_detects_blocked_main_thread(self):
         diagnostics = self.diagnostics
         diagnostics.attach_mainloop(MockGLib())
