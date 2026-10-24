@@ -5,13 +5,13 @@ gi.require_version("Gtk", "3.0")
 from gi.repository import Gdk, GdkPixbuf, GLib, Gtk
 
 from os.path import isfile
-from pathlib import Path
 from platform import python_version
 from subprocess import getoutput, PIPE, run
 from threading import Thread
 
 from auto_cpufreq.config.config import config
 from auto_cpufreq.gui.diagnostics import diagnostics
+from auto_cpufreq.gui.desktop import open_containing_folder
 # Keep existing import path for downstream consumers while the implementation
 # lives next to the other view-specific GTK code.
 from auto_cpufreq.gui.monitor_view import MonitorModeView
@@ -19,38 +19,6 @@ from auto_cpufreq.core import get_formatted_version, get_override, get_turbo_ove
 from auto_cpufreq.globals import GITHUB, IS_INSTALLED_WITH_AUR, IS_INSTALLED_WITH_SNAP
 from auto_cpufreq.power_helper import bluetoothctl_exists
 
-
-
-def open_containing_folder(parent, file_path, *, missing_hint=None):
-    """Open a file's parent directory using the desktop's URI handler.
-
-    An optional hint explains expected missing directories, such as the
-    diagnostic directory before logging has been enabled.
-    """
-    directory = Path(file_path).expanduser().absolute().parent
-    try:
-        if not directory.is_dir():
-            message = f"Directory does not exist: {directory}"
-            if missing_hint:
-                message += f"\n{missing_hint}"
-            raise FileNotFoundError(message)
-        if not Gtk.show_uri_on_window(
-            parent, directory.as_uri(), Gdk.CURRENT_TIME
-        ):
-            raise OSError("No application could open the directory")
-    except (OSError, GLib.Error) as error:
-        dialog = Gtk.MessageDialog(
-            transient_for=parent,
-            message_type=Gtk.MessageType.ERROR,
-            buttons=Gtk.ButtonsType.CLOSE,
-            text="Unable to open folder",
-        )
-        dialog.format_secondary_text(str(error))
-        dialog.set_destroy_with_parent(True)
-        dialog.connect("response", lambda widget, _response: widget.destroy())
-        dialog.show_all()
-        return False
-    return True
 
 
 def get_version():
