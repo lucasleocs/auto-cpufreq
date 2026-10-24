@@ -89,7 +89,7 @@ updated_release="$(readlink -f /opt/auto-cpufreq/current)"
 test "$updated_release" != "$initial_release"
 test -f "$initial_release/.complete"
 test -f "$updated_release/.complete"
-sudo -n /usr/local/bin/auto-cpufreq --version | grep -E 'auto-cpufreq version: 3\\.2\\.1'
+sudo -n /usr/local/bin/auto-cpufreq --version | grep -E 'auto-cpufreq version: 3\.2\.1'
 echo "real-cli-update-local-tag: PASS" >> "$RESULT_FILE"
 
 echo "==== REAL MANAGED UNIT INSTALL / SYSTEMD ===="
