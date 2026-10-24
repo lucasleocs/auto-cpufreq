@@ -100,8 +100,8 @@ def main(monitor, live, daemon, install, update, remove, force, turbo, config, s
                 suggestion=True, type=ViewType.MONITOR,
                 diagnostic_log=diagnostic_log,
             )
-            conf.notifier.start()
             try:
+                conf.notifier.start()
                 monitor.run(on_quit=conf.stop_watching)
             finally:
                 conf.stop_watching()
@@ -155,8 +155,8 @@ def main(monitor, live, daemon, install, update, remove, force, turbo, config, s
                 gnome_power_detect()
                 tlp_service_detect()
             start_battery_daemon()
-            conf.notifier.start()
             try:
+                conf.notifier.start()
                 while True:
                     try:
                         footer()
