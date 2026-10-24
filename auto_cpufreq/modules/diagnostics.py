@@ -22,6 +22,8 @@ MAX_LOG_BYTES = 1024 * 1024
 LOG_BACKUPS = 3
 RETAIN_SESSIONS = 4
 QUEUE_SIZE = 256
+MAX_MESSAGE_CHARS = 8192
+MAX_TRACEBACK_CHARS = 16384
 _ACTIVE_LOGS = set()
 _ACTIVE_LOCK = Lock()
 _PRUNE_LOCK = Lock()
@@ -95,14 +97,22 @@ class _BoundedQueueHandler(QueueHandler):
         self._on_drop = on_drop
 
     def prepare(self, record):
-        # Keep traceback objects out of the queue: they retain stack frames
-        # and potentially large objects until the writer can make progress.
+        # No live args/tracebacks/stack objects may be retained in the queue.
+        # Bound the largest record even when a slow filesystem stalls the
+        # writer. The producer pays for formatting, but never for disk I/O.
         result = copy.copy(record)
-        if result.exc_info:
+        message = record.getMessage()
+        result.msg = str(message)[:MAX_MESSAGE_CHARS]
+        result.args = None
+        if record.exc_info:
             result.exc_text = "".join(traceback.format_exception(
-                *result.exc_info, limit=24
-            ))
-            result.exc_info = None
+                *record.exc_info, limit=24
+            ))[:MAX_TRACEBACK_CHARS]
+        elif record.exc_text:
+            result.exc_text = str(record.exc_text)[:MAX_TRACEBACK_CHARS]
+        result.exc_info = None
+        if record.stack_info:
+            result.stack_info = str(record.stack_info)[:MAX_TRACEBACK_CHARS]
         return result
 
     def enqueue(self, record):
@@ -347,13 +357,13 @@ class SessionDiagnostics:
         else:
             self._health_sampler = sampler
 
-    def _deactivate(self):
+    def _deactivate(self, *, wait=True):
         if not self.enabled:
             return
         # Retain sampler ownership if a procfs read outlives stop().
         sampler = self._health_sampler
         if sampler is not None:
-            sampler.stop()
+            sampler.stop(wait=wait)
         self.info("%s debug logging disabled", self.component)
         self.enabled = False
         session = self._session
@@ -361,7 +371,8 @@ class SessionDiagnostics:
             return
         self._logger.removeHandler(session.handler)
         session.handler.close_producers()
-        session.writer.join(timeout=0.3)
+        if wait:
+            session.writer.join(timeout=0.3)
         self._retiring_session = (
             session if session.writer.is_alive() else None
         )
