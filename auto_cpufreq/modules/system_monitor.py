@@ -32,6 +32,7 @@ class SystemMonitor:
     def __init__(
         self, type: ViewType, suggestion: bool = False,
         diagnostic_log: bool = False,
+        policy_status: Callable[[], str] | None = None,
     ):
         self.type: ViewType = type
         self._diagnostics = (
@@ -100,6 +101,7 @@ class SystemMonitor:
         self.last_focus_left = 0
         self.last_focus_right = 0
         self.on_quit: Callable[[], None] | None = None
+        self._policy_status = policy_status
         self.suggestion = suggestion
         self.running = False
         self._refresh_pipe_fd: int | None = None
@@ -279,8 +281,16 @@ class SystemMonitor:
                 self.last_focus_right = 0
 
         current_time = time.strftime("%H:%M:%S")
+        status_suffix = ""
+        if self.type == ViewType.LIVE and self._policy_status is not None:
+            try:
+                policy_state = self._policy_status()
+            except Exception:
+                policy_state = "status unavailable"
+            if policy_state != "running":
+                status_suffix = " - POLICY " + policy_state
         self.title_header.set_text(
-            f"{self.type} Mode - {current_time}"
+            f"{self.type} Mode - {current_time}{status_suffix}"
         )
 
         self.format_system_info(
