@@ -188,6 +188,19 @@ class GtkRefreshTests(unittest.TestCase):
         self.window.refresh_in_thread()
         self.assertTrue(pump_until(lambda: len(self.window.applied) == 2))
 
+    def test_diagnostic_failure_must_not_strand_dashboard_refresh(self):
+        # A diagnostics backend can fail after a worker has completed.
+        # GUI logging must not hold the delivery slot permanently.
+        with patch.object(APP.diagnostics, "record_duration",
+                          side_effect=OSError("simulated logging failure")):
+            self.window.refresh_in_thread()
+            self.assertTrue(pump_until(
+                lambda: not self.window._refresh_coordinator.in_progress,
+                timeout=2,
+            ), "Diagnostics error stranded a completed GTK refresh")
+        self.window.refresh_in_thread()
+        self.assertTrue(pump_until(lambda: len(self.window.applied) >= 1))
+
     def test_destroy_during_collection(self):
         started = threading.Event()
         release = threading.Event()
