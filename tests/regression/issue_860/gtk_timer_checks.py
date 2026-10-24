@@ -45,20 +45,25 @@ class GtkTimerTests(unittest.TestCase):
         self.assertIsNotNone(source)
         self.scheduler.start()
         self.assertEqual(self.scheduler.source_id, source)
+        source_object = GLib.MainContext.default().find_source_by_id(source)
+        self.assertIsNotNone(source_object)
         self.scheduler.stop()
         self.scheduler.stop()
         self.assertIsNone(self.scheduler.source_id)
-        self.assertIsNone(GLib.MainContext.default().find_source_by_id(source))
+        self.assertTrue(source_object.is_destroyed())
 
     def test_interval_switch_replaces_source_without_leaking(self):
         self.scheduler.start()
         old = self.scheduler.source_id
+        old_source = GLib.MainContext.default().find_source_by_id(old)
         for value in (2, 5, 1, 5, 2):
             self.scheduler.set_interval(value)
-            self.assertIsNone(GLib.MainContext.default().find_source_by_id(old))
+            self.assertTrue(old_source.is_destroyed())
             new = self.scheduler.source_id
             self.assertIsNotNone(new)
-            self.assertIsNotNone(GLib.MainContext.default().find_source_by_id(new))
+            old_source = GLib.MainContext.default().find_source_by_id(new)
+            self.assertIsNotNone(old_source)
+            self.assertFalse(old_source.is_destroyed())
             old = new
         self.scheduler.set_interval(2)
         self.assertEqual(self.scheduler.source_id, old)
