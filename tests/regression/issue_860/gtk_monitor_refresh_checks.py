@@ -91,6 +91,45 @@ class MonitorRefreshTests(unittest.TestCase):
         self.assertTrue(view._refresh_coordinator.closed)
         self.assertIsNone(view.refresh_id)
 
+    def test_repeated_monitor_open_close_ends_old_collectors(self):
+        started = threading.Event()
+        release = threading.Event()
+        views = []
+
+        def slow_collect():
+            started.set()
+            release.wait(timeout=3)
+            return self.report()
+
+        try:
+            for _ in range(5):
+                view, renderer = self.make(slow_collect)
+                views.append((view, renderer))
+                self.assertTrue(started.wait(timeout=1))
+                started.clear()
+                view.cleanup()
+            release.set()
+            deadline = time.monotonic() + 3
+            while time.monotonic() < deadline:
+                while GLib.MainContext.default().pending():
+                    GLib.MainContext.default().iteration(False)
+                alive = [
+                    t for t in threading.enumerate()
+                    if t.name == "gtk-monitor-refresh" and t.is_alive()
+                ]
+                if not alive:
+                    break
+                time.sleep(0.02)
+            self.assertFalse(
+                [t for t in threading.enumerate()
+                 if t.name == "gtk-monitor-refresh" and t.is_alive()]
+            )
+            for view, renderer in views:
+                self.assertTrue(view._refresh_coordinator.closed)
+                self.assertFalse(renderer.applied)
+        finally:
+            release.set()
+
     def test_close_during_collection_drops_late_results(self):
         started = threading.Event()
         release = threading.Event()
