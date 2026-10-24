@@ -15,6 +15,14 @@ jobs:
     timeout-minutes: 50
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Verify complete Git history for dynamic package version
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse --is-shallow-repository)" = false
+          git describe --tags --always
       - name: Build unmodified production Snap on an Ubuntu virtual machine
         uses: canonical/action-build@v1
         id: build
