@@ -1003,6 +1003,12 @@ class MonitorModeView(Gtk.Box):
             diagnostics.exception("GTK monitor presentation failed")
             self._show_error(str(error))
         finally:
+            if result.requested_at:
+                diagnostics.record_duration(
+                    "GTK monitor end-to-end refresh",
+                    max(0.0, time.monotonic() - result.requested_at),
+                    slow_after=max(2.0, self.refresh_interval * 2),
+                )
             self._refresh_coordinator.acknowledge(result.generation)
         return False
 
