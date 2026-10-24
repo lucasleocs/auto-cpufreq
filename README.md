@@ -592,6 +592,17 @@ The dashboard refresh interval can be changed from the menu between 1, 2 and 5 s
 
 If the daemon is not running, the GUI allows you to either install it for persistent automatic optimization or open Monitor Mode to preview system state and auto-cpufreq recommendations without applying changes.
 
+#### GUI debug logging
+
+To investigate intermittent GTK freezes, enable **Enable debug logging** from the GUI menu. The same setting is available on the daemon-not-running screen before entering Monitor Mode. Logging is disabled by default, and the selected setting persists after the GUI is restarted.
+
+The GUI records initialization, refresh collection and rendering duration, failures, and main-loop heartbeat timing. While enabled, a lightweight watchdog can log a Python stack trace if the GTK main loop stops responding for at least 20 seconds. Debug logging applies to the GTK application, not the background daemon or the terminal `--stats` display.
+
+Logs are stored in `$XDG_STATE_HOME/auto-cpufreq/gtk.log` or, if `XDG_STATE_HOME` is unset, `~/.local/state/auto-cpufreq/gtk.log`. The menu also provides **Debug log location**. Files rotate at 1 MiB and retain up to three backups (approximately 4 MiB total).
+
+The GUI does not log complete system reports, configuration file contents or command outputs. Exception messages and Python stack traces can still include local filesystem paths or other environment details, so review the log before sharing it with a bug report. Disable debug logging from the same menu when the investigation is complete.
+
+
 ### Overriding governor
 
 `sudo auto-cpufreq --force=governor`
