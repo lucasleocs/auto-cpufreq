@@ -366,3 +366,21 @@ Official references:
 - https://github.com/torvalds/linux/blob/master/Documentation/ABI/testing/sysfs-class-power
 - https://dri.freedesktop.org/docs/drm/admin-guide/laptops/samsung-galaxybook.html
 
+
+## First centralized charge backend resolver — experimental only (2026-10-24)
+
+New temporary implementation `tmp/charge-priority-resolver-20261024` (latest inspected commit `82b4d5158d8be2e7bcbdc8f364e7d312c402cad6`). Neither `master` nor the clean read-only UPower and generic kernel-threshold contribution branches was changed.
+
+The shared `BatteryDevice.apply_threshold_settings()` daemon path calls `battery_scripts/priority.py:resolve_charge_control` after opt-in config parsing and **before** invoking any concrete writer (generic kernel, legacy Asus/ThinkPad, or explicit IdeaPad conservation mode). Three possible read-only decisions:
+- `satisfied` — UPower actively reports the requested numeric stop and (when configured) start, and sysfs readbacks match. No writing and no misleading conflict warning.
+- `apply` — healthy UPower reports threshold API unsupported, or protection explicitly disabled. A suitable generic kernel or vendor writer can act; validation and readback remain writer responsibilities.
+- `blocked` — UPower temporarily unavailable/missing, enabled state unknown, active firmware-managed mode without numerical certainty, active configured target differs, or kernel readback conflicts. No fallback to potentially unsafe writes.
+
+Importantly **no arbitrary percentage is written through UPower**; its documented `EnableChargeThreshold()` is only a toggle for already-configured settings, so a genuinely UPower-first writer would require its own authorized transaction + verified readback, beyond this stage. Current resolution is UPower-first *inspection*, then kernel or existing compatibility writer.
+
+Generic standard `charge_control_end_threshold` is preferred when writable. Explicit `ideapad_laptop_conservation_mode` retains IdeaPad-specialized routing (including when both `ideapad_acpi` and `ideapad_laptop` modules appear). Without a standard writable stop attribute, old vendor paths are kept as compatibility fallback, while the shared daemon preflight still checks ownership.
+
+**Cautions:** The direct internal `apply_threshold_settings_to_bat` helpers are not public entry points; preflight is guaranteed by the existing daemon calling `apply_threshold_settings()`, not by invoking low-level direct methods from other code. The code does not detect conflicts with every possible external daemon such as TLP, and has not been used to write a physical Samsung threshold. A missing UPower service is intentionally treated as *unknown* and fail-closed; this prioritizes safety but prevents generic writes on machines with no usable UPower service until absence vs transient failure can be distinguished. The existing multi-write vendor start/end path still has its original rollback/readback limitations. These restrictions should be evaluated before promoting the branch to a clean PR.
+
+Tests: 12 original generic safety cases plus 18 desired-policy priority cases PASSED at `0265271cf92cb0b17a67bb1e774edf79978e6053` (https://github.com/lucasleocs/auto-cpufreq/actions/runs/40051189084). Additional Lenovo dual-driver and unknown-firmware test added in `82b4d515...`, bringing total expected to 32; see latest CI https://github.com/lucasleocs/auto-cpufreq/actions/runs/40051320251. Linux Build and Nix Flake also passed at the earlier 30-test revision (runs 40051189152 and 40051189061); check the newest runs for final status. All writes in tests went to TemporaryDirectory fixture files, never physical hardware.
+

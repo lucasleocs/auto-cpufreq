@@ -237,3 +237,26 @@ Observed (passing assertions): no UPower -> kernel; UPower explicitly unsupporte
 - P-F: Add desired-policy tests for UPower status toggling, same/mismatched preset, firmware-only, unsupported, unknown/timeout, kernel rounding and multi-battery ambiguity. Existing tests describe present behavior and do not prove these corrections yet.
 - P-G: Confirm `enable_thresholds` config and daemon workflow do not attempt writes when disabled; no physical Samsung testing until explicit authorization.
 
+
+
+## Centralized backend arbitration — implementation validation
+
+- AR01: User opted out: no UPower preflight or sysfs writing. PASS.
+- AR02: Healthy UPower old/no charging control + BAT1 standard stop: apply 80%. PASS (mock filesystem).
+- AR03: UPower explicitly disabled + configured numeric stop: kernel apply permitted. PASS.
+- AR04: UPower missing/timeout/unhealthy: **blocked** (rather than confusing with "unsupported"). PASS.
+- AR05: UPower charge-control enabled state absent/unknown: **blocked**. PASS.
+- AR06: UPower active 80 with kernel 100: **blocked**, no silent replacement. PASS.
+- AR07: UPower active 80 with kernel 80: **satisfied**, no write or false conflict warning. PASS.
+- AR08: UPower active but unknown kernel readback: **blocked**. PASS.
+- AR09: Firmware-only active and numeric request: **blocked**. PASS.
+- AR10: Firmware disabled with numeric target: sysfs apply permitted. PASS.
+- AR11: Requested start+stop require start/end configured and observed agreement to consider `satisfied`. PASS.
+- AR12: Conflicting UPower preset while kernel coincident: **blocked**. PASS.
+- AR13: Standard kernel attribute preferred over Asus legacy module; vendor fallback when standard attribute missing. PASS.
+- AR14: Explicit IdeaPad conservation chooses the correct specialized writer (also with both ideapad modules loaded). PASS at latest revision (re-run pending).
+- AR15: If an actual UPower owner exists, legacy vendor application is blocked via shared daemon preflight. PASS.
+- AR16: Firmware operation with UPower already active is not considered satisfied merely by coincident numeric thresholds. PASS.
+- AR17: No supported writer and a failed kernel write cause no automatic fallback to another backend. PASS.
+- AR18: A genuine newer UPower daemon/firmware transaction, absence of UPower service vs timeout, conflict with TLP, existing vendor start/end partial writes and physical Samsung charge effects remain **unverified**.
+
