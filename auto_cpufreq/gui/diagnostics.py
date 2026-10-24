@@ -46,7 +46,7 @@ class GuiDiagnostics(SessionDiagnostics):
         self._summary = {}
         self._last_summary = time.monotonic()
         self._error_callback = None
-        self.last_error = None
+        self._last_gui_error = None
 
         if self._read_preference():
             try:
@@ -78,7 +78,7 @@ class GuiDiagnostics(SessionDiagnostics):
     def set_error_callback(self, callback):
         with self._lock:
             self._error_callback = callback
-            error = self.last_error
+            error = self._last_gui_error
         if callback is not None and error is not None:
             self._notify_error(error)
 
@@ -97,9 +97,9 @@ class GuiDiagnostics(SessionDiagnostics):
         super()._report_error(error)
         message = f"Unable to write GUI debug log: {error}"
         with self._lock:
-            if self.last_error == message:
+            if self._last_gui_error == message:
                 return
-            self.last_error = message
+            self._last_gui_error = message
         self._notify_error(message)
 
     def attach_mainloop(self, glib):
@@ -202,7 +202,7 @@ class GuiDiagnostics(SessionDiagnostics):
             self._last_summary = time.monotonic()
             self._summary = {}
             self._stall_reported = False
-            self.last_error = None
+            self._last_gui_error = None
         self.info("GUI session=%s", os.environ.get("XDG_SESSION_TYPE", "unknown"))
         self._start_heartbeat()
         stop = Event()
