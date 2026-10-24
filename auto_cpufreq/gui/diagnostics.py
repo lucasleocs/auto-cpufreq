@@ -41,6 +41,7 @@ class GuiDiagnostics(SessionDiagnostics):
         self._main_thread_id = main_thread().ident
         self._stall_reported = False
         self._watchdog_stop = None
+        self._watchdog_thread = None
         self._lock = Lock()
         self._summary = {}
         self._last_summary = time.monotonic()
@@ -190,6 +191,12 @@ class GuiDiagnostics(SessionDiagnostics):
             self._check_stall()
 
     def _activate(self):
+        if (
+            self._watchdog_thread is not None
+            and self._watchdog_thread.is_alive()
+        ):
+            raise OSError("Previous GTK diagnostic watchdog is still stopping")
+        self._watchdog_thread = None
         super()._activate()
         with self._lock:
             self._last_summary = time.monotonic()
@@ -199,11 +206,17 @@ class GuiDiagnostics(SessionDiagnostics):
         self.info("GUI session=%s", os.environ.get("XDG_SESSION_TYPE", "unknown"))
         self._start_heartbeat()
         stop = Event()
-        self._watchdog_stop = stop
-        Thread(
+        worker = Thread(
             target=self._watchdog, args=(stop,), daemon=True,
             name="gui-debug-watchdog",
-        ).start()
+        )
+        try:
+            worker.start()
+        except RuntimeError:
+            self._deactivate()
+            raise
+        self._watchdog_stop = stop
+        self._watchdog_thread = worker
 
     def _deactivate(self):
         if not self.enabled:
@@ -212,6 +225,12 @@ class GuiDiagnostics(SessionDiagnostics):
         if self._watchdog_stop is not None:
             self._watchdog_stop.set()
             self._watchdog_stop = None
+        worker = self._watchdog_thread
+        if worker is not None and worker.is_alive():
+            worker.join(timeout=0.2)
+        # Retain the reference while a slow watchdog is still alive.
+        if worker is not None and not worker.is_alive():
+            self._watchdog_thread = None
         if self._heartbeat_id is not None and self._glib is not None:
             self._glib.source_remove(self._heartbeat_id)
             self._heartbeat_id = None
