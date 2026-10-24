@@ -46,8 +46,11 @@ build_release() {
     mkdir -p "$release/venv/bin" "$release/share/scripts" "$release/share/images"
     cat > "$release/venv/bin/python" <<EOS
 #!/bin/sh
-[ "\$1" = "-c" ] || exit 41
-printf '%s\n' "$MOCK_VERSION"
+if [ "\$1" = "-c" ]; then
+    printf '%s\n' "$MOCK_VERSION"
+else
+    exec "\$@"
+fi
 EOS
     cat > "$release/venv/bin/auto-cpufreq" <<EOS
 #!/bin/sh
