@@ -7,8 +7,10 @@ No privileged access, GUI toolkit, psutil or energy-policy dependencies.
 from dataclasses import dataclass
 import os
 from pathlib import Path
-from threading import Event, Lock, Thread
+import sys
+from threading import Event, Lock, Thread, enumerate as enumerate_threads
 import time
+import traceback
 
 
 CLOCK_TICKS = os.sysconf("SC_CLK_TCK") if hasattr(os, "sysconf") else 100
@@ -151,6 +153,23 @@ class ProcessHealthSampler:
         self._read_errors = 0
         self._last_read_error_log = None
 
+    def _log_hot_python_thread(self, tid):
+        if tid is None:
+            return
+        # Native TIDs are not Python frame IDs. Resolve a live Python
+        # Thread object to its interpreter ident before looking up frames.
+        for thread in enumerate_threads():
+            if thread.native_id != tid or thread.ident is None:
+                continue
+            frame = sys._current_frames().get(thread.ident)
+            if frame is not None:
+                stack = "".join(traceback.format_stack(frame, limit=16))
+                self.log.warning(
+                    "High CPU Python thread stack: tid=%d name=%s\\n%s",
+                    tid, thread.name, stack,
+                )
+            return
+
     def observe(self, current):
         if self._last_summary is None:
             self._last_summary = current.monotonic
@@ -178,6 +197,7 @@ class ProcessHealthSampler:
                     health.hottest_thread_percent, health.rss_mib,
                     health.threads, health.fds,
                 )
+                self._log_hot_python_thread(health.hottest_tid)
         else:
             self._above = 0
             if self._in_episode:
