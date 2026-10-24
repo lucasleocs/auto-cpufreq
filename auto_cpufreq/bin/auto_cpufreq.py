@@ -6,7 +6,6 @@
 
 # core import
 import sys, time, os
-import logging
 from subprocess import run
 
 from auto_cpufreq.battery_scripts.battery import *
@@ -21,10 +20,7 @@ from auto_cpufreq.modules.system_info import (
 from auto_cpufreq.modules.system_monitor import ViewType, SystemMonitor
 # import everything from power_helper, including bluetooth_disable and bluetooth_enable
 from auto_cpufreq.power_helper import *
-from threading import Event, Thread
-from auto_cpufreq.modules.thread_output import ThreadSelectiveStdout
-
-_LOG = logging.getLogger(__name__)
+from auto_cpufreq.modules.live_session import LiveModeSession
 
 @click.command()
 @click.option("--monitor", is_flag=True, help="Monitor and see suggestions for CPU optimizations")
@@ -116,80 +112,38 @@ def main(monitor, live, daemon, install, update, remove, force, turbo, config, s
             running_daemon_check()
             root_check()
             start_battery_daemon()
-            if IS_INSTALLED_WITH_SNAP:
-                gnome_power_detect_snap()
-                tlp_service_detect_snap()
-            else:
-                gnome_power_detect_live()
-                tuned_stop_live()
-                tlp_service_detect()
-            
-            if IS_INSTALLED_WITH_SNAP or tlp_stat_exists or (systemctl_exists and not bool(gnome_power_status)):
+            gnome_power_detect_live()
+            tlp_service_detect()
+
+            if tlp_stat_exists or (systemctl_exists and not bool(gnome_power_status)):
                 try:
                     input("press Enter to continue or Ctrl + c to exit...")
                 except KeyboardInterrupt:
-                    conf.stop_watching()
                     sys.exit(0)
 
-            gnome_power_stop_live()
-            cpufreqctl()
-            # The old NullWriter assignment replaced stdout for all threads,
-            # including Urwid's main loop. Filter only this worker's prints.
-            live_stop = Event()
-            prior_stdout = sys.stdout
-            live_stdout = ThreadSelectiveStdout(prior_stdout)
-            started = False
-            cleaned = False
-
-            def live_daemon():
-                with live_stdout.silence_current_thread():
-                    try:
-                        while not live_stop.wait(1):
-                            set_autofreq()
-                    except Exception:
-                        _LOG.exception("Live policy worker terminated unexpectedly")
-
-            def live_daemon_off():
-                nonlocal cleaned
-                if cleaned:
-                    return
-                cleaned = True
-                live_stop.set()
-                try:
-                    if started:
-                        thread.join(timeout=5)
-                        if thread.is_alive():
-                            # Do not start competing energy services while
-                            # a worker might still apply the previous policy.
-                            raise RuntimeError(
-                                "Live policy worker is still running; "
-                                "energy-service restoration is unsafe"
-                            )
-                    try:
-                        gnome_power_start_live()
-                    finally:
-                        try:
-                            tuned_start_live()
-                        finally:
-                            cpufreqctl_restore()
-                finally:
-                    if sys.stdout is live_stdout:
-                        sys.stdout = prior_stdout
-                    conf.stop_watching()
-
-            thread = Thread(target=live_daemon, daemon=True,
-                            name="auto-cpufreq-live-policy")
-            sys.stdout = live_stdout
+            # The session records rollback steps before attempting to stop a
+            # competing service. Cleanup remains retryable on partial failure.
+            session = LiveModeSession(
+                policy=set_autofreq,
+                service_steps=(
+                    ("TuneD", tuned_stop_live, tuned_start_live),
+                    ("power-profiles-daemon", gnome_power_stop_live,
+                     gnome_power_start_live),
+                    ("cpufreqctl helper", cpufreqctl, cpufreqctl_restore),
+                ),
+                watch_start=lambda: conf.notifier.start(),
+                watch_stop=conf.stop_watching,
+            )
             try:
-                conf.notifier.start()
-                thread.start()
-                started = True
+                session.prepare()
+                session.start()
                 monitor = SystemMonitor(
-                    type=ViewType.LIVE, diagnostic_log=diagnostic_log
+                    type=ViewType.LIVE, diagnostic_log=diagnostic_log,
+                    policy_status=lambda: session.status,
                 )
-                monitor.run(on_quit=live_daemon_off)
+                monitor.run(on_quit=session.close)
             finally:
-                live_daemon_off()
+                session.close()
         elif daemon:
             config_info_dialog()
             root_check()
@@ -355,7 +309,7 @@ def main(monitor, live, daemon, install, update, remove, force, turbo, config, s
             config_info_dialog()
             root_check()
             battery_get_thresholds()
-            cpufreqctl()
+            # Diagnostics must not deploy or alter a system helper.
             footer()
             print_system_report()
             print()
