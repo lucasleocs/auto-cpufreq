@@ -149,6 +149,35 @@ class FrontendPolishTests(unittest.TestCase):
                             )
                             self.assertIn(status, text)
 
+    def test_log_dialog_reports_missing_file_while_enabled(self):
+        from tempfile import TemporaryDirectory
+        from gi.repository import Gtk
+        from auto_cpufreq.gui import objects
+
+        with TemporaryDirectory() as tmp:
+            path = Path(tmp) / "session-not-created.log"
+            with patch.object(
+                objects, "diagnostics",
+                SimpleNamespace(log_path=path, enabled=True)
+            ):
+                with patch.object(
+                    objects.Gtk, "MessageDialog"
+                ) as dialog_class:
+                    dialog_class.return_value.run.return_value = (
+                        Gtk.ResponseType.CLOSE
+                    )
+                    objects.DropDownMenu._show_debug_log_location(
+                        None, None, None
+                    )
+                    detail = (
+                        dialog_class.return_value
+                        .format_secondary_text.call_args.args[0]
+                    )
+                    self.assertIn(
+                        "Log file unavailable. Check for logging errors.",
+                        detail,
+                    )
+
     def test_log_folder_missing_hint_explains_how_to_create_it(self):
         from tempfile import TemporaryDirectory
         from auto_cpufreq.gui import objects
