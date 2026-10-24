@@ -1,10 +1,12 @@
 """Urwid errors and battery semantics without a real terminal or power writes."""
+import threading
+import time
 from queue import SimpleQueue
 from types import SimpleNamespace
 import unittest
 
 from bench_urwid_render import load_monitor, report
-from auto_cpufreq.modules.report_refresh import RefreshResult
+from auto_cpufreq.modules.report_refresh import RefreshResult, ReportRefreshCoordinator
 
 
 SystemMonitor, ViewType = load_monitor()
@@ -44,6 +46,43 @@ class UrwidConsistencyTests(unittest.TestCase):
         monitor._refresh_coordinator = FakeCoordinator()
         monitor._refresh_results = SimpleQueue()
         return monitor
+
+    def test_periodic_urwid_ticks_do_not_queue_busy_successors(self):
+        monitor = self.make()
+        started = threading.Event()
+        release = threading.Event()
+        collected, results, alarms = [], [], []
+        monitor.loop = SimpleNamespace(
+            set_alarm_in=lambda interval, callback: alarms.append(interval)
+        )
+        monitor._refresh_ready = lambda _data: True
+
+        def collect():
+            collected.append(1)
+            started.set()
+            release.wait(timeout=3)
+            return "sample"
+
+        coordinator = ReportRefreshCoordinator(collect, results.append)
+        monitor._refresh_coordinator = coordinator
+        self.addCleanup(coordinator.close)
+        try:
+            monitor.update(None, {})
+            self.assertTrue(started.wait(timeout=2))
+            for _ in range(20):
+                monitor.update(None, {})
+            self.assertEqual(collected, [1])
+            release.set()
+            end = time.monotonic() + 2
+            while not results and time.monotonic() < end:
+                time.sleep(0.01)
+            self.assertEqual(len(results), 1)
+            self.assertTrue(coordinator.acknowledge(results[0].generation))
+            self.assertFalse(coordinator.in_progress)
+            self.assertEqual(len(collected), 1)
+            self.assertTrue(alarms)
+        finally:
+            release.set()
 
     def test_battery_uses_same_unavailable_unknown_semantics_as_gtk(self):
         monitor = self.make()
