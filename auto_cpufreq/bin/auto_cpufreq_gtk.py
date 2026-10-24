@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 import gi
 gi.require_version("Gtk", "3.0")
-from gi.repository import Gtk, GLib
+from gi.repository import Gdk, Gtk, GLib
 
 from auto_cpufreq.config.config import config, find_config_file
 from auto_cpufreq.gui.app import ToolWindow
@@ -13,6 +13,13 @@ def main():
     try:
         config.set_path(find_config_file(None))
         GLib.set_prgname("auto-cpufreq-gtk")
+        display = Gdk.Display.get_default()
+        if display is not None:
+            diagnostics.info(
+                "GDK backend=%s display=%s",
+                display.__gtype__.name,
+                display.get_name(),
+            )
         win = ToolWindow()
         win.connect("destroy", Gtk.main_quit)
         win.show_all()
