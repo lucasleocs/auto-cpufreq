@@ -404,6 +404,52 @@ class RefreshCoordinatorTests(unittest.TestCase):
         one.acknowledge(first_results[0].generation)
         two.acknowledge(second_results[0].generation)
 
+    def test_blocked_closed_view_does_not_spawn_replacement_worker(self):
+        entered, release, next_started = (
+            threading.Event(), threading.Event(), threading.Event()
+        )
+        stale_results, new_results = [], []
+        concurrent, running = [], []
+        lock = threading.Lock()
+
+        def blocked_read():
+            with lock:
+                running.append("old")
+                concurrent.append(len(running))
+            entered.set()
+            release.wait(timeout=3)
+            with lock:
+                running.remove("old")
+            return "obsolete"
+
+        def new_read():
+            with lock:
+                running.append("new")
+                concurrent.append(len(running))
+            next_started.set()
+            with lock:
+                running.remove("new")
+            return "new snapshot"
+
+        old = ReportRefreshCoordinator(blocked_read, stale_results.append)
+        new = ReportRefreshCoordinator(new_read, new_results.append)
+        self.addCleanup(old.close)
+        self.addCleanup(new.close)
+        try:
+            self.assertTrue(old.request())
+            self.assertTrue(entered.wait(timeout=2))
+            old.close()  # Cannot cancel a blocking kernel read.
+            self.assertTrue(new.request())
+            self.assertFalse(next_started.wait(timeout=0.10))
+            self.assertEqual(max(concurrent), 1)
+            release.set()
+            self.assertTrue(wait_until(lambda: len(new_results) == 1))
+            self.assertEqual(stale_results, [])
+            self.assertEqual(max(concurrent), 1)
+            self.assertTrue(new.acknowledge(new_results[0].generation))
+        finally:
+            release.set()
+
     def test_close_queued_view_never_starts_collection(self):
         entered, release = threading.Event(), threading.Event()
         queued_calls = []
