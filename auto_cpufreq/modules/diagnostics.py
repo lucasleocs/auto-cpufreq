@@ -34,6 +34,18 @@ def _xdg_path(variable, fallback):
     return Path(value) if value.startswith("/") else Path.home() / fallback
 
 
+def cli_state_directory():
+    """Keep sudo-run diagnostics out of the invoking user's home.
+
+    For root, ignore inherited HOME/XDG_STATE_HOME and use the actual
+    root account home. No directory is created until logging is enabled.
+    """
+    if os.geteuid() == 0:
+        import pwd
+        return Path(pwd.getpwuid(0).pw_dir) / ".local/state/auto-cpufreq"
+    return _xdg_path("XDG_STATE_HOME", ".local/state") / "auto-cpufreq"
+
+
 def _is_running(pid):
     try:
         os.kill(pid, 0)
