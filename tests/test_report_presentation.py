@@ -69,6 +69,24 @@ class PresentationTests(unittest.TestCase):
         self.assertEqual(p.battery.status.availability, Availability.UNAVAILABLE)
         self.assertEqual(p.battery.charge_stop.text, "Unavailable")
 
+    def test_no_physical_battery_is_distinct_from_ac_connection(self):
+        battery_without_device = battery(
+            is_present=False, is_charging=None, is_ac_plugged=True,
+            battery_level=None,
+        )
+        result = interpret_battery(battery_without_device)
+        self.assertEqual(result.status.text, "No battery detected")
+        self.assertEqual(result.status.availability, Availability.UNAVAILABLE)
+        self.assertEqual(result.level.text, "Unavailable")
+        self.assertIs(battery_without_device.is_ac_plugged, True)
+
+        # Legacy BatteryInfo-like snapshots without this attribute still
+        # follow their existing charging/AC semantics.
+        self.assertEqual(
+            interpret_battery(battery(is_ac_plugged=True)).status.text,
+            "Not charging",
+        )
+
     def test_zero_threshold_remains_valid(self):
         p = present_report(report())
         self.assertEqual(p.battery.charge_start.text, "0")
