@@ -143,6 +143,18 @@ Previous PASS results for verbose labels and private-bus scenarios do **not** va
 - R19: Battery wattage is labeled as **battery power**, not total CPU/system power; 0.00 W with AC is valid, per issue #974.
 - R20: No CPU governor/AC detection change; no modification to sysfs charge limits or UPower `EnableChargeThreshold()` in telemetry.
 
+## Experimental compact implementation CI verification
+
+Temporary implementation: `tmp/upower-compact-validation-20261023` @ `35de5dad73dfd37b44c3deab07bb8785bba1d65d`.
+
+- Python 3.9/3.12 tests: PASS (run 40046018302).
+- Isolated pip installation plus GTK on Ubuntu Xvfb: PASS (run 40046018280).
+- Private D-Bus with `EnumerateDevices`/`GetAll` and GTK/Stats: PASS for all nine scenarios (run 40046018274): `end-only`, `start-end`, `firmware`, `legacy`, `charging-55`, `reached-80`, `full-100`, `disabled`, `firmware-disabled`. These mock scenarios test the external D-Bus behavior; no actual newer UPower service/hardware threshold writing was used.
+- Linux Build: PASS (run 40046018291).
+- Nix Flake: PASS (run 40046018276).
+- GTK long-source-conflict text wrapping and `EnergyRate` negative-to-magnitude normalization covered.
+- Remaining: physical GTK test for new compact layout; Snap confinement E2E not exercised; final production-only diff audit.
+
 ## Build and CI validation
 
 - Targeted data-model tests, with injected D-Bus and sysfs fakes.

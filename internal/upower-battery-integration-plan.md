@@ -100,6 +100,27 @@ If start hysteresis is supported (e.g. start 75/stop 80), a machine at 79% on AC
 4. **Private-bus scenario tests:** extend temporary real-D-Bus and Xvfb lab to active/disabled numeric, 100%-before-enable, firmware active/disabled, missing enabled status, contradictory kernel readback, 79%-within-hysteresis and no threshold API.
 5. No fan-speed fix: Fn+F11 switched GalaxyMint to low-power, producing 0 RPM; restored other profiles report RPM. That previous investigation is closed.
 
+## Compact UPower implementation — verified in temporary CI (2026-10-23)
+
+**Temporary implementation only:** `tmp/upower-compact-validation-20261023` commit `35de5dad73dfd37b44c3deab07bb8785bba1d65d`. This revision implements the compact presentation described above; no production/final PR has been prepared or merged.
+
+- Added `BatteryThresholdDisplay` and `battery_threshold_display()` in `modules/system_info.py`, reused by the GTK `SystemReportView`, legacy `BatteryInfoBox` and terminal `--stats`.
+- Numeric UPower limits are embedded in the corresponding start/stop threshold rows. The extra `Supported controls` and `UPower configured limits` rows are removed. Normal kernel 100% readings have no needless source suffix. Conflicting sysfs/UPower values are both retained on the same threshold row and GTK wraps long text.
+- UPower-capable but disabled: `Charge limit: Supported (disabled)`; firmware-only: `Charge limit: Firmware managed (active/disabled/state unknown)`, hiding meaningless numeric start/stop rows. UPower 1.90.3 retains the regular layout. GTK has no write controls.
+- `EnergyRate` accepts finite positive/negative D-Bus watt readings and normalizes to a nonnegative displayed magnitude while keeping the UPower state authoritative. This addresses the signed-rate API and retains 0.00 W as valid battery-flow data rather than system power.
+- Missing start/stop thresholds render `Unavailable` in terminal and GTK; no change to the CPU or AC policy and no writes to threshold attributes.
+
+**Passed GitHub Actions at the reviewed revision:**
+- Python 3.9/3.12 unit tests: https://github.com/lucasleocs/auto-cpufreq/actions/runs/40046018302
+- Installed-package smoke and real GTK under Xvfb: https://github.com/lucasleocs/auto-cpufreq/actions/runs/40046018280
+- Private-D-Bus mock UPower + end-to-end GTK/terminal, nine cases: https://github.com/lucasleocs/auto-cpufreq/actions/runs/40046018274
+- Linux Build: https://github.com/lucasleocs/auto-cpufreq/actions/runs/40046018291
+- Nix Flake: https://github.com/lucasleocs/auto-cpufreq/actions/runs/40046018276
+
+The tests ran on GitHub-hosted Ubuntu virtual machines, using a private D-Bus and Xvfb for GTK. These **do not** prove operation with an actual newer system UPower daemon on physical hardware, and they do not validate Snap confinement end-to-end.
+
+**Still before final PR:** review dependency and packaging diff; revisit source formatting/line lengths; consider a fresh actual-GalaxyMint GTK and stats preview for the compact version, including fallback; analyze existing UPower 1.90.3 behavior, CPU-policy nonregression and multi-battery selection. Production-only changes will be copied to a separately reviewed contribution branch; all internal docs, private-bus mock, test fixtures and temporary CI workflows must be excluded.
+
 ## Code integration inventory
 
 - `auto_cpufreq/modules/system_info.py`: `BatteryInfo`, `battery_info()`, `battery_power_label()`, `get_battery_path()`, `external_power_state()`.
