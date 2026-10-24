@@ -47,7 +47,7 @@ class GtkLifecycleAuditTests(unittest.TestCase):
             ),
         )
         context = GLib.MainContext.default()
-        source_ids = []
+        sources = []
         try:
             for _ in range(32):
                 view = WIDGETS.MonitorModeView(
@@ -56,13 +56,14 @@ class GtkLifecycleAuditTests(unittest.TestCase):
                 parent.add(view)
                 source = view.refresh_id
                 self.assertIsNotNone(source)
-                self.assertIsNotNone(context.find_source_by_id(source))
-                source_ids.append(source)
+                source_object = context.find_source_by_id(source)
+                self.assertIsNotNone(source_object)
+                sources.append(source_object)
                 # Destroy invokes the view's cleanup without requiring Back.
                 view.destroy()
                 self.assertTrue(view._refresh_coordinator.closed)
                 self.assertIsNone(view.refresh_id)
-                self.assertIsNone(context.find_source_by_id(source))
+                self.assertTrue(source_object.is_destroyed())
                 # An explicit cleanup after destroy is safe.
                 view.cleanup()
             deadline = time.monotonic() + 2
@@ -80,9 +81,9 @@ class GtkLifecycleAuditTests(unittest.TestCase):
                 t.name for t in threading.enumerate()
                 if t.is_alive() and t.name == "gtk-monitor-refresh"
             ])
-            self.assertEqual(len(source_ids), 32)
-            for source in source_ids:
-                self.assertIsNone(context.find_source_by_id(source))
+            self.assertEqual(len(sources), 32)
+            for source_object in sources:
+                self.assertTrue(source_object.is_destroyed())
         finally:
             parent.destroy()
             WIDGETS.system_info = original
@@ -114,6 +115,8 @@ class GtkLifecycleAuditTests(unittest.TestCase):
         )
         timer.start()
         source = timer.source_id
+        source_object = GLib.MainContext.default().find_source_by_id(source)
+        self.assertIsNotNone(source_object)
         try:
             for _ in range(100):
                 self.assertTrue(timer._tick())
@@ -124,9 +127,7 @@ class GtkLifecycleAuditTests(unittest.TestCase):
             )
         finally:
             timer.stop()
-        self.assertIsNone(
-            GLib.MainContext.default().find_source_by_id(source)
-        )
+        self.assertTrue(source_object.is_destroyed())
 
 
 if __name__ == "__main__":
