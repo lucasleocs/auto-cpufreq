@@ -12,6 +12,9 @@ from threading import Thread
 import time
 
 from auto_cpufreq.gui.diagnostics import diagnostics
+from auto_cpufreq.modules.report_presentation import (
+    present_report, interpret_turbo, interpret_battery,
+)
 
 from auto_cpufreq.config.config import config
 from auto_cpufreq.core import check_for_update, daemon_is_running
@@ -91,30 +94,15 @@ def _set_row_visible(grid, row, visible):
 
 
 def _battery_status(battery):
-    if battery is None:
-        return "Unavailable"
-    if battery.is_charging is True:
-        return "Charging"
-    if battery.is_ac_plugged is False:
-        return "Discharging"
-    if battery.is_ac_plugged is True:
-        return "Not charging"
-    return "Unknown"
+    return interpret_battery(battery).status.text
 
 
 def _governor_status(report):
-    return report.current_gov or "Unavailable"
+    return present_report(report).governor.text
 
 
 def _turbo_status(report):
-    enabled, driver_managed = report.is_turbo_on
-
-    if enabled is None:
-        if driver_managed is True:
-            return "Driver managed"
-        return "Unavailable"
-
-    return "On" if enabled else "Off"
+    return interpret_turbo(report.is_turbo_on).text
 
 
 def _configuration_label_text():
@@ -332,6 +320,7 @@ class SystemReportView(Gtk.Box):
         self.cores_grid.show_all()
 
     def apply_report(self, report, pending_power_updates=()):
+        presentation = present_report(report)
         self.system_values["distro"].set_text(
             f"{report.distro_name} {report.distro_ver}".strip()
         )
@@ -422,64 +411,52 @@ class SystemReportView(Gtk.Box):
 
         if "governor" not in pending_power_updates:
             self.power_values["governor"].set_text(
-                _governor_status(report)
+                presentation.governor.text
             )
         self.power_values["epp"].set_text(
-            report.current_epp or "Unavailable"
+            presentation.epp.text
         )
         self.power_values["epb"].set_text(
-            report.current_epb or "Unavailable"
+            presentation.epb.text
         )
 
         hwp_available = report.current_hwp_dynamic_boost is not None
         _set_row_visible(self.power_grid, 3, hwp_available)
         if hwp_available:
             self.power_values["hwp"].set_text(
-                "On" if report.current_hwp_dynamic_boost else "Off"
+                presentation.hwp_dynamic_boost.text
             )
 
         if "turbo" not in pending_power_updates:
             self.power_values["turbo"].set_text(
-                _turbo_status(report)
+                presentation.turbo.text
             )
 
         battery = report.battery_info
         self.battery_values["status"].set_text(
-            _battery_status(battery)
+            presentation.battery.status.text
         )
         if battery is None:
             for key in ("charge", "ac", "start", "stop", "power"):
                 self.battery_values[key].set_text("Unavailable")
         else:
             self.battery_values["charge"].set_text(
-                f"{battery.battery_level}%"
-                if battery.battery_level is not None
-                else "Unavailable"
+                presentation.battery.level.text
             )
             self.battery_values["ac"].set_text(
-                "Connected"
-                if battery.is_ac_plugged is True
-                else "Disconnected"
-                if battery.is_ac_plugged is False
-                else "Unknown"
+                presentation.battery.ac.text
             )
             self.battery_values["start"].set_text(
-                str(battery.charging_start_threshold)
-                if battery.charging_start_threshold is not None
-                else "Unavailable"
+                presentation.battery.charge_start.text
             )
             self.battery_values["stop"].set_text(
-                str(battery.charging_stop_threshold)
-                if battery.charging_stop_threshold is not None
-                else "Unavailable"
+                presentation.battery.charge_stop.text
             )
             self.battery_names["power"].set_text(
                 battery_power_label(battery)
             )
             self.battery_values["power"].set_text(
-                f"{battery.power_watts:.2f} W"
-                if battery.power_watts is not None
-                else "Unavailable"
+                presentation.battery.power_watts.text
             )
 
         self.stats_values["usage"].set_text(
@@ -495,20 +472,8 @@ class SystemReportView(Gtk.Box):
         else:
             self.stats_values["load_avg"].set_text("Unavailable")
 
-        average_temp = report.cpu_avg_temp
-        if average_temp is None:
-            temperatures = [
-                core.temperature
-                for core in report.cores_info
-                if core.temperature > 0
-            ]
-            if temperatures:
-                average_temp = sum(temperatures) / len(temperatures)
-
         self.stats_values["temp"].set_text(
-            f"{average_temp:.1f} °C"
-            if average_temp is not None
-            else "Unavailable"
+            presentation.average_temperature.text
         )
 
 
