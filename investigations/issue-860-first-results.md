@@ -186,3 +186,23 @@ With auto-cpufreq --stats running in the terminal, the observer terminal reporte
 The user confirmed they closed the window before the last command. The ps results show that neither the Bash launcher nor the Python --stats process survived the terminal closure, so the reported CPU spin was not reproduced. Values from ps %CPU are lifetime averages, not instantaneous CPU utilization, so this is primarily process-lifecycle evidence. The observed S+ state indicates sleep in the foreground process group while the terminal is attached.
 
 The specific sudo auto-cpufreq --stats closure scenario described by the commenter has not yet been tested on this host. It should be checked separately, without touching the running daemon or any settings. If a process survives that experiment, record its exact PID, parent/session identifiers and per-thread CPU before selectively terminating only that PID.
+
+
+## Physical terminal close test — sudo --stats
+
+User-tested on the same Linux Mint Cinnamon X11 host, installed release 35d8015afc1b. This explicitly covers the command form named by the other #860 commenter, sudo auto-cpufreq --stats.
+
+With the terminal open, ps -eo pid,ppid,sid,stat,pcpu,etime,args reported:
+
+| PID | PPID | SID | State | ps CPU | Command |
+| --- | --- | --- | --- | --- | --- |
+| 261105 | 259923 | 259923 | S+ | 0.4% | sudo auto-cpufreq --stats |
+| 261141 | 261105 | 261141 | Ss | 0.0% | sudo auto-cpufreq --stats |
+| 261142 | 261141 | 261141 | S+ | 0.0% | /bin/bash /usr/local/bin/auto-cpufreq --stats |
+| 261143 | 261142 | 261141 | S+ | 4.0% | /opt/auto-cpufreq/current/venv/bin/python /opt/auto-cpufreq/current/venv/bin/auto-cpufreq --stats |
+
+After the terminal window was closed, the user repeated the exact process search after a five-second pause. It returned no matching --stats processes. Both sudo processes, the shell wrapper, and the Python/Urwid program were absent. No surviving process or sustained high-CPU behavior was observed.
+
+The ps %CPU measurements are averages over each process lifetime rather than sampled instantaneous CPU; they do not constitute a fine-grained CPU profile. Nevertheless, process disappearance confirms this reported post-terminal-close runaway did not occur in this case.
+
+The original problem remains an intermittent report without reproduction here. The physical GTK baseline and post-suspend sample were on X11 with a different Cinnamon version and did not include native Wayland or true hibernation. Do not describe the upstream issue as fixed or remove tests without a cause and a reproducible case. Production master remains untouched.
