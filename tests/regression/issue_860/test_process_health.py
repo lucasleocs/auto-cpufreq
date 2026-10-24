@@ -1,6 +1,6 @@
 """Deterministic read-only Linux process health sampler regression tests."""
 from pathlib import Path
-from threading import Thread
+from threading import Event, Thread
 from types import SimpleNamespace
 import tempfile
 import time
@@ -143,6 +143,58 @@ class HealthSamplerTests(unittest.TestCase):
             thread.name == "process-health-debug" and thread.is_alive()
             for thread in __import__("threading").enumerate()
         ))
+
+    def test_blocked_sampler_cannot_be_restarted_until_old_worker_exits(self):
+        logger = FakeLog()
+        entered, release = Event(), Event()
+
+        def blocking_read():
+            entered.set()
+            release.wait(timeout=3)
+            return snap(1.0, 0)
+
+        sampler = h.ProcessHealthSampler(
+            logger, read=blocking_read, interval=0.01
+        )
+        sampler.start()
+        try:
+            self.assertTrue(entered.wait(timeout=1))
+            self.assertFalse(sampler.stop())
+            self.assertTrue(sampler.is_alive())
+            with self.assertRaisesRegex(OSError, "still stopping"):
+                sampler.start()
+        finally:
+            release.set()
+        deadline = time.monotonic() + 2
+        while sampler.is_alive() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        self.assertFalse(sampler.is_alive())
+        sampler.start()
+        sampler.stop()
+
+    def test_repeated_procfs_failures_are_throttled_and_recovery_logged(self):
+        logger = FakeLog()
+        failures = [OSError("procfs hidden")] * 4
+        failures.append(snap(1.0, 0))
+
+        def read():
+            result = failures.pop(0)
+            if isinstance(result, Exception):
+                raise result
+            return result
+
+        sampler = h.ProcessHealthSampler(
+            logger, read=read, interval=0.005
+        )
+        sampler.start()
+        try:
+            deadline = time.monotonic() + 2
+            while failures and time.monotonic() < deadline:
+                time.sleep(0.01)
+        finally:
+            sampler.stop()
+        self.assertEqual(len(logger.warnings), 1)
+        self.assertIn("4 failures", logger.infos[0])
 
     def test_sampling_thread_not_created_until_enabled(self):
         sampler = h.ProcessHealthSampler(FakeLog())
