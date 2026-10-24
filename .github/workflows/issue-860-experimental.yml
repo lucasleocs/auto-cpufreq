@@ -56,7 +56,8 @@ jobs:
           /usr/bin/python3 -m venv --system-site-packages "$RUNNER_TEMP/gtk-test-env"
           "$RUNNER_TEMP/gtk-test-env/bin/pip" install 'inotify-simple==2.0.1'
       - name: Compile GTK regression test
-        run: "$RUNNER_TEMP/gtk-test-env/bin/python" -m py_compile auto_cpufreq/modules/process_health.py auto_cpufreq/modules/report_refresh.py auto_cpufreq/modules/report_presentation.py auto_cpufreq/modules/diagnostics.py auto_cpufreq/gui/diagnostics.py auto_cpufreq/gui/app.py auto_cpufreq/gui/objects.py auto_cpufreq/bin/auto_cpufreq_gtk.py tests/regression/issue_860/gtk_refresh_checks.py tests/regression/issue_860/gtk_logging_ui_checks.py
+        run: |
+          "$RUNNER_TEMP/gtk-test-env/bin/python" -m py_compile auto_cpufreq/modules/process_health.py auto_cpufreq/modules/report_refresh.py auto_cpufreq/modules/report_presentation.py auto_cpufreq/modules/diagnostics.py auto_cpufreq/gui/diagnostics.py auto_cpufreq/gui/app.py auto_cpufreq/gui/objects.py auto_cpufreq/bin/auto_cpufreq_gtk.py tests/regression/issue_860/gtk_refresh_checks.py tests/regression/issue_860/gtk_logging_ui_checks.py
       - name: Exercise GLib refresh and worker cleanup
         run: xvfb-run -a "$RUNNER_TEMP/gtk-test-env/bin/python" -m unittest discover -s tests/regression/issue_860 -p 'gtk_*_checks.py' -v
       - name: Benchmark GTK row rebuild (synthetic baseline)
