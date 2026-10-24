@@ -6,6 +6,7 @@
 
 # core import
 import sys, time, os
+import logging
 from subprocess import run
 
 from auto_cpufreq.battery_scripts.battery import *
@@ -20,7 +21,10 @@ from auto_cpufreq.modules.system_info import (
 from auto_cpufreq.modules.system_monitor import ViewType, SystemMonitor
 # import everything from power_helper, including bluetooth_disable and bluetooth_enable
 from auto_cpufreq.power_helper import *
-from threading import Thread
+from threading import Event, Thread
+from auto_cpufreq.modules.thread_output import ThreadSelectiveStdout
+
+_LOG = logging.getLogger(__name__)
 
 @click.command()
 @click.option("--monitor", is_flag=True, help="Monitor and see suggestions for CPU optimizations")
@@ -130,36 +134,62 @@ def main(monitor, live, daemon, install, update, remove, force, turbo, config, s
 
             gnome_power_stop_live()
             cpufreqctl()
+            # The old NullWriter assignment replaced stdout for all threads,
+            # including Urwid's main loop. Filter only this worker's prints.
+            live_stop = Event()
+            prior_stdout = sys.stdout
+            live_stdout = ThreadSelectiveStdout(prior_stdout)
+            started = False
+            cleaned = False
+
             def live_daemon():
-                # Redirect stdout to suppress prints
-                class NullWriter:
-                    def write(self, _): pass
-                    def flush(self): pass
-                try:
-                    sys.stdout = NullWriter()
-                    
-                    while True:
-                        time.sleep(1)
-                        set_autofreq()
-                except KeyboardInterrupt:
-                    raise
-                except Exception:
-                    pass
-            
+                with live_stdout.silence_current_thread():
+                    try:
+                        while not live_stop.wait(1):
+                            set_autofreq()
+                    except Exception:
+                        _LOG.exception("Live policy worker terminated unexpectedly")
+
             def live_daemon_off():
-                gnome_power_start_live()
-                tuned_start_live()
-                cpufreqctl_restore()
-                conf.stop_watching()
-            
-            thread = Thread(target=live_daemon, daemon=True)
-            thread.start()
-            
-            monitor = SystemMonitor(type=ViewType.LIVE, diagnostic_log=diagnostic_log)
+                nonlocal cleaned
+                if cleaned:
+                    return
+                cleaned = True
+                live_stop.set()
+                try:
+                    if started:
+                        thread.join(timeout=5)
+                        if thread.is_alive():
+                            # Do not start competing energy services while
+                            # a worker might still apply the previous policy.
+                            raise RuntimeError(
+                                "Live policy worker is still running; "
+                                "energy-service restoration is unsafe"
+                            )
+                    try:
+                        gnome_power_start_live()
+                    finally:
+                        try:
+                            tuned_start_live()
+                        finally:
+                            cpufreqctl_restore()
+                finally:
+                    if sys.stdout is live_stdout:
+                        sys.stdout = prior_stdout
+                    conf.stop_watching()
+
+            thread = Thread(target=live_daemon, daemon=True,
+                            name="auto-cpufreq-live-policy")
+            sys.stdout = live_stdout
             try:
+                thread.start()
+                started = True
+                monitor = SystemMonitor(
+                    type=ViewType.LIVE, diagnostic_log=diagnostic_log
+                )
                 monitor.run(on_quit=live_daemon_off)
             finally:
-                conf.stop_watching()
+                live_daemon_off()
         elif daemon:
             config_info_dialog()
             root_check()
