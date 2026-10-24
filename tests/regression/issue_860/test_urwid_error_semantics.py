@@ -84,6 +84,42 @@ class UrwidConsistencyTests(unittest.TestCase):
         finally:
             release.set()
 
+    def test_urwid_periodic_alarm_survives_broken_diagnostics(self):
+        monitor = self.make()
+        scheduled = []
+        monitor.loop = SimpleNamespace(
+            set_alarm_in=lambda seconds, callback: scheduled.append(
+                (seconds, callback)
+            ) or object(),
+        )
+        monitor._refresh_ready = lambda _data: True
+        monitor._refresh_coordinator.request_age_seconds = lambda: 25
+        monitor._refresh_coordinator.request_if_idle = lambda: False
+        monitor._diagnostics = SimpleNamespace(
+            warning=lambda *_args: (_ for _ in ()).throw(
+                OSError("diagnostic writer unavailable")
+            )
+        )
+        monitor.update(None, {})
+        self.assertEqual(len(scheduled), 1)
+        self.assertEqual(scheduled[0][0], 2)
+        self.assertIs(scheduled[0][1].__func__, type(monitor).update)
+
+    def test_urwid_periodic_alarm_survives_request_failure(self):
+        monitor = self.make()
+        scheduled = []
+        monitor.loop = SimpleNamespace(
+            set_alarm_in=lambda sec, callback: scheduled.append(sec)
+            or object(),
+        )
+        monitor._refresh_ready = lambda _data: True
+        monitor._refresh_coordinator.request_age_seconds = lambda: None
+        monitor._refresh_coordinator.request_if_idle = lambda: (
+            _ for _ in ()
+        ).throw(RuntimeError("thread unavailable"))
+        monitor.update(None, {})
+        self.assertEqual(scheduled, [2])
+
     def test_battery_uses_same_unavailable_unknown_semantics_as_gtk(self):
         monitor = self.make()
         sample = report(4)
