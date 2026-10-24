@@ -134,13 +134,15 @@ Only devices with an Intel, AMD, or ARM CPU are supported. This tool was develop
 
 ## Installing auto-cpufreq
 
+**For a normal installation, you do not need to install Python libraries manually.** Choose one of the methods below. On supported distributions, the source installer obtains the required system packages and installs the project's Python dependencies automatically. Distribution packages manage their dependencies through their respective package managers. The manual Python and Poetry commands further down are intended for development or the separate Snap-specific helper, not for regular installation.
+
 ### auto-cpufreq-installer
 
 The source installer automatically handles several major Linux distribution families, including Debian/Ubuntu (and derivatives such as Linux Mint), Fedora/RHEL, Arch-based distributions, openSUSE, Void Linux, and Solus. Other recognized derivatives can use the installation path of their declared base distribution.
 
-Source installation requires a distribution-provided Python 3.9 or newer. Enterprise Linux 8 uses its Python 3.9 stream; newer Enterprise Linux releases use the distribution's default Python 3.
+The installer installs Python through the distribution's package manager when needed and checks for Python 3.9 or newer. If the distribution cannot provide a compatible Python version, installation stops with an error. Enterprise Linux 8 uses its Python 3.9 stream; newer Enterprise Linux releases use the distribution's default Python 3.
 
-The installer automatically installs system dependencies and creates each source installation in a dedicated virtual environment under `/opt/auto-cpufreq/releases`. It verifies a new installation before atomically selecting it through `/opt/auto-cpufreq/current`; an incomplete installation does not replace the working one.
+It also installs system dependencies, creates a dedicated virtual environment under `/opt/auto-cpufreq/releases`, and installs the Python dependencies there. It verifies a new installation before atomically selecting it through `/opt/auto-cpufreq/current`; an incomplete installation does not replace the working one.
 
 NixOS uses the native Nix integration described below instead of the source installer.
 
@@ -340,28 +342,21 @@ auto-cpufreq makes all decisions automatically based on various factors such as 
 
 ### 1: power_helper.py script (Snap package install **only**)
 
-When installing auto-cpufreq via [auto-cpufreq-installer](#auto-cpufreq-installer), if it detects the [GNOME Power Profiles service](https://twitter.com/fooctrl/status/1467469508373884933) is running, it will automatically disable it. Otherwise, that daemon will cause conflicts and various other performance issues. 
+**This is a manual workaround for Snap installations, not a prerequisite for installing auto-cpufreq.** The regular [source installer](#auto-cpufreq-installer) handles conflicts with GNOME Power Profiles when setting up the daemon, so source-install users do not need to run this helper or install its Python dependencies separately.
 
-However, when auto-cpufreq is installed as a Snap package it's running as part of a container with limited permissions, hence it's *highly recommended* to disable the GNOME Power Profiles daemon using the `power_helper.py` script.
+Snap confinement limits changes to host services. If GNOME Power Profiles needs to be disabled for a Snap installation, the [`power_helper.py`](https://github.com/AdnanHodzic/auto-cpufreq/blob/master/auto_cpufreq/power_helper.py) script can be run manually **outside the Snap**.
 
-**Please Note:**<br>
-The [`power_helper.py`](https://github.com/AdnanHodzic/auto-cpufreq/blob/master/auto_cpufreq/power_helper.py) script is located within the auto-cpufreq repo at `auto_cpufreq/power_helper.py`. In order to access it, first clone
-the repository:
-
-`git clone https://github.com/AdnanHodzic/auto-cpufreq`
-
-The helper requires the project's Python dependencies, including `psutil` and
-`inotify-simple`. Install them in an isolated development environment rather
-than modifying system Python with `--break-system-packages`. For example,
-from the cloned repository with Poetry installed:
+For this advanced procedure, use a source checkout and an isolated Poetry environment rather than installing Python packages globally. With Git and Poetry available, run:
 
 ```bash
+git clone https://github.com/AdnanHodzic/auto-cpufreq.git
 cd auto-cpufreq
 poetry install
 sudo "$(poetry env info --path)/bin/python" -m auto_cpufreq.power_helper --gnome_power_disable
 ```
 
-For the list of options, use the same interpreter with `--help`.
+For the list of helper options, replace `--gnome_power_disable` with `--help`.
+
 `inotify-simple` 2.0.1 is an external dependency licensed under BSD-2-Clause.
 The auto-cpufreq project remains GPL-3.0-or-later.
 
