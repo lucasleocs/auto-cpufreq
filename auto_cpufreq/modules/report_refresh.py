@@ -155,11 +155,7 @@ class ReportRefreshCoordinator:
                 if queue_if_busy:
                     self._pending = True
                 return False
-            self._generation += 1
-            generation = self._generation
-            requested_at = time.monotonic()
-            self._requested_at = requested_at
-            self._running = True
+            generation, requested_at = self._reserve_locked()
         try:
             _PROCESS_LANE.enqueue(self, generation, requested_at)
         except RuntimeError:
@@ -169,6 +165,14 @@ class ReportRefreshCoordinator:
                     self._requested_at = None
             raise
         return True
+
+    def _reserve_locked(self):
+        self._generation += 1
+        generation = self._generation
+        requested_at = time.monotonic()
+        self._requested_at = requested_at
+        self._running = True
+        return generation, requested_at
 
     def _report_dispatch_failure(self, error):
         # May be called by a worker or by the GUI main loop when queuing
@@ -234,12 +238,15 @@ class ReportRefreshCoordinator:
             ):
                 return False
             self._delivering = False
-            self._requested_at = None
             again = self._pending
             self._pending = False
+            if again:
+                generation_next, requested_next = self._reserve_locked()
+            else:
+                self._requested_at = None
         if again:
             try:
-                self.request()
+                _PROCESS_LANE.enqueue(self, generation_next, requested_next)
             except RuntimeError as error:
                 # Worker creation can fail after the previous report has
                 # already been presented. The next periodic UI tick can
