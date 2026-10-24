@@ -20,9 +20,7 @@ from auto_cpufreq.globals import (
     IS_INSTALLED_WITH_SNAP,
     POWER_SUPPLY_DIR,
 )
-from auto_cpufreq.modules.report_recommendations import (
-    evaluate_recommendations, governor_candidate, turbo_candidate,
-)
+from auto_cpufreq.modules.report_recommendations import evaluate_recommendations
 from auto_cpufreq.modules.platform_profile import (
     PlatformProfileSnapshot,
     platform_profile,
@@ -775,11 +773,12 @@ class SystemInfo:
 
     @staticmethod
     def turbo_on_suggestion(report: SystemReport | None = None) -> bool:
-        """Legacy API for callers that need a candidate, not its applicability."""
         usage = report.cpu_usage if report is not None else SystemInfo.cpu_usage()
+
         if report is not None:
-            avg_temp = report.cpu_avg_temp
-            if avg_temp is None:
+            if report.cpu_avg_temp is not None:
+                avg_temp = report.cpu_avg_temp
+            else:
                 temperatures = [
                     core.temperature
                     for core in report.cores_info
@@ -787,26 +786,32 @@ class SystemInfo:
                 ]
                 avg_temp = (
                     sum(temperatures) / len(temperatures)
-                    if temperatures else 0.0
+                    if temperatures
+                    else 0.0
                 )
         else:
             avg_temp = SystemInfo.avg_temp()
-        return turbo_candidate(usage, avg_temp)
+
+        if usage >= 20.0:
+            return True
+        elif usage <= 25 and avg_temp >= 70:
+            return False
+        return False
 
     @staticmethod
     def governor_suggestion(report: SystemReport | None = None) -> str:
-        """Keep the legacy suggested governor result for existing callers."""
         battery_info = (
-            report.battery_info if report is not None
+            report.battery_info
+            if report is not None
             else SystemInfo.battery_info()
         )
-        return governor_candidate(
-            battery_info.is_ac_plugged, AVAILABLE_GOVERNORS_SORTED
-        )
+        if battery_info.is_ac_plugged is not False:
+            return AVAILABLE_GOVERNORS_SORTED[0]
+        return AVAILABLE_GOVERNORS_SORTED[-1]
 
     @staticmethod
     def monitor_recommendations(report: SystemReport):
-        """Purely assess applicability from one snapshot, no further reads."""
+        """Read-only availability-aware suggestions from one snapshot."""
         return evaluate_recommendations(report, AVAILABLE_GOVERNORS_SORTED)
 
     def generate_system_report(self) -> SystemReport:
