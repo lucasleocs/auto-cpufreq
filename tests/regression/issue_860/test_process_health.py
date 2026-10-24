@@ -199,7 +199,7 @@ class HealthSamplerTests(unittest.TestCase):
         finally:
             sampler.stop()
         self.assertEqual(len(logger.warnings), 1)
-        self.assertIn("4 failures", logger.infos[0])
+        self.assertIn("4 failed reads", logger.infos[0])
 
     def test_sampling_thread_not_created_until_enabled(self):
         sampler = h.ProcessHealthSampler(FakeLog())
