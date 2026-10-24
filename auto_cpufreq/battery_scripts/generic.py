@@ -9,7 +9,6 @@ import os
 
 from auto_cpufreq.battery_scripts.shared import BatteryDevice
 from auto_cpufreq.globals import POWER_SUPPLY_DIR
-from auto_cpufreq.modules.battery_upower import read_upower_battery
 from auto_cpufreq.modules.system_info import SystemInfo
 
 
@@ -71,15 +70,6 @@ class GenericKernelBatteryDevice(BatteryDevice):
             return False
 
         requested = config["stop_threshold"]
-        selected = os.path.join(POWER_SUPPLY_DIR, bat)
-        upower = read_upower_battery(selected)
-        if upower and upower.charge_protection_supported and upower.charge_protection_enabled:
-            print(
-                f"WARNING: UPower reports active charge protection for {bat}; "
-                "not overriding it through sysfs"
-            )
-            return False
-
         configured_start = config["start_threshold"]
         current_start, current_stop = self.get_current_threshold(bat)
         if configured_start is not None:

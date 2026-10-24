@@ -9,6 +9,7 @@ from auto_cpufreq.battery_scripts.ideapad_laptop import IdeapadBatteryDevice
 from auto_cpufreq.battery_scripts.shared import BatteryDevice
 from auto_cpufreq.battery_scripts.generic import GenericKernelBatteryDevice
 from auto_cpufreq.modules.system_info import SystemInfo
+from auto_cpufreq.config.config import config
 
 BATTERY_APPLY_INTERVAL = 3600  # 1 hour
 
@@ -57,21 +58,32 @@ def start_battery_daemon():
 
 
 def get_battery_device():
+    """Prefer the portable standard charge-stop attribute for numeric settings.
+
+    An explicitly requested Lenovo conservation mode retains its specialized
+    manager. On machines without a writable standard stop threshold, preserve
+    existing manufacturer-specific behavior.
+    """
+    settings = config.get_config()
+    explicitly_conservation = (
+        settings.has_section("battery")
+        and settings.has_option("battery", "ideapad_laptop_conservation_mode")
+    )
+    if not explicitly_conservation:
+        battery_path = SystemInfo.get_battery_path()
+        if (battery_path
+                and os.path.isfile(os.path.join(
+                    battery_path, "charge_control_end_threshold"))):
+            dev = GenericKernelBatteryDevice()
+            if dev.stop_paths:
+                return dev
+
     if lsmod("ideapad_acpi"):
         return BatteryDevice()
-    elif lsmod("ideapad_laptop"):
+    if lsmod("ideapad_laptop"):
         return IdeapadBatteryDevice()
-    elif lsmod("thinkpad_acpi"):
+    if lsmod("thinkpad_acpi"):
         return BatteryDevice()
-    elif lsmod("asus_wmi"):
+    if lsmod("asus_wmi"):
         return AsusBatteryDevice()
-
-    # Portable fallback for kernels exposing the standard battery stop
-    # threshold, including end-only machines. Preserve all vendor paths.
-    battery_path = SystemInfo.get_battery_path()
-    if not battery_path:
-        return None
-    if not os.path.isfile(os.path.join(battery_path, "charge_control_end_threshold")):
-        return None
-    device = GenericKernelBatteryDevice()
-    return device if device.stop_paths else None
+    return None

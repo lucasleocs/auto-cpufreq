@@ -5,6 +5,7 @@ from typing import Any
 
 from auto_cpufreq.config.config import config
 from auto_cpufreq.globals import POWER_SUPPLY_DIR
+from auto_cpufreq.battery_scripts.priority import resolve_charge_control
 
 # The charge_control_{start,end}_threshold files
 # are officially documented and preferred,
@@ -222,5 +223,17 @@ class BatteryDevice:
             return
 
         for bat in self.batteries:
+            # All generic and manufacturer writers pass through this single
+            # ownership check when invoked by the daemon.
+            request = resolve_charge_control(
+                os.path.join(POWER_SUPPLY_DIR, bat),
+                parsed_config["stop_threshold"],
+                parsed_config["start_threshold"],
+            )
+            if request.action == "satisfied":
+                continue
+            if request.action != "apply":
+                print(f"WARNING: skipping {bat}: {request.reason}")
+                continue
             if not self.apply_threshold_settings_to_bat(bat, parsed_config):
                 print(f"ERROR: failed to set thresholds for battery {bat}")
