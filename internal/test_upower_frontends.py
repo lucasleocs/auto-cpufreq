@@ -209,7 +209,7 @@ class GtkCompactBatteryTests(unittest.TestCase):
             view.apply_report(report(firmware))
             self.assertFalse(view.battery_names["start"].get_visible())
             self.assertFalse(view.battery_values["stop"].get_visible())
-            self.assertEqual(view.charge_limit_value.get_text(),"Firmware managed (disabled)")
+            self.assertEqual(view.charge_limit_value.get_text(),"Firmware managed (active)")
 
             view.apply_report(report(battery()))
             self.assertFalse(view.charge_limit_name.get_visible())
