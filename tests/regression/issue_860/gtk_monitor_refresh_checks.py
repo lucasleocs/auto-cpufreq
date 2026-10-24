@@ -72,8 +72,12 @@ class MonitorRefreshTests(unittest.TestCase):
     def make(self, collector):
         WIDGETS.system_info = SimpleNamespace(
             generate_system_report=collector,
-            governor_suggestion=lambda report: "powersave",
-            turbo_on_suggestion=lambda report: True,
+            monitor_recommendations=lambda report: SimpleNamespace(
+                governor=SimpleNamespace(suggested="powersave"),
+                turbo=SimpleNamespace(
+                    suggested=True if report.is_turbo_on[0] is not None else None
+                ),
+            ),
         )
         report_view = ReportView()
         view = WIDGETS.MonitorModeView(
@@ -89,8 +93,12 @@ class MonitorRefreshTests(unittest.TestCase):
     def test_actual_daemon_absent_buttons_navigate_monitor_and_back(self):
         WIDGETS.system_info = SimpleNamespace(
             generate_system_report=self.report,
-            governor_suggestion=lambda report: "powersave",
-            turbo_on_suggestion=lambda report: True,
+            monitor_recommendations=lambda report: SimpleNamespace(
+                governor=SimpleNamespace(suggested="powersave"),
+                turbo=SimpleNamespace(
+                    suggested=True if report.is_turbo_on[0] is not None else None
+                ),
+            ),
         )
         root = EntryPointWindow()
         self.addCleanup(root.destroy)
