@@ -106,12 +106,17 @@ def _turbo_status(report):
 
 
 def _configuration_label_text():
+    # The GTK process may run as a different user from the root daemon.
+    # Do not imply that this user-selected file necessarily controls it.
     prefix = (
-        "Using configuration file"
+        "GTK configuration file"
         if config.has_config()
-        else "Configuration file"
+        else "GTK configuration candidate (not found)"
     )
-    return f"{prefix}: {config.path}"
+    return (
+        f"{prefix}: {config.path} "
+        "(the daemon may use a different configuration)"
+    )
 
 
 class SystemReportView(Gtk.Box):
