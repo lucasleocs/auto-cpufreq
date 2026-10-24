@@ -225,6 +225,99 @@ class HealthSamplerTests(unittest.TestCase):
         self.assertIn("stopped after 3", logger.warnings[-1])
         sampler.stop()
 
+    def test_unexpected_failure_streak_resets_after_success(self):
+        logger = FakeLog()
+        events = [
+            RuntimeError("fault 1"), snap(1, 10),
+            RuntimeError("fault 2"), snap(2, 20),
+            RuntimeError("fault 3"), snap(3, 30),
+            RuntimeError("fault 4"), snap(4, 40),
+        ]
+
+        class FakeStop:
+            def __init__(self):
+                self.count = 0
+
+            def is_set(self):
+                return self.count >= len(events)
+
+            def wait(self, _interval):
+                self.count += 1
+                return self.is_set()
+
+        def read():
+            result = events.pop(0)
+            if isinstance(result, Exception):
+                raise result
+            return result
+
+        # Counter tracks consecutive unexpected failures, not total
+        # failures accumulated throughout a long running GUI session.
+        stop = FakeStop()
+        sampler = h.ProcessHealthSampler(logger, read=read)
+        sampler._run(stop)
+        self.assertEqual(stop.count, 8)
+        self.assertEqual(sampler._unexpected_errors_total, 4)
+        self.assertEqual(sampler._fatal_errors, 0)
+        self.assertFalse(any("stopped after" in w for w in logger.warnings))
+        self.assertEqual(sum("recovered after" in i for i in logger.infos), 4)
+
+    def test_sampling_gap_rearms_high_cpu_warning(self):
+        logger = FakeLog()
+        sampler = h.ProcessHealthSampler(
+            logger, high_threshold=40, consecutive=2,
+            summary_interval=999,
+        )
+        for sec in range(3):
+            sampler.observe(snap(sec, sec * h.CLOCK_TICKS))
+        self.assertTrue(sampler._in_episode)
+        self.assertEqual(sum("Sustained process CPU:" in w
+                             for w in logger.warnings), 1)
+        # Bad/duplicate timestamps break the measurement chain.
+        self.assertIsNone(sampler.observe(snap(2, 2 * h.CLOCK_TICKS)))
+        self.assertFalse(sampler._in_episode)
+        self.assertEqual(sampler._above, 0)
+        self.assertIsNone(sampler._previous)
+        for sec in range(3, 6):
+            sampler.observe(snap(sec, sec * h.CLOCK_TICKS))
+        self.assertEqual(sum("Sustained process CPU:" in w
+                             for w in logger.warnings), 2)
+
+    def test_procfs_error_invalidates_existing_cpu_episode(self):
+        logger = FakeLog()
+        results = [
+            snap(0, 0), snap(1, h.CLOCK_TICKS),
+            snap(2, 2 * h.CLOCK_TICKS), OSError("proc disappeared"),
+            snap(3, 3 * h.CLOCK_TICKS),
+            snap(4, 4 * h.CLOCK_TICKS), snap(5, 5 * h.CLOCK_TICKS),
+        ]
+
+        class Stop:
+            count = 0
+
+            def is_set(self):
+                return self.count >= 7
+
+            def wait(self, _):
+                self.count += 1
+                return self.is_set()
+
+        def read():
+            value = results.pop(0)
+            if isinstance(value, Exception):
+                raise value
+            return value
+
+        sampler = h.ProcessHealthSampler(
+            logger, read=read, high_threshold=40, consecutive=2,
+            summary_interval=999,
+        )
+        sampler._run(Stop())
+        self.assertEqual(sum("Sustained process CPU:" in w
+                             for w in logger.warnings), 2)
+        self.assertTrue(any("episode interrupted" in x
+                            for x in logger.infos))
+
     def test_blocked_sampler_cannot_be_restarted_until_old_worker_exits(self):
         logger = FakeLog()
         entered, release = Event(), Event()
