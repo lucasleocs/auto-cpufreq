@@ -55,12 +55,13 @@ def governor_candidate(ac_plugged, available_governors):
 
 
 def turbo_candidate(cpu_usage, average_temperature):
-    """Preserve SystemInfo's established, read-only suggestion threshold."""
-    if cpu_usage >= 20.0:
-        return True
-    if cpu_usage <= 25 and average_temperature >= 70:
-        return False
-    return False
+    """Preserve the legacy 20% CPU threshold without an inert heat branch.
+
+    The temperature argument remains for callers of the established API.
+    Historically the temperature conditional also returned False, making
+    its outcome identical to the final return.
+    """
+    return cpu_usage >= 20.0
 
 
 def _current_and_candidate(current, target):
