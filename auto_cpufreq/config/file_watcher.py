@@ -207,10 +207,6 @@ class ConfigFileWatcher:
                     changed_watch = reconcile()
                     if changed_watch:
                         notify()  # Catch files written before a parent watch existed.
-                    retry_delay = self._retry_interval
-                    if last_error is not None:
-                        _LOG.info("Configuration watcher recovered: %s", watched_dir)
-                        last_error = None
                     change_state("watching" if watched_dir == parent else "recovering")
                 except OSError as error:
                     close_notifier()
@@ -231,9 +227,16 @@ class ConfigFileWatcher:
                     report_problem("select: %s" % error)
                     close_notifier()
                     change_state("recovering")
+                    stop_event.wait(retry_delay)
+                    retry_delay = min(retry_delay * 2, self._max_retry_interval)
                     continue
                 if stop_read in readable or stop_event.is_set():
                     break
+                if healthy:
+                    retry_delay = self._retry_interval
+                    if last_error is not None:
+                        _LOG.info("Configuration watcher recovered: %s", watched_dir)
+                        last_error = None
 
                 if healthy and notifier.fileno() in readable:
                     try:
@@ -242,6 +245,8 @@ class ConfigFileWatcher:
                         report_problem("read: %s" % error)
                         close_notifier()
                         change_state("recovering")
+                        stop_event.wait(retry_delay)
+                        retry_delay = min(retry_delay * 2, self._max_retry_interval)
                         continue
                     reset_stream = False
                     for event in events:
