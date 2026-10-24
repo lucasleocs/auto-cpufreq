@@ -37,11 +37,20 @@ from threading import Thread
 @click.option("--get-state", is_flag=True, hidden=True)
 @click.option("--bluetooth_boot_off", is_flag=True, help="Turn off Bluetooth on boot")
 @click.option("--bluetooth_boot_on", is_flag=True, help="Turn on Bluetooth on boot")
+@click.option(
+    "--diagnostic-log", is_flag=True,
+    help="Record opt-in session diagnostics for --stats, --monitor or --live"
+)
 @click.option("--debug", is_flag=True, help="Show debug info (include when submitting bugs)")
 @click.option("--version", is_flag=True, help="Show currently installed version")
 @click.option("--donate", is_flag=True, help="Support the project")
 def main(monitor, live, daemon, install, update, remove, force, turbo, config, stats, pp, get_state,
-          bluetooth_boot_off, bluetooth_boot_on, debug, version, donate):
+          bluetooth_boot_off, bluetooth_boot_on, diagnostic_log, debug, version, donate):
+    if diagnostic_log and not (stats or monitor or live):
+        raise click.UsageError(
+            "--diagnostic-log requires --stats, --monitor or --live"
+        )
+
     # display info if config file is used
     config_path = find_config_file(config)
     conf.set_path(config_path)
@@ -91,7 +100,8 @@ def main(monitor, live, daemon, install, update, remove, force, turbo, config, s
                     conf.notifier.stop()
                     sys.exit(0)
             
-            monitor = SystemMonitor(suggestion=True, type=ViewType.MONITOR)
+            monitor = SystemMonitor(suggestion=True, type=ViewType.MONITOR,
+                                    diagnostic_log=diagnostic_log)
             monitor.run(on_quit=conf.notifier.stop)
         elif live:
             if IS_INSTALLED_WITH_SNAP:
@@ -143,7 +153,8 @@ def main(monitor, live, daemon, install, update, remove, force, turbo, config, s
             thread = Thread(target=live_daemon, daemon=True)
             thread.start()
             
-            monitor = SystemMonitor(type=ViewType.LIVE)
+            monitor = SystemMonitor(type=ViewType.LIVE,
+                                    diagnostic_log=diagnostic_log)
             monitor.run(on_quit=live_daemon_off)
         elif daemon:
             config_info_dialog()
@@ -272,7 +283,8 @@ def main(monitor, live, daemon, install, update, remove, force, turbo, config, s
                     conf.notifier.stop()
                     sys.exit(0)
             
-            monitor = SystemMonitor(type=ViewType.STATS)
+            monitor = SystemMonitor(type=ViewType.STATS,
+                                    diagnostic_log=diagnostic_log)
             monitor.run()
         elif pp:
             print("Platform Profile")
