@@ -1,0 +1,49 @@
+name: Frontend regression tests
+
+on:
+  push:
+    paths:
+      - "auto_cpufreq/**"
+      - "tests/**"
+      - "pyproject.toml"
+      - "poetry.lock"
+      - ".github/workflows/frontend-regression.yml"
+  pull_request:
+    paths:
+      - "auto_cpufreq/**"
+      - "tests/**"
+      - "pyproject.toml"
+      - "poetry.lock"
+      - ".github/workflows/frontend-regression.yml"
+
+jobs:
+  unittest:
+    name: Frontend unit tests (Python 3.12)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install GTK introspection runtime
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3-gi gir1.2-gtk-3.0 python3-venv
+
+      - name: Install Poetry
+        run: pipx install poetry
+
+      - name: Create Python environment using distro GI bindings
+        run: |
+          poetry config virtualenvs.options.system-site-packages true --local
+          poetry env use /usr/bin/python3
+          poetry install --no-interaction --no-ansi
+
+      - name: Run frontend regression suite
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+          XDG_CONFIG_HOME: ${{ runner.temp }}/auto-cpufreq-config
+          XDG_STATE_HOME: ${{ runner.temp }}/auto-cpufreq-state
+        run: |
+          poetry run python -m compileall -q auto_cpufreq tests
+          poetry run python -m unittest discover -s tests -p 'test_*.py' -v
