@@ -153,6 +153,38 @@ class TestDaemonReload(GenericBatteryFixture):
             ctl.tick(now=1)
         select.assert_called_once()
 
+    def test_real_config_event_reload_updates_stop_and_optout(self):
+        """Exercise the production inotify handler and config parser, not mocks."""
+        from auto_cpufreq.config.config import _Config
+        from types import SimpleNamespace
+
+        path=Path(self.dir.name)/"battery-policy.conf"
+        path.write_text(
+            "[battery]\\n"
+            "enable_thresholds = true\\n"
+            "stop_threshold = 80\\n"
+        .replace("\\\\n", "\\n"))
+        local_config=_Config()
+        with patch("auto_cpufreq.battery_scripts.battery.config",local_config),patch(
+             "auto_cpufreq.battery_scripts.shared.config",local_config):
+            local_config.set_path(str(path))
+            controller=battery.BatteryDaemonController()
+            controller.tick(now=0)
+            self.assertEqual(self.read_stop(),80)
+            path.write_text("[battery]\\nenable_thresholds = true\\nstop_threshold = 75\\n"
+                            .replace("\\\\n", "\\n"))
+            local_config.config_handler.process_IN_MODIFY(
+                SimpleNamespace(pathname=str(path)))
+            controller.tick(now=1)
+            self.assertEqual(self.read_stop(),75)
+
+            path.write_text("[battery]\\nenable_thresholds = false\\nstop_threshold = 100\\n"
+                            .replace("\\\\n", "\\n"))
+            local_config.config_handler.process_IN_MODIFY(
+                SimpleNamespace(pathname=str(path)))
+            controller.tick(now=2)
+            self.assertEqual(self.read_stop(),75)
+
     def test_failed_partial_legacy_write_is_suspended_on_following_poll(self):
         (self.bat/"charge_control_start_threshold").write_text("80")
         (self.bat/"charge_control_end_threshold").write_text("90")
