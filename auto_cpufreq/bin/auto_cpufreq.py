@@ -278,7 +278,7 @@ def main(monitor, live, daemon, install, update, remove, force, turbo, config, s
                 try:
                     input("press Enter to continue or Ctrl + c to exit...")
                 except KeyboardInterrupt:
-                    conf.notifier.stop()
+                    # Stats never starts the configuration notifier.
                     sys.exit(0)
             
             monitor = SystemMonitor(type=ViewType.STATS, diagnostic_log=diagnostic_log)
