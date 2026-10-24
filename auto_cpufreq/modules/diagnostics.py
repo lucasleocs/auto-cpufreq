@@ -23,6 +23,7 @@ RETAIN_SESSIONS = 4
 QUEUE_SIZE = 256
 _ACTIVE_LOGS = set()
 _ACTIVE_LOCK = Lock()
+_PRUNE_LOCK = Lock()
 _SESSION_FILE = re.compile(
     r"^([a-z][a-z0-9_-]*)-(\d{8})-(\d{6})-(\d+)-[0-9a-f]{8}\.log$"
 )
@@ -216,29 +217,41 @@ class SessionDiagnostics:
                     _ACTIVE_LOGS.discard(Path(session.output.baseFilename))
 
     def _prune_old_sessions(self):
-        try:
-            completed = []
-            for base in self.state_dir.glob(f"{self.component}-*.log"):
-                match = _SESSION_FILE.fullmatch(base.name)
-                if not match or match.group(1) != self.component:
-                    continue
-                with _ACTIVE_LOCK:
-                    if base in _ACTIVE_LOGS:
+        # Prevent two writers from simultaneously enumerating/unlinking
+        # the same completed files. External processes can still remove a
+        # file between stat/unlink, so individual races are nonfatal.
+        with _PRUNE_LOCK:
+            try:
+                completed = []
+                for base in self.state_dir.glob(f"{self.component}-*.log"):
+                    match = _SESSION_FILE.fullmatch(base.name)
+                    if not match or match.group(1) != self.component:
                         continue
-                pid = int(match.group(4))
-                if pid != os.getpid() and _is_running(pid):
-                    continue
-                completed.append(base)
-            completed.sort(key=lambda p: p.stat().st_mtime, reverse=True)
-            for base in completed[RETAIN_SESSIONS:]:
-                for suffix in ("", *(f".{i}" for i in range(1, LOG_BACKUPS + 1))):
+                    with _ACTIVE_LOCK:
+                        if base in _ACTIVE_LOGS:
+                            continue
+                    pid = int(match.group(4))
+                    if pid != os.getpid() and _is_running(pid):
+                        continue
                     try:
-                        base.with_name(base.name + suffix).unlink(missing_ok=True)
+                        timestamp = base.stat().st_mtime
                     except OSError:
-                        pass
-        except OSError:
-            # Retention failure must never prevent a GUI from launching.
-            pass
+                        continue
+                    completed.append((timestamp, base))
+                completed.sort(key=lambda pair: pair[0], reverse=True)
+                for _timestamp, base in completed[RETAIN_SESSIONS:]:
+                    for suffix in ("", *(f".{i}" for i in range(
+                        1, LOG_BACKUPS + 1
+                    ))):
+                        try:
+                            base.with_name(base.name + suffix).unlink(
+                                missing_ok=True
+                            )
+                        except OSError:
+                            pass
+            except OSError:
+                # Retention failure must never prevent a GUI from launching.
+                pass
 
     def _activate(self):
         if self.enabled:
