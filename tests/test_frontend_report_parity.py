@@ -354,7 +354,7 @@ class FrontendReportParityTests(unittest.TestCase):
                 )
                 self.assertIn(f"Platform profile: {current}", output)
                 self.assertIn(
-                    f"Available platform profiles"
+                    f"Available platform profiles "
                     f"({len(state.available_profiles)}): {choices}"
                     if state.choices_known
                     else "Available platform profiles: Could not be determined",
