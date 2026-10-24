@@ -52,47 +52,53 @@ Before implementing, run a small **read-only dependency/packaging spike**. Compa
 6. Normalize UPower states and kernel fallback statuses through one formatter; retain `Fully charged`, `Pending charge` and `Pending discharge` when available. If the kernel reports `Discharging` and AC is online, show its literal state when fallback is active; do not invent a power threshold to override it.
 7. Battery presentation must never change CPU governor, policy selection, AC detection, daemon decisions, or the existing charge threshold writer.
 
-## Read-only UI behavior — revised compact presentation (2026-10-23)
+## Read-only UI behavior — approved design direction, pending code (2026-10-23)
 
-**New presentation design, not yet implemented** in the UPower experimental code. Apply the same semantics to GTK, the legacy battery box if in scope, and terminal `--stats`; preserve the existing data-model/provider behavior.
+The GTK and terminal must present **what the battery is doing**, not how to edit charging settings. This compact layout supersedes earlier mockups showing three separate `Charge protection`, `Supported controls`, and `UPower configured limits` rows. The older mock lab already passed, but **that success does not validate this revised UI**.
 
-- Keep the existing rows: `Status`, `Charge`, `AC power`, `Start threshold`, `Stop threshold`, and battery power. `Charge` always means **actual state of charge**, e.g. `99%`, not the charge-control target. The label `Battery power` means watts, not the UPower service: spell that source `UPower`, not `Power`.
-- For UPower 1.90.3 or missing capability API: no extra rows and no change to the established layout; only the underlying telemetry state may improve from `Not charging` to `Fully charged`. Keep sysfs threshold readings as available.
-- If modern UPower reports a valid start/end configured limit, incorporate it beside the appropriate **threshold value**, e.g. `Stop threshold: 80% (UPower)` or `Start threshold: 75% (UPower)`, *only when the UPower protection is reported enabled and the standard-kernel reading does not contradict it*. The threshold type is already encoded in the row name: a separate `Supported controls: End threshold` row is redundant.
-- No separate `Charge protection` row in the ordinary numeric case. The enabled state is used to decide whether a UPower-configured value may be presented as in use; `disabled` must not look active. If UPower has a configured preset but disabled protection, keep the observed kernel value as primary and, only if useful, add `UPower preset: 80% (inactive)` inline with the stop threshold. Do not infer protection is enabled merely because the property exists.
-- If UPower and the kernel disagree, preserve both source-attributed facts on the **same threshold row** or a wrapped continuation: `Stop threshold: 100% (kernel) · 80% configured (UPower)`. This is not a claim that either is the verified hardware-effective charging limit; show UPower enabled/inactive within the same concise line only when needed. Do not silently replace 100 with 80. The Samsung private-bus experiment deliberately constructs this mismatch.
-- Firmware-only mode (bitmask 4, no valid numeric limits): show the description once, e.g. `Charge limit: Firmware managed (UPower)`, **not** `Charge protection: Enabled` plus another support row. If numeric start/end fields are absent, do not imply they are configurable or assume 100 is a firmware limit.
-- If no UPower/supported sysfs threshold values exist, preserve `Unavailable`. Standardize `Charging start threshold: None` in terminal stats to `Unavailable`; do not change genuine zero-valued telemetry or valid readbacks.
-- The settings bitmask identifies *types* of control, never a list of accepted percentages. No GTK editor, selector, slider, toggle, automatic writing, or model-specific logic. Use shared formatting helpers to avoid drift between GTK and terminal.
+### Stable semantics
 
-Illustrative compact output (not a literal claim about the current Samsung hardware):
+- `Charge` = current battery percentage (e.g. `55%`, `80%`, `100%`). `Stop threshold` = charge-stop target, not current charge. They remain separate.
+- `Status` = actual UPower battery state, with sysfs fallback. NEVER calculate a state from the percentage or the configured threshold. Reaching 80% might yield `Fully charged`, `Pending charge`, or another reported state; do not hardcode.
+- `Battery power` measures energy flow **through the battery**, not the laptop's total power consumption. A valid `0.00 W` while AC-connected must remain zero. This addresses the misleading `Power draw` presentation discussed in upstream issue #974 and PR #964; CPU/package power is separate.
+- The standard/legacy layout keeps `Status`, `Charge`, `AC power`, `Start threshold`, `Stop threshold`, `Battery power`. With old UPower (e.g. 1.90.3), leave layout unchanged. Normalize missing threshold values to `Unavailable` instead of the literal `None`.
+- Do not append `(kernel)` to a normal `Stop threshold: 100%` (or any ordinary sysfs value) without a conflict; the provider source is not useful there.
+- For a **valid enabled numeric** UPower stop/start threshold, present its numeric level inline, e.g. `Stop threshold: 80% (UPower)`, `Start threshold: 75% (UPower)`, **provided the other observed numeric source does not contradict it**. The suffix names the data provider, not an editable option. Do not add a redundant `Charge protection` or `Supported controls` row.
+- When the UPower **configured** threshold disagrees with the kernel **observed** threshold, preserve both explicitly on the threshold row (wrapping if necessary): `Stop threshold: 100% (kernel) · 80% configured (UPower)`. This is an exceptional diagnostic, not a statement of verified effective charge stopping, and avoids silently masking a possible mismatch.
+- When the UPower support API is present but protection is **disabled**, do not display a saved 80% preset as an active 80% stop. Show the observed kernel threshold normally (e.g. `Stop threshold: 100%`) plus one additional read-only explanatory line `Charge limit: Supported (disabled)`. If a dormant configured preset matters, allow `80% saved (inactive)` as *optional explanatory text*, not as the effective stop.
+- When supported control is **firmware-only** (settings mask 4, no valid numeric start/end limits), use one descriptive line: `Charge limit: Firmware managed (active)` or `Charge limit: Firmware managed (disabled)`, according to UPower's explicit enabled property. If enabled is absent/unknown, use `Firmware managed (state unknown)`; do not guess. Do not label the mode `Available (Firmware)` or imply the user can edit the firmware in GTK. UPower is the reporting service; firmware describes the mechanism, not a competing backend.
+- When a firmware mode and numeric type coexist (mask e.g. 6), prefer a known active numeric threshold and show firmware-specific context only if it adds important information. Never invent percentages for firmware-only mode.
+- If UPower threshold support is false or the property is absent, do not show `Charge limit: Supported`, even when a standard kernel sysfs threshold exists; the old legacy fields still show kernel values.
+- Settings mask reports control *types*, not enumerated values or editable presets. All GTK and `--stats` paths stay read-only: no buttons, toggles, sliders, helper privilege calls, sysfs writes, or UPower `EnableChargeThreshold()` invocation.
 
-```text
-Status                  Charging
-Charge                  79%
-AC power                Connected
-Start threshold         75% (UPower)
-Stop threshold          80% (UPower)
-Battery power           4.20 W
-```
+### Physical behavior at and above the stop threshold
 
-Modern end-only with divergent sources, as in the simulated GalaxyMint lab:
+An **80% charging limit does not promise active discharge to 80%**. When a user activates 80% while the battery is already 100% and AC remains plugged in, some machines keep 100%, while others/firmware may naturally discharge depending on platform behavior. Do not infer that 100% means the limit is inactive. Changing the stop target is not the same as discharging the battery. ASUS's official Battery Health Charging documentation specifically describes retaining charge above the new target while still plugged in: https://www.asus.com/br/support/faq/1032726/.
 
-```text
-Charge                  99%
-Start threshold         Unavailable
-Stop threshold          100% (kernel) · 80% configured (UPower)
-Battery power           0.00 W
-```
+Examples below are UI fixtures, not a real claim about Samsung UPower 1.90.3; battery power is illustrative and charging/status follow actual reports:
 
-Firmware-only, without a specified percentage:
+| Configuration/scenario | Charge | Status | Threshold / charge-limit presentation |
+|---|---|---|---|
+| Numeric UPower enabled, 55%, charging | 55% | Charging (if reported) | Stop threshold 80% (UPower) |
+| Numeric UPower enabled, 80%, stopped | 80% | Actual UPower state | Stop threshold 80% (UPower) |
+| Numeric UPower enabled after charge reached 100%, AC still connected | 100% | Actual UPower state | Stop threshold 80% (UPower), *even though charge remains 100%*, when kernel confirms |
+| Numeric support available but disabled | 55% | Actual UPower state | Stop threshold 100% (if kernel reports); Charge limit Supported (disabled) |
+| Firmware-only enabled, battery 55% | 55% | Actual UPower state | Charge limit Firmware managed (active); no invented stop 80% |
+| Firmware-only enabled, battery 80% | 80% | Actual UPower state | Charge limit Firmware managed (active); 80% is not evidence of fixed firmware target |
+| Firmware-only enabled after battery reached 100% | 100% | Actual UPower state | Charge limit Firmware managed (active); no forced discharge claim |
+| Firmware-only supported but disabled | 55% | Actual UPower state | Charge limit Firmware managed (disabled) |
+| Old/no UPower charging-limit API | 99% | Fully charged (when reported) | Existing start/stop sysfs fields with no extra controls |
+| Numeric UPower stop 80 configured but kernel reports 100 | Any | Actual UPower state | 100% (kernel) · 80% configured (UPower), not a silent override |
 
-```text
-Charge                  79%
-Charge limit            Firmware managed (UPower)
-```
+If start hysteresis is supported (e.g. start 75/stop 80), a machine at 79% on AC can legitimately remain **not charging** until charge falls below the start point. Always use its actual reported state. If the charger is disconnected, retain the known configured limit read-only but reflect real discharge.
 
-Prefer short, self-explanatory labels and good GTK wrapping over multiple repeated descriptive rows. Keep existing legacy UPower-unsupported output unchanged except deliberate `None` → `Unavailable` normalization. **Do not collapse actual battery percentage and the configured stopping point into an unlabeled 80%**: they are different quantities.
+### Known technical corrections before final PR
+
+1. **Signed EnergyRate:** UPower's official D-Bus Device docs state positive discharge and negative charging; the experimental `battery_upower._decode()` currently rejects all negative rates. Validate finite signed rates, preserve status, and display magnitude in W with tests for charging negative, discharging positive, zero, unexpected sign/state and fallback. UPower's other internal GLib property documentation may constrain internal values differently; test the external D-Bus contract rather than assuming.
+2. **`--stats` null formatting:** use `Unavailable` instead of `None` for missing thresholds, consistently with GTK.
+3. **Shared read-only formatter:** one source-sensitive presentation function for GTK, legacy battery box (if still used) and stats; avoid frontend-specific duplication, retain transparent conflict display and no unverified "applied" claims.
+4. **Private-bus scenario tests:** extend temporary real-D-Bus and Xvfb lab to active/disabled numeric, 100%-before-enable, firmware active/disabled, missing enabled status, contradictory kernel readback, 79%-within-hysteresis and no threshold API.
+5. No fan-speed fix: Fn+F11 switched GalaxyMint to low-power, producing 0 RPM; restored other profiles report RPM. That previous investigation is closed.
 
 ## Code integration inventory
 

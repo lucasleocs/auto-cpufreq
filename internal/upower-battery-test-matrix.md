@@ -118,21 +118,30 @@ Observed on GalaxyMint: UPower gave 99%, Fully charged, 0.00 W; baseline GTK gav
 
 The user subsequently traced 0 RPM to Fn+F11 changing the platform profile from `performance` to `low-power`; other profiles reported RPM. **Close and remove the fan-speed bug investigation/correction work item**. No fan change should be bundled with the UPower PR; reconsider only on new contradicting evidence. The earlier high temperature snapshots likewise do not establish a UPower-related regression.
 
-### Additional read-only battery release checks
+### Additional read-only battery release checks — compact UI still pending implementation
 
-These tests refer to the **revised compact UI design**, which is still pending implementation. Earlier PASS results for the old verbose UI must not be treated as validation of this revised layout.
+Previous PASS results for verbose labels and private-bus scenarios do **not** validate the final compact presentation yet.
 
-- R01: Legacy UPower/unknown API renders original GTK rows, with no charge-protection or supported-controls decoration.
-- R02: Consistent, enabled UPower end-only 80% and observed kernel 80% renders one `Stop threshold: 80% (UPower)` row, no redundant separate `Charge protection` or `Supported controls` rows; terminal stats conveys the same information.
-- R03: Consistent start/end 75/80 shows both values adjacent to corresponding threshold labels, not grouped into a third duplicate row.
-- R04: Configured UPower stop=80 and kernel=100 retains both labeled values on the same threshold row or wrapped continuation, and never reports the configured value as confirmed applied.
-- R05: UPower threshold property present but protection disabled does not imply 80% is active; if the preset is displayed, clearly mark it inactive.
-- R06: Firmware-only mask=4 has one `Charge limit: Firmware managed (UPower)` description and no invented percentages or numeric end-threshold claim.
-- R07: `Charge` remains actual battery level; do not misidentify it as the stopping threshold when e.g. Charge=99% and configured stop=80%.
-- R08: After supported→unsupported transitions, optional labels disappear and don't reappear via Gtk.show_all().
-- R09: Terminal stats uses `Unavailable` for unknown start/stop thresholds, not the literal `None`.
-- R10: Repeated UPower queries do not cause a hung UI or persistent orphaned tasks. Real machine 20/20 UPower, 5.5 ms median and 122.5 ms max observed.
-- R11: A failed UPower read falls back to sysfs and does not change CPU policy, AC interpretation or battery threshold writer.
+- R01: UPower 1.90.3 / charge API absent keeps legacy GTK and stats layout; no added supported/firmware row.
+- R02: Stop-only enabled UPower at current 55%, observed charging, effective/observed stop 80 → one `Stop threshold: 80% (UPower)`; Charge stays 55%; power is battery flow.
+- R03: Reached 80% with active stop 80 → do not infer `Fully charged` or `Not charging`; show actual UPower state.
+- R04: Active stop 80 enabled **after** battery reached 100%, still AC connected → current `Charge: 100%`, limit `80% (UPower)` (if verified), no forced discharging assertion or automatic conversion of 100 to 80.
+- R05: Numeric UPower support true but enabled=false → kernel stop 100 shown simply as `100%`, plus `Charge limit: Supported (disabled)`; no misleading active 80% preset.
+- R06: Firmware-only enabled with current charge 55%, 80%, 100% → `Charge limit: Firmware managed (active)`, no fictitious numeric firmware target.
+- R07: Firmware-only supported but enabled=false → `Charge limit: Firmware managed (disabled)`; no GTK editor or enabling affordance.
+- R08: Firmware-only supported but enabled unknown → `Firmware managed (state unknown)`, never assume active.
+- R09: Start+stop numeric active 75/80 → start 75% and stop 80% inline; no separate `Charge protection` or `Supported controls` row.
+- R10: UPower stop configured 80 while kernel shows 100 → both sources on same stop row or wrapped continuation; never claim confirmed application.
+- R11: Normal kernel stop 100, no conflict → display `100%`, without redundant `(kernel)` suffix.
+- R12: Disabled numeric preset known at 80 → if shown, explicitly marked saved/inactive; observed stop remains primary.
+- R13: At 79% within hysteresis start=75/stop=80 with AC connected → respect UPower state if no charge; no fabricated automatic charging.
+- R14: Simulated firmware+numeric mask 6 → no unsupported/invented percentage; show only relevant verified numeric and firmware context.
+- R15: UPower EnergyRate negative while charging → accepted as finite signed D-Bus rate and displayed as a magnitude, with correct status and no synthetic sysfs fallback; positive discharge, zero, and invalid NaN/inf covered.
+- R16: `--stats` and GTK show missing threshold as `Unavailable`, not literal `None`; legacy BatteryInfoBox remains consistent.
+- R17: Repeated UPower reports have bounded latency and no spurious daemon writes; real machine previously 20/20 UPower, 5.5 ms median, 122.5 ms max.
+- R18: Supported→unsupported service transitions hide extra rows even through `Gtk.show_all()`.
+- R19: Battery wattage is labeled as **battery power**, not total CPU/system power; 0.00 W with AC is valid, per issue #974.
+- R20: No CPU governor/AC detection change; no modification to sysfs charge limits or UPower `EnableChargeThreshold()` in telemetry.
 
 ## Build and CI validation
 
