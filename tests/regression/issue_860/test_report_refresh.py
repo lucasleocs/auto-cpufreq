@@ -283,6 +283,43 @@ class RefreshCoordinatorTests(unittest.TestCase):
                 coordinator.close()
                 self.assertTrue(wait_until(lambda: lane._worker is None))
 
+    def test_pending_worker_failure_during_ack_is_reported_and_recoverable(self):
+        from unittest.mock import patch
+        from auto_cpufreq.modules import report_refresh
+
+        class UnstartableThread:
+            def __init__(self, **_kwargs):
+                pass
+
+            def start(self):
+                raise RuntimeError("synthetic successor worker error")
+
+        results, failures = [], []
+        lane = report_refresh._ProcessCollectionLane()
+        coordinator = ReportRefreshCoordinator(
+            lambda: "ready", results.append, on_dispatch_error=failures.append,
+        )
+        with patch.object(report_refresh, "_PROCESS_LANE", lane):
+            try:
+                coordinator.request()
+                self.assertTrue(wait_until(lambda: len(results) == 1))
+                self.assertTrue(wait_until(lambda: lane._worker is None))
+                self.assertFalse(coordinator.request())  # Pending successor.
+                with patch.object(report_refresh, "Thread", UnstartableThread):
+                    # An already-rendered result must still be acknowledged.
+                    self.assertTrue(coordinator.acknowledge(
+                        results[0].generation
+                    ))
+                self.assertFalse(coordinator.in_progress)
+                self.assertEqual(len(failures), 1)
+                self.assertIn("successor worker", str(failures[0]))
+                self.assertTrue(coordinator.request())
+                self.assertTrue(wait_until(lambda: len(results) == 2))
+                self.assertTrue(coordinator.acknowledge(results[1].generation))
+            finally:
+                coordinator.close()
+                self.assertTrue(wait_until(lambda: lane._worker is None))
+
     def test_no_gui_or_policy_runtime_imports(self):
         from pathlib import Path
         from auto_cpufreq.modules import report_refresh
