@@ -26,4 +26,18 @@ jobs:
       - name: Compile regression test
         run: python -m py_compile tests/regression/issue_860/test_stats_lifecycle.py
       - name: Exercise terminal lifecycle
-        run: python -m unittest discover -s tests/regression/issue_860 -p 'test_*.py' -v
+        run: python -m unittest discover -s tests/regression/issue_860 -p 'test_stats_lifecycle.py' -v
+
+  gtk-refresh:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install GTK and virtual display
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y python3-gi gir1.2-gtk-3.0 gir1.2-gdkpixbuf-2.0 xvfb xauth
+      - name: Compile GTK regression test
+        run: /usr/bin/python3 -m py_compile tests/regression/issue_860/gtk_refresh_checks.py
+      - name: Exercise GLib refresh and worker cleanup
+        run: xvfb-run -a /usr/bin/python3 -m unittest discover -s tests/regression/issue_860 -p 'gtk_refresh_checks.py' -v
