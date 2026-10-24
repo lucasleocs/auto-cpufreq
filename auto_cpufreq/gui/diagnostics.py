@@ -93,6 +93,7 @@ class GuiDiagnostics(SessionDiagnostics):
         return False
 
     def _report_error(self, error):
+        super()._report_error(error)
         message = f"Unable to write GUI debug log: {error}"
         with self._lock:
             if self.last_error == message:
