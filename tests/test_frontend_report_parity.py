@@ -21,6 +21,7 @@ from auto_cpufreq.modules.platform_profile import (
 )
 from auto_cpufreq.modules.system_info import (
     BatteryInfo, CoreInfo, SystemInfo, SystemReport,
+    format_platform_profile_choices,
     format_platform_profile_summary, format_system_report,
 )
 from auto_cpufreq.modules import system_monitor
@@ -295,6 +296,81 @@ class FrontendReportParityTests(unittest.TestCase):
                     )
                     view.platform_values["available"].set_text.assert_called_with(
                         rendered.available
+                    )
+
+    def test_legacy_platform_text_preserves_historical_labels(self):
+        def device(provider, profile):
+            return PlatformProfileDevice(
+                provider=provider, profile=profile,
+                choices=("balanced", "performance"),
+                profile_path=Path("/tmp/synthetic-profile"),
+                choices_known=True,
+            )
+
+        scenarios = (
+            (
+                PlatformProfileSnapshot(),
+                "No interface detected", "Not available",
+                "Could not be determined", "None reported",
+            ),
+            (
+                PlatformProfileSnapshot(
+                    devices=(device("vendor-a", "performance"),),
+                    interface="modern", current="performance", writable=True,
+                    available_profiles=("balanced", "performance"),
+                    choices_known=True,
+                ),
+                "Available", "performance",
+                "balanced, performance", "vendor-a",
+            ),
+            (
+                PlatformProfileSnapshot(
+                    devices=(device("vendor-a", "performance"),
+                             device("vendor-b", None)),
+                    interface="modern", current=None, writable=True,
+                    choices_known=False,
+                ),
+                "Partially available", "Unknown",
+                "Could not be determined",
+                "vendor-a: performance; vendor-b: Unknown",
+            ),
+            (
+                PlatformProfileSnapshot(
+                    devices=(device("vendor-a", "balanced"),),
+                    interface="legacy", current="balanced", writable=False,
+                    available_profiles=("balanced",), choices_known=True,
+                ),
+                "Read-only", "balanced", "balanced", "vendor-a",
+            ),
+        )
+        for state, status, current, choices, providers in scenarios:
+            with self.subTest(status=status):
+                report = sample_report(platform=state)
+                rendered = present_platform_profile(state)
+                output = format_system_report(report, include_config=False)
+                self.assertEqual(rendered.status_text, status)
+                self.assertIn(
+                    f"Platform profile status: {status}", output
+                )
+                self.assertIn(f"Platform profile: {current}", output)
+                self.assertIn(
+                    f"Available platform profiles"
+                    f"({len(state.available_profiles)}): {choices}"
+                    if state.choices_known
+                    else "Available platform profiles: Could not be determined",
+                    output,
+                )
+                label, value = format_platform_profile_choices(
+                    state, label="Available platform profiles"
+                )
+                self.assertIn(f"{label}: {value}", output)
+                if len(state.provider_states) > 1:
+                    self.assertIn(
+                        f"Platform profile providers: {providers}", output
+                    )
+                else:
+                    self.assertIn(
+                        f"Platform profile provider: {providers}", output
                     )
 
     def test_multiple_profile_providers_match_gtk_and_stats(self):
