@@ -134,5 +134,6 @@ class ReportRefreshCoordinator:
         with self._lock:
             self._closed = True
             self._generation += 1
+            self._running = False
             self._pending = False
             self._delivering = False
