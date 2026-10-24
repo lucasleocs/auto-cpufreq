@@ -124,6 +124,23 @@ class GuiDiagnosticsTests(unittest.TestCase):
         diagnostics.shutdown()
         self.assertEqual(glib.removed, [134])
 
+    def test_watchdog_thread_detects_blocked_main_thread(self):
+        diagnostics = self.diagnostics
+        diagnostics.attach_mainloop(MockGLib())
+        with patch.object(MODULE, "HEARTBEAT_SECONDS", 0.05), patch.object(
+            MODULE, "STALL_SECONDS", 0.2
+        ):
+            diagnostics.set_enabled(True)
+            deadline = time.monotonic() + 2
+            found = False
+            while time.monotonic() < deadline:
+                time.sleep(0.05)
+                if "unresponsive for at least" in diagnostics.log_path.read_text():
+                    found = True
+                    break
+            self.assertTrue(found, "Watchdog did not detect blocked GTK loop")
+            diagnostics.shutdown()
+
     def test_enable_rolls_back_when_preference_write_fails(self):
         diagnostics = self.diagnostics
         with patch.object(
