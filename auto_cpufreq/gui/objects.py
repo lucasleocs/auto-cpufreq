@@ -72,7 +72,12 @@ def _run_privileged_async(arguments, callback):
 
         GLib.idle_add(callback, result, error)
 
-    Thread(target=worker, daemon=True).start()
+    try:
+        Thread(target=worker, daemon=True).start()
+    except RuntimeError as error:
+        # Deliver the failure through the same GTK callback, allowing every
+        # control to restore its enabled state without duplicated handling.
+        GLib.idle_add(callback, None, error)
 
 
 def _privileged_command_error(result, error):
@@ -119,6 +124,10 @@ def _run_power_state_command(
     )
 
     def complete(result, error):
+        # The command may finish after the window has been destroyed.
+        # Never update detached widgets or schedule a new refresh then.
+        if getattr(parent, "destroyed", False):
+            return False
         if tracked:
             finish(
                 state_key,
@@ -135,7 +144,6 @@ class RadioButtonView(Gtk.Box):
         super().__init__(orientation=Gtk.Orientation.HORIZONTAL)
 
         self.set_hexpand(True)
-        self.hbox = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
 
         self.label = Gtk.Label("Governor Override", name="bold")
 
@@ -199,7 +207,6 @@ class CPUTurboOverride(Gtk.Box):
         super().__init__(orientation=Gtk.Orientation.HORIZONTAL)
 
         self.set_hexpand(True)
-        self.hbox = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
 
         self.label = Gtk.Label("CPU Turbo Override", name="bold")
 
@@ -319,9 +326,13 @@ class BluetoothBootControl(Gtk.Box):
 
         self.set_sensitive(False)
         self.advanced_btn.set_sensitive(False)
+        parent = self.get_toplevel()
         _run_privileged_async(
             [option],
-            self._finish_command,
+            lambda result, error: (
+                self._finish_command(result, error)
+                if not getattr(parent, "destroyed", False) else False
+            ),
         )
 
     def _finish_command(self, result, error):
@@ -381,7 +392,7 @@ class DropDownMenu(Gtk.MenuButton):
             return
         try:
             diagnostics.set_enabled(item.get_active())
-        except OSError as error:
+        except (OSError, RuntimeError) as error:
             self._syncing_debug_logging = True
             try:
                 item.set_active(diagnostics.enabled)
@@ -610,7 +621,7 @@ class DaemonNotRunningView(Gtk.Box):
             return
         try:
             diagnostics.set_enabled(button.get_active())
-        except OSError as error:
+        except (OSError, RuntimeError) as error:
             button.set_active(diagnostics.enabled)
             dialog = Gtk.MessageDialog(
                 transient_for=parent,
@@ -632,10 +643,9 @@ class DaemonNotRunningView(Gtk.Box):
         self.set_sensitive(False)
         _run_privileged_async(
             ["--install"],
-            lambda result, error: self._finish_install(
-                parent,
-                result,
-                error,
+            lambda result, error: (
+                self._finish_install(parent, result, error)
+                if not getattr(parent, "destroyed", False) else False
             ),
         )
 
