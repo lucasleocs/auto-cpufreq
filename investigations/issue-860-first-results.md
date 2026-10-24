@@ -72,3 +72,22 @@ The pyinotify object is initialized by the configuration module, but the current
 - Linux signal semantics: https://man7.org/linux/man-pages/man7/signal.7.html
 
 All investigation files, workflows and diagnostic utilities must remain outside the eventual upstream production patch.
+
+
+## Physical Cinnamon baseline — initial excerpt (October 23, 2026)
+
+Host: GalaxyMint, Linux Mint Cinnamon. Installed GUI process:
+- PID 207115: /opt/auto-cpufreq/current/venv/bin/auto-cpufreq-gtk
+- Parent launcher PID 207113: /usr/local/bin/auto-cpufreq-gtk
+- Installed release includes commit 35d8015afc1b, five commits behind investigated master 5a1683037a58; gui/app.py itself is identical at these revisions.
+
+The user completed 60 two-second samples from approximately 21:57:37 to 21:59:37 local time. Only the first four and last ten records were shared, so the full-file minimum, mean, median and maximum cannot yet be reported.
+
+Observed excerpt:
+- CPU frequently 1.5–2.5% of one logical CPU; highest supplied sample 6.99%, nowhere near the reported sustained 100% case.
+- Six threads and fifteen file descriptors throughout the displayed rows, with sleeping process state.
+- RSS approximately 49.95–50.8 MiB for the supplied baseline segments, rising to 61.66 MiB at the last record.
+- Last three samples: 6.49%, 6.49%, and 6.99% CPU. The leading activity was on the GTK main thread. Voluntary context switches increased substantially at the end.
+- The observed late memory increase may be transient UI activity or another normal allocation pattern; the excerpt does not establish a leak or its trigger.
+
+Required follow-up: analyze all 60 CSV rows, note any user interaction or view change around 21:59:33–21:59:37, and compare a longer idle capture before any suspend/resume trial. Do not modify runtime implementation based on this trace alone.
