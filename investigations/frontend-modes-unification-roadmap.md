@@ -22,16 +22,16 @@ This is a **partial implementation**, not the complete roadmap. All changes belo
 | 4. Shared refresh coordinator | Implemented and used | `modules/report_refresh.py`, with separate GLib and Urwid delivery adapters |
 | 5. GTK integration | Implemented, automated integration tested | Dashboard coalescing/pending-control behavior, monitor recovery and closing during collection |
 | 6. Urwid integration | Implemented, automated PTY tested | Stats/Monitor/Live *display* through `SystemMonitor`; no policy executor changes |
-| 7. Terminal diagnostic opt-in | Implemented, automated PTY and permission tests | `--diagnostic-log` only with Stats/Monitor/Live, unprivileged XDG and root's own home |
-| 8. Incremental widget rendering | Not implemented | Requires before/after benchmarks and CPU hotplug parity |
+| 7. Terminal diagnostics and process health | Implemented, automated tests | `--diagnostic-log` on Stats/Monitor/Live, GTK opt-in, low-frequency `/proc` CPU/hottest-TID sampling, private file paths and tests |
+| 8. Rendering cost investigation | Synthetic CI baselines complete; code optimization deferred | GTK/Urwid 4/8/16/32-core widget benchmarks and `/proc` overhead measurements; no convincing high-CPU hotspot in isolated rendering |
 | 9. Policy-decision explanation | Not implemented | Shadow-only, never calls policy writers |
 | 10. Production PR and hardware validation | Not started | Clean branch and manual Linux Mint X11 validation required |
 
 **Safety boundary:** `--live`'s existing privileged policy worker and restoration code are unchanged. The daemon control loop and power writers are unchanged. The new CLI diagnostic flag does not affect control-policy decisions. A separate safety review is still required for the known Live shutdown race.
 
-**Validation status:** Experimental CI reports 49 Python/terminal tests plus 7 GTK/Xvfb tests passing at commit `a1362b283265c7150c9820fec8c277a35a0cd0ce`. The test suite includes a real PTY invocation with the logger enabled. Build workflows and later commits should be checked separately; the tests do not yet replace a real GTK launch/benchmark on the user's machine.
+**Validation status:** The process sampler extended the suite to **59 Python/terminal + 7 GTK/Xvfb tests**, passing in https://github.com/lucasleocs/auto-cpufreq/actions/runs/40053610334. The same CI run measured synthetic GTK/Urwid rendering and `/proc` sampler overhead. Linux/Nix build statuses for a particular commit must be checked separately; CI tests do not replace full Linux Mint Cinnamon X11 runtime testing.
 
-**Remaining risks/next work:** process CPU and hot-thread sampling for #860; resource overhead under long-duration logs; real sudo command smoke test without touching power state; pyproject Python version compatibility; incremental rendering only if measurable; native GTK launch and repeated suspend cycles; test a clean, isolated production branch. No assumption that upstream #860 is fixed.
+**Remaining risks/next work:** full-runtime CPU/RSS/FD/thread baselines with debug OFF and ON; prolonged execution and suspend/resume; real sudo Stats diagnostic smoke test without touching power state; Python support/packaging; policy explanation kept read-only; production-clean branch. No claim upstream #860 is fixed. Render microbenchmark analysis is kept separately in `investigations/issue860-health-and-render-baseline.md`; avoid widget caching until real end-to-end evidence justifies it.
 
 This working plan and the experimental workflow must not be included in the eventual clean upstream PR.
 
