@@ -989,13 +989,6 @@ class MonitorModeView(Gtk.Box):
             recommendations.turbo.suggested,
         )
 
-    def _dispatch_refresh_result(self, result):
-        # Kept as a thin compatibility path for UI integration tests.
-        return self._refresh_bridge.dispatch(result)
-
-    def _deliver_refresh_result(self, result):
-        return self._refresh_bridge.deliver(result)
-
     def _show_error(self, message):
         if not self.running:
             return False
