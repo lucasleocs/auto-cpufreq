@@ -17,6 +17,7 @@ ROOT = Path(__file__).resolve().parents[3]
 
 
 def run_child():
+    sys.path.insert(0, str(ROOT))
     fcntl.ioctl(0, termios.TIOCSCTTY, 0)
     if os.environ.get("ACF_IGNORE_HUP") == "1":
         signal.signal(signal.SIGHUP, signal.SIG_IGN)
