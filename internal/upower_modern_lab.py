@@ -164,8 +164,12 @@ def show_stats(report, scenario, check):
             assert "Charging stop threshold:" not in result
         if scenario == "legacy":
             assert "Charge limit:" not in result
-        assert "Battery power: 0.00 W" in result or (
-            scenario == "charging-55" and "Charging power: 12.50 W" in result)
+        assert (
+            "Battery power: 0.00 W" in result
+            or (scenario == "charging-55" and "Charging power: 12.50 W" in result)
+            or (scenario in ("disabled", "firmware-disabled")
+                and "Charging power: 0.00 W" in result)
+        )
 
 
 def show_gtk(report, scenario, check):

@@ -261,6 +261,11 @@ class SystemReportView(Gtk.Box):
             )
             self.battery_names[key] = name_label
             self.battery_values[key] = value_label
+        for key in ("start", "stop"):
+            self.battery_values[key].set_line_wrap(True)
+            self.battery_values[key].set_line_wrap_mode(Pango.WrapMode.WORD_CHAR)
+            self.battery_values[key].set_max_width_chars(40)
+
         self.charge_limit_name, self.charge_limit_value = _add_row(
             self.battery_grid, len(self.battery_names), "Charge limit"
         )
