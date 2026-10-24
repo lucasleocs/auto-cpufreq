@@ -22,11 +22,11 @@ ROOT = Path(__file__).resolve().parent.parent
 BATTERY = "/sys/class/power_supply/BAT1"
 
 
-def _start_bus(stack):
+def _start_bus(stack, allow_headless=False):
     if not shutil.which("dbus-daemon"):
         raise RuntimeError("dbus-daemon is required")
     original_session = os.environ.get("DBUS_SESSION_BUS_ADDRESS")
-    if not original_session:
+    if not original_session and not allow_headless:
         raise RuntimeError("No desktop session D-Bus detected")
     proc = subprocess.Popen(
         ["dbus-daemon", "--session", "--nofork", "--print-address=1"],
@@ -207,7 +207,7 @@ def main():
     args = parser.parse_args()
 
     with ExitStack() as stack:
-        address = _start_bus(stack)
+        address = _start_bus(stack, allow_headless=args.check and args.mock_battery)
         _start_mock(stack, args.scenario, address)
         stack.enter_context(patch.dict(os.environ, {"DBUS_SYSTEM_BUS_ADDRESS": address}))
         _mock_thresholds(stack, args.mock_battery, args.mock_kernel_stop)
