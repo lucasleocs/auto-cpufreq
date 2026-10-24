@@ -191,6 +191,54 @@ class RefreshCoordinatorTests(unittest.TestCase):
         self.assertFalse(coordinator.request_if_idle())
         self.assertFalse(coordinator.request())
 
+    def test_pending_successor_is_reserved_before_enqueuing(self):
+        from unittest.mock import patch
+        from auto_cpufreq.modules import report_refresh
+
+        results, collected = [], []
+        coordinator = ReportRefreshCoordinator(
+            lambda: collected.append(1) or len(collected), results.append
+        )
+        self.addCleanup(coordinator.close)
+        self.assertTrue(coordinator.request())
+        self.assertTrue(wait_until(lambda: len(results) == 1))
+        self.assertFalse(coordinator.request())  # Explicit successor.
+
+        entered, release = threading.Event(), threading.Event()
+        enqueue = report_refresh._PROCESS_LANE.enqueue
+
+        def delayed_enqueue(owner, generation, requested_at):
+            if owner is coordinator and generation == 2:
+                entered.set()
+                release.wait(timeout=3)
+            return enqueue(owner, generation, requested_at)
+
+        try:
+            with patch.object(
+                report_refresh._PROCESS_LANE, "enqueue",
+                side_effect=delayed_enqueue
+            ):
+                thread = threading.Thread(
+                    target=lambda: coordinator.acknowledge(
+                        results[0].generation
+                    ),
+                    daemon=True,
+                )
+                thread.start()
+                self.assertTrue(entered.wait(timeout=2))
+                # Even while enqueue() is delayed, the next slot is
+                # reserved: a periodic tick must not steal it.
+                self.assertTrue(coordinator.in_progress)
+                self.assertFalse(coordinator.request_if_idle())
+                release.set()
+                thread.join(timeout=2)
+                self.assertFalse(thread.is_alive())
+            self.assertTrue(wait_until(lambda: len(results) == 2))
+            self.assertTrue(coordinator.acknowledge(results[1].generation))
+            self.assertEqual(len(collected), 2)
+        finally:
+            release.set()
+
     def test_temporary_error_does_not_poison_next_refresh(self):
         calls = []
         results = []
