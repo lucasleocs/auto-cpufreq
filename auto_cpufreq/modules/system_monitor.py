@@ -346,7 +346,7 @@ class SystemMonitor:
         self.left_content.clear()
         self.right_content.clear()
 
-        # Helper function to create centered text
+        # Consistent left alignment in both independently scrollable columns.
         def aligned_text(text: str) -> urwid.Text:
             return urwid.Text(text, align="left")
 
