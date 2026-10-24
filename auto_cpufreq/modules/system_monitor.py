@@ -13,7 +13,7 @@ from .system_info import (
 from auto_cpufreq.config.config import config
 from auto_cpufreq.modules.report_presentation import (
     present_report, configuration_file_text, offline_cpus_text,
-    frequency_limit_text,
+    frequency_limit_text, battery_present,
 )
 from auto_cpufreq.modules.report_refresh import ReportRefreshCoordinator
 from auto_cpufreq.modules.diagnostics import (
@@ -424,7 +424,7 @@ class SystemMonitor:
             )
 
         # Right Column - Battery, Platform Profile, CPU Power State, and System Stats
-        if report.battery_info is not None:
+        if battery_present(report.battery_info):
             self.right_content.extend(
                 [
                     urwid.AttrMap(aligned_text("Battery Stats"), "header"),
