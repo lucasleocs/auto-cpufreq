@@ -206,6 +206,25 @@ class HealthSamplerTests(unittest.TestCase):
             for thread in __import__("threading").enumerate()
         ))
 
+    def test_unexpected_sampler_failures_terminate_after_bounded_retries(self):
+        logger = FakeLog()
+        failures = []
+        def broken_read():
+            failures.append(1)
+            raise RuntimeError("synthetic unexpected sampler error")
+        sampler = h.ProcessHealthSampler(
+            logger, read=broken_read, interval=0.005
+        )
+        sampler.start()
+        deadline = time.monotonic() + 2
+        while sampler.is_alive() and time.monotonic() < deadline:
+            time.sleep(0.005)
+        self.assertFalse(sampler.is_alive())
+        self.assertEqual(len(failures), 3)
+        self.assertEqual(len(logger.warnings), 2)
+        self.assertIn("stopped after 3", logger.warnings[-1])
+        sampler.stop()
+
     def test_blocked_sampler_cannot_be_restarted_until_old_worker_exits(self):
         logger = FakeLog()
         entered, release = Event(), Event()
