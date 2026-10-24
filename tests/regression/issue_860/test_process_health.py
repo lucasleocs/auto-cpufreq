@@ -124,6 +124,37 @@ class HealthSamplerTests(unittest.TestCase):
             self.assertEqual(result.fds, 1)
             self.assertEqual(result.monotonic, 8.0)
 
+    def test_real_busy_python_thread_appears_in_procfs_samples(self):
+        started, stop = Event(), Event()
+
+        def burn_cpu():
+            started.set()
+            acc = 1
+            while not stop.is_set():
+                acc = (acc * 37 + 11) % 1000003
+
+        worker = Thread(target=burn_cpu, name="synthetic-busy-test")
+        worker.start()
+        try:
+            self.assertTrue(started.wait(timeout=1))
+            previous = h.read_snapshot()
+            time.sleep(0.25)
+            current = h.read_snapshot()
+            result = h.compute_health(previous, current)
+            self.assertIsNotNone(result)
+            self.assertGreater(
+                result.cpu_percent, 10.0,
+                "Synthetic busy thread did not receive enough CPU to measure",
+            )
+            self.assertEqual(
+                result.hottest_tid, worker.native_id,
+                "Expected the synthetic Python worker to be the hottest TID",
+            )
+        finally:
+            stop.set()
+            worker.join(timeout=2)
+            self.assertFalse(worker.is_alive())
+
     def test_stop_removes_sampling_thread(self):
         logger = FakeLog()
         calls = []
