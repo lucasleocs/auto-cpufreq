@@ -47,6 +47,88 @@ class ReportPresentation:
     average_temperature: DisplayValue
 
 
+@dataclass(frozen=True)
+class PlatformProfilePresentation:
+    """Semantics shared by GTK rows and the terminal profile summary."""
+
+    interface: str
+    current: str
+    available_label: str
+    available: str
+    provider_label: str
+    provider: str
+    provider_visible: bool
+    detected: bool
+
+
+def present_platform_profile(snapshot):
+    """Interpret the platform-profile snapshot without sampling hardware."""
+    if snapshot.interface == "none":
+        return PlatformProfilePresentation(
+            interface="Not detected", current="Unknown",
+            available_label="Available profiles", available="Could not be determined",
+            provider_label="Provider", provider="", provider_visible=False,
+            detected=False,
+        )
+
+    interface = {
+        "modern": "Modern",
+        "legacy": "Legacy",
+    }.get(snapshot.interface, "Unknown")
+    control = "Available" if snapshot.control_available else "Unavailable"
+
+    if snapshot.choices_known:
+        choices_label = f"Available profiles ({len(snapshot.available_profiles)})"
+        choices_text = (
+            ", ".join(snapshot.available_profiles)
+            if snapshot.available_profiles else "None available"
+        )
+    else:
+        choices_label = "Available profiles"
+        choices_text = "Could not be determined"
+
+    providers = snapshot.provider_states
+    if len(providers) > 1:
+        provider_label = "Providers"
+        provider_text = "; ".join(
+            f"{name}: {profile or 'Unknown'}"
+            for name, profile in providers
+        )
+    elif providers:
+        provider_label = "Provider"
+        provider_text = providers[0][0]
+    else:
+        provider_label = "Provider"
+        provider_text = ""
+
+    return PlatformProfilePresentation(
+        interface=f"{interface} · Control: {control}",
+        current=snapshot.current or "Unknown",
+        available_label=choices_label,
+        available=choices_text,
+        provider_label=provider_label,
+        provider=provider_text,
+        provider_visible=bool(providers),
+        detected=True,
+    )
+
+
+def configuration_file_text(path, exists):
+    """Return the same config-file label for terminal and GTK."""
+    if not path:
+        return "Configuration file: Not selected"
+    if exists:
+        return f"Configuration file: {path}"
+    return f"Configuration file (not found): {path}"
+
+
+def offline_cpus_text(cpu_ids):
+    """Show disabled CPUs only when the snapshot actually reports them."""
+    if not cpu_ids:
+        return None
+    return "Disabled CPUs: " + ",".join(str(cpu) for cpu in cpu_ids)
+
+
 def _known_text(value, *, unavailable="Unavailable"):
     if value is None or value == "":
         return DisplayValue(None, Availability.UNAVAILABLE, unavailable)
@@ -73,7 +155,10 @@ def interpret_battery(battery):
     if battery is None:
         missing = DisplayValue(None, Availability.UNAVAILABLE, "Unavailable")
         return BatteryPresentation(
-            status=missing, level=missing, ac=missing,
+            status=DisplayValue(
+                None, Availability.UNAVAILABLE, "No battery detected"
+            ),
+            level=missing, ac=missing,
             charge_start=missing, charge_stop=missing, power_watts=missing,
         )
 
