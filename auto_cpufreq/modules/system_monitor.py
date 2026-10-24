@@ -174,11 +174,6 @@ class SystemMonitor:
         )
 
     def _refresh_ready(self, _data):
-        if self._pipe_delivery_error:
-            self.footer_text.set_text(
-                "Report pipe unavailable; using periodic refresh: "
-                f"{self._pipe_delivery_error[:100]} | Press Q to quit"
-            )
         try:
             result = self._refresh_results.get_nowait()
         except Empty:
@@ -187,19 +182,24 @@ class SystemMonitor:
         if not self._refresh_coordinator.is_current(result.generation):
             return True
 
-        if self._diagnostics:
-            delivery_seconds = (
-                max(0.0, time.monotonic() - result.completed_at)
-                if result.completed_at else 0.0
-            )
-            self._diagnostics.info(
-                "Urwid refresh generation=%d queue=%.3fs "
-                "collect=%.3fs delivery=%.3fs",
-                result.generation, result.queue_seconds,
-                result.duration, delivery_seconds,
-            )
-        self._surface_diagnostic_error()
         try:
+            if self._pipe_delivery_error:
+                self.footer_text.set_text(
+                    "Report pipe unavailable; using periodic refresh: "
+                    f"{self._pipe_delivery_error[:100]} | Press Q to quit"
+                )
+            if self._diagnostics:
+                delivery_seconds = (
+                    max(0.0, time.monotonic() - result.completed_at)
+                    if result.completed_at else 0.0
+                )
+                self._diagnostics.info(
+                    "Urwid refresh generation=%d queue=%.3fs "
+                    "collect=%.3fs delivery=%.3fs",
+                    result.generation, result.queue_seconds,
+                    result.duration, delivery_seconds,
+                )
+            self._surface_diagnostic_error()
             if result.error is not None or result.report is None:
                 message = str(
                     result.error or RuntimeError("No system report returned")
@@ -217,23 +217,37 @@ class SystemMonitor:
                     report, suggested_governor, suggested_turbo
                 )
         except Exception as error:
-            # A bad widget/formatting value must not exit the Urwid loop.
-            self.title_header.set_text(
-                f"{self.type} Mode - display error: {str(error)[:100]}"
-            )
-            if self._diagnostics:
-                self._diagnostics.warning(
-                    "Urwid report presentation failed: %s", error
+            # Both display and diagnostic failures must preserve progress.
+            try:
+                self.title_header.set_text(
+                    f"{self.type} Mode - display error: {str(error)[:100]}"
                 )
+                if self._diagnostics:
+                    self._diagnostics.warning(
+                        "Urwid report presentation failed: %s", error
+                    )
+            except Exception:
+                # Logging or a broken widget must not crash the main loop.
+                pass
         finally:
-            if self._diagnostics and result.requested_at:
-                self._diagnostics.info(
-                    "Urwid end-to-end refresh generation=%d elapsed=%.3fs",
-                    result.generation,
-                    max(0.0, time.monotonic() - result.requested_at),
-                )
-            self._refresh_coordinator.acknowledge(result.generation)
-            self._surface_diagnostic_error()
+            # This acknowledgement is unconditional: even the logging sink
+            # can fail while handling a successfully collected report.
+            try:
+                if self._diagnostics and result.requested_at:
+                    self._diagnostics.info(
+                        "Urwid end-to-end refresh generation=%d elapsed=%.3fs",
+                        result.generation,
+                        max(0.0, time.monotonic() - result.requested_at),
+                    )
+            except Exception:
+                pass
+            try:
+                self._refresh_coordinator.acknowledge(result.generation)
+            finally:
+                try:
+                    self._surface_diagnostic_error()
+                except Exception:
+                    pass
 
         if self.running and self._alarm_handle is None:
             self._alarm_handle = self.loop.set_alarm_in(2, self.update)
