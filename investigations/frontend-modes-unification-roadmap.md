@@ -10,6 +10,24 @@
 >
 > This document is intentionally stored under `investigations/`. Do **not** include it in the eventual production PR. It records hypotheses and requirements, not claims that the work is already implemented.
 
+## Implementation ledger — experimental branch, 2026-10-23
+
+This is a **partial implementation**, not completion of the roadmap. New production-code candidates below are being developed and CI-tested only in the experimental branch.
+
+| Phase | State | Files / verification |
+| --- | --- | --- |
+| 1. Logging concurrency hardening | Implemented, automated tests added | Atomic producer shutdown, traceback detachment, async writer and serialized old-session pruning |
+| 2. Toolkit-neutral diagnostics | Implemented; GTK adapter migrated | `auto_cpufreq/modules/diagnostics.py` and `gui/diagnostics.py`; no GTK/Urwid dependency in core |
+| 3. Typed presentation semantics | Implemented and consumed by GTK + Urwid | `modules/report_presentation.py`; governor, Turbo, EPP/EPB, HWP, battery and temperature |
+| 4. Shared refresh coordinator | Implementation + unit tests only | `modules/report_refresh.py`; GTK/Urwid adapters **not migrated yet** |
+| 5–10. Frontend migrations, Stats CLI diagnostic flag, optional rendering work, production cleanup | Not implemented yet | Existing UI refresh behavior, privileged writers and daemon unchanged |
+
+Key safety fact: `--live`'s existing policy worker and restoration code have not been changed. The experimental core is intentionally opt-in for logging; there is no new always-on logging daemon. GTK still owns its preferences and GLib heartbeat, while `--stats` does not yet expose a CLI diagnostic flag.
+
+Tests were expanded to cover simultaneous producers during log shutdown, late callbacks after view closure, coalesced refresh requests, temporary read exceptions and cross-interface display values. CI statuses should be checked for the current code commit rather than assumed from prior workflow runs.
+
+Implementation is tracked in this file; remove this working plan and experimental workflow when building the eventual clean upstream PR.
+
 ## 1. Executive decision
 
 Pursue **one reusable, read-only observability stack** with separate GTK and Urwid event-loop adapters and separate privileged policy executors.
