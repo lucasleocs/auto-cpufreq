@@ -145,6 +145,8 @@ echo "SOURCE INSTALL TRANSACTION PASS: install/switch/rollback/refusal"
 
 class SourceInstallerTransactions(unittest.TestCase):
     def test_real_transaction_with_fake_release_payloads(self):
+        if os.geteuid() != 0:
+            self.skipTest("Source installer requires root; dedicated CI job runs this isolated fixture via sudo")
         with TemporaryDirectory(prefix="auto-cpufreq-install-lab-") as root:
             environment = {**os.environ,
                            "LAB_ROOT": root, "INSTALLER": str(INSTALLER),
