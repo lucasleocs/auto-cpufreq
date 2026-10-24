@@ -1,0 +1,144 @@
+"""Toolkit-neutral interpretation of observed SystemReport values.
+
+This module never samples hardware and never applies a CPU/power policy.
+GTK, Urwid and text presentation may choose their own layout and wording.
+"""
+from dataclasses import dataclass
+from enum import Enum
+from typing import Any
+
+
+class Availability(str, Enum):
+    AVAILABLE = "available"
+    UNAVAILABLE = "unavailable"
+    UNKNOWN = "unknown"
+    DRIVER_MANAGED = "driver-managed"
+
+
+@dataclass(frozen=True)
+class DisplayValue:
+    value: Any
+    availability: Availability
+    text: str
+
+    @property
+    def is_available(self):
+        return self.availability is Availability.AVAILABLE
+
+
+@dataclass(frozen=True)
+class BatteryPresentation:
+    status: DisplayValue
+    level: DisplayValue
+    ac: DisplayValue
+    charge_start: DisplayValue
+    charge_stop: DisplayValue
+    power_watts: DisplayValue
+
+
+@dataclass(frozen=True)
+class ReportPresentation:
+    governor: DisplayValue
+    turbo: DisplayValue
+    epp: DisplayValue
+    epb: DisplayValue
+    hwp_dynamic_boost: DisplayValue
+    battery: BatteryPresentation
+    average_temperature: DisplayValue
+
+
+def _known_text(value, *, unavailable="Unavailable"):
+    if value is None or value == "":
+        return DisplayValue(None, Availability.UNAVAILABLE, unavailable)
+    return DisplayValue(value, Availability.AVAILABLE, str(value))
+
+
+def _flag(value):
+    if value is None:
+        return DisplayValue(None, Availability.UNAVAILABLE, "Unavailable")
+    return DisplayValue(value, Availability.AVAILABLE, "On" if value else "Off")
+
+
+def interpret_turbo(state):
+    """Preserve driver-managed versus disabled versus unknown distinctions."""
+    enabled, driver_managed = state
+    if enabled is not None:
+        return _flag(enabled)
+    if driver_managed is True:
+        return DisplayValue(None, Availability.DRIVER_MANAGED, "Driver managed")
+    return DisplayValue(None, Availability.UNAVAILABLE, "Unavailable")
+
+
+def interpret_battery(battery):
+    if battery is None:
+        missing = DisplayValue(None, Availability.UNAVAILABLE, "Unavailable")
+        return BatteryPresentation(
+            status=missing, level=missing, ac=missing,
+            charge_start=missing, charge_stop=missing, power_watts=missing,
+        )
+
+    if battery.is_charging is True:
+        status = DisplayValue(True, Availability.AVAILABLE, "Charging")
+    elif battery.is_ac_plugged is False:
+        status = DisplayValue(False, Availability.AVAILABLE, "Discharging")
+    elif battery.is_ac_plugged is True:
+        status = DisplayValue(False, Availability.AVAILABLE, "Not charging")
+    else:
+        status = DisplayValue(None, Availability.UNKNOWN, "Unknown")
+
+    if battery.is_ac_plugged is True:
+        ac = DisplayValue(True, Availability.AVAILABLE, "Connected")
+    elif battery.is_ac_plugged is False:
+        ac = DisplayValue(False, Availability.AVAILABLE, "Disconnected")
+    else:
+        ac = DisplayValue(None, Availability.UNKNOWN, "Unknown")
+
+    level = (
+        DisplayValue(battery.battery_level, Availability.AVAILABLE,
+                     f"{battery.battery_level}%")
+        if battery.battery_level is not None
+        else DisplayValue(None, Availability.UNAVAILABLE, "Unavailable")
+    )
+    power = (
+        DisplayValue(battery.power_watts, Availability.AVAILABLE,
+                     f"{battery.power_watts:.2f} W")
+        if battery.power_watts is not None
+        else DisplayValue(None, Availability.UNAVAILABLE, "Unavailable")
+    )
+    return BatteryPresentation(
+        status=status,
+        level=level,
+        ac=ac,
+        charge_start=_known_text(battery.charging_start_threshold),
+        charge_stop=_known_text(battery.charging_stop_threshold),
+        power_watts=power,
+    )
+
+
+def interpret_average_temperature(report):
+    temperature = report.cpu_avg_temp
+    if temperature is None:
+        readings = [
+            core.temperature for core in report.cores_info
+            if core.temperature > 0
+        ]
+        if readings:
+            temperature = sum(readings) / len(readings)
+    if temperature is None:
+        return DisplayValue(None, Availability.UNAVAILABLE, "Unavailable")
+    return DisplayValue(
+        temperature, Availability.AVAILABLE, f"{temperature:.1f} °C"
+    )
+
+
+def present_report(report):
+    """Pure, deterministic transformation from report to display semantics."""
+    return ReportPresentation(
+        governor=_known_text(report.current_gov),
+        turbo=interpret_turbo(report.is_turbo_on),
+        epp=_known_text(report.current_epp),
+        epb=_known_text(report.current_epb),
+        hwp_dynamic_boost=_flag(report.current_hwp_dynamic_boost),
+        battery=interpret_battery(report.battery_info),
+        average_temperature=interpret_average_temperature(report),
+    )
