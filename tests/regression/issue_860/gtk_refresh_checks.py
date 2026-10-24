@@ -96,6 +96,8 @@ class WindowState:
     _run_pending_refresh = APP.ToolWindow._run_pending_refresh
     _schedule_refresh = APP.ToolWindow._schedule_refresh
     _cleanup_refresh = APP.ToolWindow._cleanup_refresh
+    refresh_id = APP.ToolWindow.refresh_id
+    set_refresh_interval = APP.ToolWindow.set_refresh_interval
     begin_power_state_apply = APP.ToolWindow.begin_power_state_apply
     finish_power_state_apply = APP.ToolWindow.finish_power_state_apply
     _release_power_state_apply = APP.ToolWindow._release_power_state_apply
@@ -115,10 +117,17 @@ class WindowState:
             thread_name="gtk-test-refresh",
         )
         self._refresh_coordinator = self._refresh_bridge.coordinator
+        self._refresh_timer = APP.GtkRefreshTimer(
+            coordinator=self._refresh_coordinator,
+            request=self.refresh_in_thread,
+            active=lambda: not self.destroyed,
+            diagnostics=APP.diagnostics,
+            component="GTK dashboard",
+            interval=1,
+        )
         self.refresh_in_progress = False
         self.refresh_pending = False
         self.refresh_interval = 1
-        self.refresh_id = None
         self.pending_power_updates = set()
         self.pending_power_release = set()
         self.power_apply_sources = {}
