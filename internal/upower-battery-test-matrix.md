@@ -206,3 +206,17 @@ Sources: https://upower.freedesktop.org/docs/Device.html ; https://upower.freede
 - VG08: Cosmetic item — in firmware-only mode, consider displaying Charge limit *before* Battery power, matching numeric threshold order. OPTIONAL, not a blocker.
 - VG09: Actual upgraded UPower daemon and snap jail-mode runtime: NOT VERIFIED.
 
+
+## Optional kernel stop-only controller: temporary CI results
+
+- K01: If `enable_thresholds` unset or false, not a single write even with stop configured. PASS.
+- K02: `stop_threshold = 80` applied to a simulated `BAT1/charge_control_end_threshold` with no start attribute. PASS.
+- K03: Out-of-range, malformed or noninteger values rejected (0, 101, negative, float, NaN, missing). PASS.
+- K04: Explicit start setting when start attribute missing rejected; never fabricates a start percentage. PASS.
+- K05: Supported and active UPower protection prevents direct sysfs control conflict. PASS.
+- K06: Kernel rounded 79 to 80; readback reported, cached for periodic idempotence; changed external state detected. PASS.
+- K07: Already-correct 80 read without rewriting. PASS.
+- K08: Driver reports successful write but readback unchanged at 100: reject, don't claim new setting effective. PASS.
+- K09: Peripheral and non-power_supply paths refused; existing vendor drivers selected first. PASS.
+- K10: Linux Build and Nix Flake passed in temporary branch. Full Python 3.9 runtime not verified due pre-existing type annotation incompatibility.
+

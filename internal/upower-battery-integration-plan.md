@@ -305,3 +305,19 @@ All five executions emitted `Failed to retrieve unit state: Process org.freedesk
 
 This user hardware run supplements, but does not replace, CI https://github.com/lucasleocs/auto-cpufreq/actions/runs/40049136671, which already passed eight scenarios headlessly with full GTK. No actual newer daemon (UPower 1.91.x) was installed: only its D-Bus property *shape* was simulated. No system threshold was changed.
 
+
+## Second contribution — optional generic kernel charge-stop configuration (separate, not merged)
+
+The existing auto-cpufreq `[battery]` settings support `enable_thresholds`, `start_threshold`, `stop_threshold` since v2.2.0, but vendor-driver selection and the parent `BatteryDevice` start/end prerequisite prevent Samsung BAT1 from applying stop-only using standard Linux `charge_control_end_threshold`.
+
+The user approved beginning this phase as a **second PR**, preserving read-only GTK and the previously isolated first UPower PR.
+
+- First read-only UPower branch `feature/upower-read-only-battery-20261023`, now @ `26bc01dd3745405961cb069b02d00125a90e28fd`. UPower State 5 (`Pending charge`) now reports `Not charging`, in both D-Bus mapping and the user-facing status helper. No other status changed.
+- Temporary implementation branch: `tmp/generic-kernel-charge-threshold-20261024` @ `b6e2e42082fdebac19c4d6b6757ad8067c1613cc`. Test fixture `internal/test_generic_kernel_threshold.py` and private workflow only in this branch.
+- Clean second-stage branch from first feature's head: `feature/generic-kernel-charge-threshold-20261024` @ `299876536e33f8f22bbe58669457fc297f7b1f1c`. Exactly three changed files relative to the first feature: `battery_scripts/generic.py`, `battery_scripts/battery.py`, `README.md`. No temporary tests/workflows.
+- Syntax supported by user's desired config: `[battery]`, `enable_thresholds = true`, `stop_threshold = 80`; `start_threshold` may be omitted when no start attribute exists. Default remains no write and no GTK editor.
+- Generic strategy: select a single physical battery using existing `SystemInfo.get_battery_path()` (respecting `battery_device` and ignored peripherals), require standard kernel end attribute and root-writable stop file, preserve Lenovo/ASUS vendor paths first, apply only in existing battery-daemon loop after opt-in, re-read sysfs after writes. If the requested value is rounded by the driver, surface actual readback and cache it to avoid unnecessary periodic rewrites; reject unchanged or invalid readback. When UPower explicitly reports charging protection supported **and active**, refuse competing writes.
+- A configured start on a battery with no start attribute explicitly fails rather than creating fake support. Existing start+stop vendor behavior is preserved. Explicitly note that `enable_thresholds = true` can affect physical charging **only after a future installation of the control-feature branch and root daemon restart**. No physical Samsung write was made during development.
+- Temporary CI run https://github.com/lucasleocs/auto-cpufreq/actions/runs/40050271658: 12 fixture-only safety tests PASS (Python 3.12). Linux Build and Nix Flake also PASS on the temporary branch (runs 40050271568 and 40050271631). Earlier failed test runs found and corrected the unchanged-kernel-readback path. Full program imports of some *pre-existing* battery modules remain incompatible with Python 3.9 type evaluation; do not claim the new writer validated on Python 3.9 or broaden this PR solely for unrelated legacy compatibility.
+- **Still required:** optional physical BAT1 opt-in/write validation only with explicit user agreement; full daemon/Snap runtime of new writing feature untested. Separate feature branch is not yet an upstream PR or merged to `master`. Do not silently change user's `/etc/auto-cpufreq.conf`, daemon, or hardware thresholds.
+
