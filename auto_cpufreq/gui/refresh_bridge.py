@@ -14,8 +14,8 @@ from auto_cpufreq.modules.report_refresh import ReportRefreshCoordinator
 class GtkRefreshBridge:
     """Common delivery, diagnostics and acknowledgement for GTK report views.
 
-    Each view owns its scheduling policy: the dashboard has a periodic timer
-    and the Monitor schedules its next one-shot timer after a result.
+    Both GTK views use a separate GtkRefreshTimer for periodic scheduling.
+    This bridge only transports results and acknowledges deliveries.
     """
 
     def __init__(
