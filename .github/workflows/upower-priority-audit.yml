@@ -1,0 +1,28 @@
+name: UPower and kernel backend priority audit (temporary)
+
+on:
+  push:
+    branches:
+      - tmp/charge-priority-audit-20261024
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  priority:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install isolated package
+        run: |
+          POETRY_DYNAMIC_VERSIONING_BYPASS=3.2.0 python -m pip install -e .
+      - name: Verify the original safety cases and backend priority
+        run: |
+          python -m unittest discover -s internal -p 'test_generic_kernel_threshold.py' -v
+          python -m unittest discover -s internal -p 'test_priority_audit.py' -v
