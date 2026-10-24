@@ -7,7 +7,7 @@ No privileged access, GUI toolkit, psutil or energy-policy dependencies.
 from dataclasses import dataclass
 import os
 from pathlib import Path
-from threading import Event, Thread
+from threading import Event, Lock, Thread
 import time
 
 
@@ -147,6 +147,9 @@ class ProcessHealthSampler:
         self._in_episode = False
         self._stop = None
         self._worker = None
+        self._lifecycle_lock = Lock()
+        self._read_errors = 0
+        self._last_read_error_log = None
 
     def observe(self, current):
         if self._last_summary is None:
@@ -204,32 +207,77 @@ class ProcessHealthSampler:
             try:
                 sample = self.read()
                 self.observe(sample)
+                if self._read_errors:
+                    self.log.info(
+                        "Process health sampling recovered after %d failed reads",
+                        self._read_errors,
+                    )
+                    self._read_errors = 0
+                    self._last_read_error_log = None
             except (OSError, ValueError, IndexError) as error:
-                # /proc availability is not guaranteed (containers/hidepid).
-                self.log.warning("Process health sample unavailable: %s", error)
+                # A persistent /proc error should not crowd out useful logs.
+                self._read_errors += 1
+                now = time.monotonic()
+                if (
+                    self._last_read_error_log is None
+                    or now - self._last_read_error_log >= SUMMARY_SECONDS
+                ):
+                    self.log.warning(
+                        "Process health sampling unavailable (%d failures): %s",
+                        self._read_errors, error,
+                    )
+                    self._last_read_error_log = now
                 self._previous = None
             if stop.wait(self.interval):
                 break
 
+    def is_alive(self):
+        with self._lifecycle_lock:
+            return self._worker is not None and self._worker.is_alive()
+
     def start(self):
-        if self._stop is not None:
-            return
-        stop = Event()
-        worker = Thread(
-            target=self._run, args=(stop,),
-            daemon=True, name="process-health-debug",
-        )
-        worker.start()
-        self._stop = stop
-        self._worker = worker
+        with self._lifecycle_lock:
+            if self._worker is not None and self._worker.is_alive():
+                if self._stop is not None and self._stop.is_set():
+                    raise OSError(
+                        "Previous process-health sampler is still stopping"
+                    )
+                return
+            stop = Event()
+            worker = Thread(
+                target=self._run, args=(stop,),
+                daemon=True, name="process-health-debug",
+            )
+            # New sampling session must not use the previous session's
+            # deltas, counters or alert state.
+            self._previous = None
+            self._last_summary = None
+            self._samples = 0
+            self._sum_cpu = 0.0
+            self._max_cpu = 0.0
+            self._above = 0
+            self._in_episode = False
+            self._read_errors = 0
+            self._last_read_error_log = None
+            worker.start()
+            self._stop = stop
+            self._worker = worker
 
     def stop(self):
-        stop, worker = self._stop, self._worker
-        if stop is None:
-            return
-        self._stop = None
-        self._worker = None
-        stop.set()
-        # Never block a frontend indefinitely when /proc becomes stalled.
-        if worker is not None:
+        with self._lifecycle_lock:
+            stop, worker = self._stop, self._worker
+            if stop is None:
+                return True
+            stop.set()
+        if worker is not None and worker.is_alive():
+            # The UI must never await a potentially blocked procfs read.
             worker.join(timeout=0.2)
+        with self._lifecycle_lock:
+            if worker is not None and worker.is_alive():
+                # Retain ownership so start() cannot create a second
+                # sampler while an older one remains stuck.
+                return False
+            if self._worker is worker:
+                self._stop = None
+                self._worker = None
+            return True
