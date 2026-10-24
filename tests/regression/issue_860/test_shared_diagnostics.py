@@ -89,6 +89,22 @@ class SharedLoggingTests(unittest.TestCase):
         self.assertIn("RuntimeError: synthetic traceback", prepared.exc_text)
         self.assertIsNotNone(record.exc_info)
 
+    def test_queue_detaches_original_arguments_and_bounds_payloads(self):
+        original = ["x" * (module.MAX_MESSAGE_CHARS + 1000)]
+        record = logging.LogRecord(
+            "test", logging.INFO, __file__, 0, "payload %s",
+            (original,), None,
+        )
+        handler = module._BoundedQueueHandler(
+            module.Queue(maxsize=4), lambda: None
+        )
+        item = handler.prepare(record)
+        self.assertIsNone(item.args)
+        self.assertLessEqual(len(item.msg), module.MAX_MESSAGE_CHARS)
+        self.assertIsNot(item, record)
+        original[0] = "changed"
+        self.assertNotIn("changed", item.msg)
+
     def test_atomic_shutdown_rejects_racing_producers(self):
         events = module.Queue(maxsize=3)
         dropped = []
