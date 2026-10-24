@@ -226,6 +226,12 @@ class SystemMonitor:
                     "Urwid report presentation failed: %s", error
                 )
         finally:
+            if self._diagnostics and result.requested_at:
+                self._diagnostics.info(
+                    "Urwid end-to-end refresh generation=%d elapsed=%.3fs",
+                    result.generation,
+                    max(0.0, time.monotonic() - result.requested_at),
+                )
             self._refresh_coordinator.acknowledge(result.generation)
             self._surface_diagnostic_error()
 
