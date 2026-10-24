@@ -143,7 +143,7 @@ class TestOptInGenericStop(GenericBatteryFixture):
         with patch.object(dev, "_write_value_to_file", side_effect=AssertionError("unnecessary write")):
             dev.apply_threshold_settings()
 
-    def test_kernel_rounding_readback_is_cached_until_external_change(self):
+    def test_kernel_rounding_is_cached_then_external_change_suspends_rewriting(self):
         dev = self.device()
         cfg = configparser.ConfigParser()
         cfg["battery"] = {"enable_thresholds": "true", "stop_threshold": "79"}
@@ -159,7 +159,9 @@ class TestOptInGenericStop(GenericBatteryFixture):
                 self.assertEqual(count[0], 1)
                 (self.bat / "charge_control_end_threshold").write_text("100")
                 dev.apply_threshold_settings()
-                self.assertEqual(count[0], 2)
+                # An external change after our verified write must not start
+                # an hourly battle to restore our requested value.
+                self.assertEqual(count[0], 1)
 
     def test_failed_write_does_not_report_success(self):
         dev = self.device()

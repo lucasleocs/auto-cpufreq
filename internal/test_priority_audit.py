@@ -50,6 +50,13 @@ class PriorityResolverTests(GenericBatteryFixture):
                 dev.apply_threshold_settings()
         self.assertEqual(self.read_stop(), 100)
 
+    def test_upower_confirmed_absent_allows_standard_kernel_fallback(self):
+        dev = self.device()
+        with patch("auto_cpufreq.battery_scripts.priority.probe_charge_service",
+                   return_value=ChargeServiceProbe("absent")):
+            dev.apply_threshold_settings()
+        self.assertEqual(self.read_stop(), 80)
+
     def test_upower_absent_api_falls_back_to_standard_kernel(self):
         dev = self.device()
         with self._upower(upower(supported=False, enabled=None, kinds=(), end=None)):
