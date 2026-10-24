@@ -1,7 +1,8 @@
 """Toolkit-neutral interpretation of observed SystemReport values.
 
 This module never samples hardware and never applies a CPU/power policy.
-GTK, Urwid and text presentation may choose their own layout and wording.
+GTK, Urwid and text frontends own layout and labels, but availability and
+the meaning of observed values must come from the shared presentation rules.
 """
 from dataclasses import dataclass
 from enum import Enum
@@ -158,8 +159,17 @@ def interpret_turbo(state):
     return DisplayValue(None, Availability.UNAVAILABLE, "Unavailable")
 
 
+def battery_present(battery):
+    """Whether a battery was detected, independently of AC power state.
+
+    Legacy BatteryInfo-like values without is_present remain valid.
+    A missing battery may still have is_ac_plugged=True for policy purposes.
+    """
+    return battery is not None and getattr(battery, "is_present", True) is not False
+
+
 def interpret_battery(battery):
-    if battery is None:
+    if not battery_present(battery):
         missing = DisplayValue(None, Availability.UNAVAILABLE, "Unavailable")
         return BatteryPresentation(
             status=DisplayValue(
