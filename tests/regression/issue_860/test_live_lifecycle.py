@@ -57,6 +57,26 @@ class ThreadOutputTests(unittest.TestCase):
 
 
 class LiveLifecycleWiringTests(unittest.TestCase):
+    def test_stats_never_allocates_watcher_and_running_modes_do(self):
+        source = CLI.read_text(encoding="utf-8")
+        tree = ast.parse(source)
+        main = next(node for node in tree.body
+                    if isinstance(node, ast.FunctionDef) and node.name == "main")
+        branches = {
+            node.test.id: node
+            for node in ast.walk(main)
+            if isinstance(node, ast.If)
+            and isinstance(node.test, ast.Name)
+            and node.test.id in {"monitor", "live", "daemon", "stats"}
+        }
+        self.assertEqual(set(branches), {"monitor", "live", "daemon", "stats"})
+        for mode in ("monitor", "live", "daemon"):
+            source_branch = ast.unparse(branches[mode].body)
+            self.assertIn("conf.notifier.start()", source_branch)
+            self.assertIn("conf.stop_watching()", source_branch)
+        self.assertNotIn("conf.notifier.start()", ast.unparse(branches["stats"].body))
+
+
     def test_live_mode_uses_stoppable_worker_and_thread_local_output(self):
         source = CLI.read_text(encoding="utf-8")
         module = ast.parse(source)
