@@ -111,7 +111,6 @@ class GtkLifecycleAuditTests(unittest.TestCase):
             diagnostics=logging,
             component="GTK stress",
             interval=1,
-            clocks=lambda: (10.0, None),
         )
         timer.start()
         source = timer.source_id
