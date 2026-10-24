@@ -36,6 +36,26 @@ class ReportView(Gtk.Box):
         self.pack_start(widget, False, False, 0)
 
 
+class EntryPointWindow(Gtk.Window):
+    """Exercise real GTK navigation widgets, with only sysfs reads mocked."""
+    def __init__(self):
+        super().__init__()
+        self.report_views = []
+        self.daemon_not_running()
+
+    def daemon_not_running(self):
+        self.box = WIDGETS.DaemonNotRunningView(self)
+        self.add(self.box)
+
+    def monitor_mode(self):
+        report_view = ReportView()
+        self.report_views.append(report_view)
+        self.monitor_view = WIDGETS.MonitorModeView(
+            self, report_view, refresh_interval=1
+        )
+        self.add(self.monitor_view)
+
+
 class MonitorRefreshTests(unittest.TestCase):
     def setUp(self):
         self.parent = Gtk.Window()
@@ -65,6 +85,24 @@ class MonitorRefreshTests(unittest.TestCase):
     @staticmethod
     def report():
         return SimpleNamespace(current_gov="powersave", is_turbo_on=(True, None))
+
+    def test_actual_daemon_absent_buttons_navigate_monitor_and_back(self):
+        WIDGETS.system_info = SimpleNamespace(
+            generate_system_report=self.report,
+            governor_suggestion=lambda report: "powersave",
+            turbo_on_suggestion=lambda report: True,
+        )
+        root = EntryPointWindow()
+        self.addCleanup(root.destroy)
+        for _ in range(3):
+            root.box.monitor_button.clicked()
+            self.assertTrue(pump_until(
+                lambda: bool(root.report_views[-1].applied)
+            ))
+            monitor = root.monitor_view
+            monitor.back_button.clicked()
+            self.assertTrue(monitor._refresh_coordinator.closed)
+            self.assertIsInstance(root.box, WIDGETS.DaemonNotRunningView)
 
     def test_refresh_recovers_after_temporary_error(self):
         attempts = []
