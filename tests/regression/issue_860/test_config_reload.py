@@ -2,6 +2,7 @@
 import os
 from pathlib import Path
 import tempfile
+import threading
 import time
 import unittest
 from types import SimpleNamespace
@@ -156,6 +157,53 @@ class ConfigContractTests(unittest.TestCase):
         self.config.set_path(str(not_yet))
         self.assertEqual(self.governor(), "performance")
         self.assertIsNone(self.config._notifier)
+
+
+    def test_concurrent_atomic_reloads_publish_only_complete_snapshots(self):
+        errors = []
+        first = self.root / "next-0"
+        first.write_text("[battery]\ngovernor=powersave\nrevision=0\n")
+        os.replace(first, self.config_path)
+        self.assertTrue(self.config.update_config())
+
+        def writer():
+            try:
+                for number in range(1, 40):
+                    governor = "performance" if number % 2 else "powersave"
+                    staged = self.root / ("next-%d" % number)
+                    staged.write_text(
+                        "[battery]\ngovernor=%s\nrevision=%d\n"
+                        % (governor, number)
+                    )
+                    os.replace(staged, self.config_path)
+            except Exception as error:
+                errors.append(error)
+
+        def reader():
+            try:
+                for _ in range(80):
+                    self.config.update_config()
+                    snapshot = self.config.get_config()
+                    number = snapshot.getint("battery", "revision")
+                    actual = snapshot.get("battery", "governor")
+                    expected = "performance" if number % 2 else "powersave"
+                    if actual != expected:
+                        raise AssertionError(
+                            "Mixed configuration revisions: %s != %s"
+                            % (actual, expected)
+                        )
+            except Exception as error:
+                errors.append(error)
+
+        tasks = [threading.Thread(target=reader) for _ in range(4)]
+        tasks.append(threading.Thread(target=writer))
+        for task in tasks:
+            task.start()
+        for task in tasks:
+            task.join(timeout=6)
+            self.assertFalse(task.is_alive(), "Concurrent reload deadlocked")
+        self.assertEqual(errors, [])
+
 
 
 if __name__ == "__main__":
