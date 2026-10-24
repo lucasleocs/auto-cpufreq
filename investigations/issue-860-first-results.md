@@ -74,6 +74,28 @@ The pyinotify object is initialized by the configuration module, but the current
 All investigation files, workflows and diagnostic utilities must remain outside the eventual upstream production patch.
 
 
+## Physical Cinnamon baseline — complete 60-sample summary
+
+The user confirmed that, near the last three samples, they opened **Advanced Settings** and **About** in the GTK application; prior to that they left the interface undisturbed.
+
+Baseline, 60 samples over approximately 120 seconds, PID 207115:
+
+| Measurement | Observation |
+| --- | --- |
+| One-core CPU minimum | 0.50% |
+| One-core CPU mean | 1.76% |
+| One-core CPU median | 1.50% |
+| One-core CPU maximum | 6.99% |
+| Samples >=50% of one core | 0/60 |
+| RSS initial | 49.95 MiB |
+| RSS final and maximum | 61.66 MiB |
+| Threads | 6 throughout |
+| File descriptors | 15 throughout |
+
+The three highest CPU samples all occurred at the end, at 21:59:33–21:59:37 -03:00, during interaction with additional GTK windows. The approximately 11.71 MiB RSS increase coincided with those actions. This is consistent with normal UI allocations; without a later observation after closing dialogs and repeating the interactions, neither memory leak nor permanent retention can be established.
+
+Interpretation: no reproduction of high CPU in a normal GTK idle baseline. Next distinguish normal UI allocations from retained growth with a post-dialog steady-state sample, then collect a fresh baseline after a normal suspend/resume cycle if safe. The collector should be restarted *after* waking, rather than leaving a sampling interval straddling sleep, and the correct GTK Python PID must be reidentified.
+
 ## Physical Cinnamon baseline — initial excerpt (October 23, 2026)
 
 Host: GalaxyMint, Linux Mint Cinnamon. Installed GUI process:
