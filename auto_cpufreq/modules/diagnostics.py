@@ -277,6 +277,7 @@ class SessionDiagnostics:
         self._file_handler = output
         self._events = events
         self._writer = writer
+        self._logger.addHandler(handler)
         self.enabled = True
         self._activated_once = True
         self.info("%s debug logging enabled; pid=%d", self.component, os.getpid())
