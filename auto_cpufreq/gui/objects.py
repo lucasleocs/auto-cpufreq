@@ -1023,6 +1023,26 @@ class MonitorModeView(Gtk.Box):
         suggested_governor,
         suggested_turbo,
     ):
+        started = time.monotonic()
+        try:
+            return self._render_display(
+                report, suggested_governor, suggested_turbo
+            )
+        except Exception:
+            diagnostics.exception("GTK monitor render failed")
+            raise
+        finally:
+            diagnostics.debug(
+                "GTK monitor render duration=%.3fs",
+                time.monotonic() - started,
+            )
+
+    def _render_display(
+        self,
+        report,
+        suggested_governor,
+        suggested_turbo,
+    ):
         if not self.running:
             return False
 
@@ -1118,6 +1138,32 @@ class DaemonNotRunningView(Gtk.Box):
         self.pack_start(self.label, False, False, 0)
         self.pack_start(self.sublabel, False, False, 0)
         self.pack_start(self.button_box, False, False, 0)
+
+        self.debug_logging_button = Gtk.CheckButton(
+            label="Enable debug logging"
+        )
+        self.debug_logging_button.set_active(diagnostics.enabled)
+        self.debug_logging_button.connect(
+            "toggled", self._toggle_debug_logging, parent
+        )
+        self.pack_start(self.debug_logging_button, False, False, 0)
+
+    def _toggle_debug_logging(self, button, parent):
+        if button.get_active() == diagnostics.enabled:
+            return
+        try:
+            diagnostics.set_enabled(button.get_active())
+        except OSError as error:
+            button.set_active(diagnostics.enabled)
+            dialog = Gtk.MessageDialog(
+                transient_for=parent,
+                message_type=Gtk.MessageType.ERROR,
+                buttons=Gtk.ButtonsType.OK,
+                text="Unable to change debug logging",
+            )
+            dialog.format_secondary_text(str(error))
+            dialog.run()
+            dialog.destroy()
 
     def start_monitor(self, button, parent):
         parent.remove(self)
