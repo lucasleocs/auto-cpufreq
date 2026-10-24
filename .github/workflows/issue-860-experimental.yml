@@ -17,6 +17,8 @@ on:
       - auto_cpufreq/bin/auto_cpufreq.py
       - auto_cpufreq/bin/auto_cpufreq_gtk.py
       - .github/workflows/issue-860-experimental.yml
+      - pyproject.toml
+      - poetry.lock
   workflow_dispatch:
 
 permissions:
@@ -25,18 +27,20 @@ permissions:
 jobs:
   stats-lifecycle:
     runs-on: ubuntu-24.04
-    timeout-minutes: 8
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.9', '3.12']
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
-      - name: Install terminal UI and both inotify implementations during migration
-        run: |
-          python -m pip install 'urwid>=3.0.2,<5.0.0' 'pyasyncore>=1.0.4' 'inotify-simple==2.0.1'
-          python -m pip install 'git+https://github.com/shadeyg56/pyinotify-3.12@271b7aba3269116b6c3870355393f47c79bce146'
+          python-version: ${{ matrix.python-version }}
+      - name: Install terminal UI and inotify-simple
+        run: python -m pip install 'urwid>=3.0.2,<5.0.0' 'inotify-simple==2.0.1'
       - name: Compile regression test
-        run: python -m py_compile auto_cpufreq/config/config.py auto_cpufreq/config/config_event_handler.py auto_cpufreq/config/file_watcher.py auto_cpufreq/modules/process_health.py auto_cpufreq/modules/diagnostics.py auto_cpufreq/modules/report_presentation.py auto_cpufreq/modules/report_refresh.py tests/regression/issue_860/test_config_reload.py tests/regression/issue_860/test_report_presentation.py tests/regression/issue_860/test_report_refresh.py tests/regression/issue_860/test_shared_diagnostics.py tests/regression/issue_860/test_stats_lifecycle.py tests/regression/issue_860/sample_process.py tests/regression/issue_860/test_sampler.py
+        run: python -m py_compile auto_cpufreq/config/config.py auto_cpufreq/config/file_watcher.py auto_cpufreq/modules/process_health.py auto_cpufreq/modules/diagnostics.py auto_cpufreq/modules/report_presentation.py auto_cpufreq/modules/report_refresh.py tests/regression/issue_860/test_config_reload.py tests/regression/issue_860/test_report_presentation.py tests/regression/issue_860/test_report_refresh.py tests/regression/issue_860/test_shared_diagnostics.py tests/regression/issue_860/test_stats_lifecycle.py tests/regression/issue_860/sample_process.py tests/regression/issue_860/test_sampler.py
       - name: Exercise terminal lifecycle
         run: python -m unittest discover -s tests/regression/issue_860 -p 'test_*.py' -v
       - name: Benchmark Urwid report formatting (synthetic baseline)
@@ -52,10 +56,12 @@ jobs:
       - name: Install GTK and virtual display
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y python3-gi gir1.2-gtk-3.0 gir1.2-gdkpixbuf-2.0 xvfb xauth
+          sudo apt-get install -y python3-gi python3-venv gir1.2-gtk-3.0 gir1.2-gdkpixbuf-2.0 xvfb xauth
+          /usr/bin/python3 -m venv --system-site-packages "$RUNNER_TEMP/gtk-test-env"
+          "$RUNNER_TEMP/gtk-test-env/bin/pip" install 'inotify-simple==2.0.1'
       - name: Compile GTK regression test
-        run: /usr/bin/python3 -m py_compile auto_cpufreq/modules/process_health.py auto_cpufreq/modules/report_refresh.py auto_cpufreq/modules/report_presentation.py auto_cpufreq/modules/diagnostics.py auto_cpufreq/gui/diagnostics.py auto_cpufreq/gui/app.py auto_cpufreq/gui/objects.py auto_cpufreq/bin/auto_cpufreq_gtk.py tests/regression/issue_860/gtk_refresh_checks.py tests/regression/issue_860/gtk_logging_ui_checks.py
+        run: "$RUNNER_TEMP/gtk-test-env/bin/python" -m py_compile auto_cpufreq/modules/process_health.py auto_cpufreq/modules/report_refresh.py auto_cpufreq/modules/report_presentation.py auto_cpufreq/modules/diagnostics.py auto_cpufreq/gui/diagnostics.py auto_cpufreq/gui/app.py auto_cpufreq/gui/objects.py auto_cpufreq/bin/auto_cpufreq_gtk.py tests/regression/issue_860/gtk_refresh_checks.py tests/regression/issue_860/gtk_logging_ui_checks.py
       - name: Exercise GLib refresh and worker cleanup
-        run: xvfb-run -a /usr/bin/python3 -m unittest discover -s tests/regression/issue_860 -p 'gtk_*_checks.py' -v
+        run: xvfb-run -a "$RUNNER_TEMP/gtk-test-env/bin/python" -m unittest discover -s tests/regression/issue_860 -p 'gtk_*_checks.py' -v
       - name: Benchmark GTK row rebuild (synthetic baseline)
-        run: xvfb-run -a /usr/bin/python3 tests/regression/issue_860/bench_gtk_render.py
+        run: xvfb-run -a "$RUNNER_TEMP/gtk-test-env/bin/python" tests/regression/issue_860/bench_gtk_render.py
