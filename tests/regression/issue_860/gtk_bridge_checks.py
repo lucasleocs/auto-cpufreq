@@ -131,6 +131,39 @@ class GtkBridgeTests(unittest.TestCase):
         finally:
             release.set()
 
+    def test_queued_glib_delivery_after_close_is_single_noop(self):
+        # Wait for the worker to schedule an idle callback, but do not
+        # iterate the GLib main context until after closing the view.
+        scheduled = threading.Event()
+        delivered = []
+        bridge = self.make_bridge()
+
+        dispatch = bridge.dispatch
+
+        def observe_dispatch(result):
+            dispatch(result)
+            scheduled.set()
+
+        bridge.coordinator._dispatch = observe_dispatch
+        original_deliver = bridge.deliver
+
+        def observe_delivery(result):
+            delivered.append(result.generation)
+            return original_deliver(result)
+
+        bridge.deliver = observe_delivery
+        # The bridge's dispatch resolves self.deliver when called.
+        bridge.coordinator.request()
+        self.assertTrue(scheduled.wait(timeout=2))
+        self.active = False
+        bridge.coordinator.close()
+        self.assertTrue(pump_until(lambda: len(delivered) == 1))
+        self.assertEqual(self.records, [])
+        self.assertTrue(bridge.coordinator.closed)
+        # GLib callbacks returning False must not be called twice.
+        pump_until(lambda: False, timeout=0.05)
+        self.assertEqual(len(delivered), 1)
+
     def test_close_discards_completed_but_undelivered_result(self):
         entered, release = threading.Event(), threading.Event()
         finished = threading.Event()
