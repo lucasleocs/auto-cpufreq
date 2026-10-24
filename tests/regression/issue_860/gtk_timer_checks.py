@@ -24,7 +24,6 @@ class GtkTimerTests(unittest.TestCase):
         self.coordinator = FakeCoordinator()
         self.diagnostics = Mock()
         self.requests = 0
-        self.clock_now = (10.0, 10.0)
         self.scheduler = GtkRefreshTimer(
             coordinator=self.coordinator,
             request=self.request,
@@ -32,7 +31,6 @@ class GtkTimerTests(unittest.TestCase):
             diagnostics=self.diagnostics,
             component="GTK test",
             interval=1,
-            clocks=lambda: self.clock_now,
         )
         self.addCleanup(self.scheduler.stop)
 
@@ -91,29 +89,13 @@ class GtkTimerTests(unittest.TestCase):
         self.scheduler._tick()
         self.assertEqual(self.diagnostics.warning.call_count, 2)
 
-    def test_boottime_detects_resume_without_catchup_burst(self):
+    def test_periodic_timer_does_not_perform_resume_diagnostics(self):
+        # Suspend/resume observations live in GuiDiagnostics._heartbeat().
+        # Scheduling continues with one request per actual GLib tick.
         self.scheduler.start()
-        self.clock_now = (11.0, 11.0)
-        self.scheduler._tick()
-        self.assertEqual(self.requests, 1)
-        # One hour of suspend: boottime advances, monotonic barely does.
-        self.clock_now = (12.0, 3612.0)
-        self.scheduler._tick()
-        self.assertEqual(self.requests, 2)
-        self.assertEqual(self.diagnostics.info.call_count, 1)
-        self.assertIn("system resume detected",
-                      self.diagnostics.info.call_args.args[0])
-        self.clock_now = (13.0, 3613.0)
-        self.scheduler._tick()
+        for _ in range(3):
+            self.assertTrue(self.scheduler._tick())
         self.assertEqual(self.requests, 3)
-        self.assertEqual(self.diagnostics.info.call_count, 1)
-
-    def test_missing_boottime_is_supported(self):
-        self.clock_now = (10.0, None)
-        self.scheduler.start()
-        self.clock_now = (20.0, None)
-        self.scheduler._tick()
-        self.assertEqual(self.requests, 1)
         self.diagnostics.info.assert_not_called()
 
     def test_failed_request_retains_timer_and_retries_next_tick(self):
