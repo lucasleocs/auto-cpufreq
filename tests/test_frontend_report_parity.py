@@ -20,7 +20,7 @@ from auto_cpufreq.modules.platform_profile import (
 )
 from auto_cpufreq.modules.system_info import (
     BatteryInfo, CoreInfo, SystemReport,
-    format_platform_profile_summary,
+    format_platform_profile_summary, format_system_report,
 )
 from auto_cpufreq.modules import system_monitor
 
@@ -155,6 +155,15 @@ class FrontendReportParityTests(unittest.TestCase):
                 else:
                     self.assertFalse(any("Disabled CPUs:" in line for line in lines))
                     view.offline_label.hide.assert_called_once_with()
+
+    def test_legacy_text_report_reuses_offline_cpu_rule(self):
+        report = sample_report(offline=(2, 5))
+        text = format_system_report(report, include_config=False)
+        self.assertIn(offline_cpus_text((2, 5)), text)
+        no_offline = format_system_report(
+            sample_report(), include_config=False
+        )
+        self.assertNotIn("Disabled CPUs:", no_offline)
 
     def test_config_path_labels_share_same_semantics(self):
         for found in (False, True):
