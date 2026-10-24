@@ -27,16 +27,20 @@ permissions:
 jobs:
   stats-lifecycle:
     runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.9', '3.12']
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
+          python-version: ${{ matrix.python-version }}
       - name: Install terminal UI and inotify-simple
         run: python -m pip install 'urwid>=3.0.2,<5.0.0' 'inotify-simple==2.0.1'
       - name: Compile regression test
-        run: python -m py_compile auto_cpufreq/config/config.py auto_cpufreq/config/file_watcher.py auto_cpufreq/modules/process_health.py auto_cpufreq/modules/diagnostics.py auto_cpufreq/modules/report_presentation.py auto_cpufreq/modules/report_refresh.py tests/regression/issue_860/test_config_reload.py tests/regression/issue_860/test_report_presentation.py tests/regression/issue_860/test_report_refresh.py tests/regression/issue_860/test_shared_diagnostics.py tests/regression/issue_860/test_stats_lifecycle.py tests/regression/issue_860/sample_process.py tests/regression/issue_860/test_sampler.py
+        run: python -m py_compile auto_cpufreq/config/config.py auto_cpufreq/config/file_watcher.py tests/regression/issue_860/test_file_watcher.py auto_cpufreq/modules/process_health.py auto_cpufreq/modules/diagnostics.py auto_cpufreq/modules/report_presentation.py auto_cpufreq/modules/report_refresh.py tests/regression/issue_860/test_config_reload.py tests/regression/issue_860/test_report_presentation.py tests/regression/issue_860/test_report_refresh.py tests/regression/issue_860/test_shared_diagnostics.py tests/regression/issue_860/test_stats_lifecycle.py tests/regression/issue_860/sample_process.py tests/regression/issue_860/test_sampler.py
       - name: Exercise terminal lifecycle
         run: python -m unittest discover -s tests/regression/issue_860 -p 'test_*.py' -v
       - name: Benchmark Urwid report formatting (synthetic baseline)
