@@ -11,6 +11,8 @@ from unittest.mock import patch
 from auto_cpufreq.battery_scripts import battery
 from auto_cpufreq.battery_scripts.generic import GenericKernelBatteryDevice
 from auto_cpufreq.modules.battery_upower import UPowerBattery
+from auto_cpufreq.battery_scripts.probe import ChargeServiceProbe, ChargeCapabilities
+from auto_cpufreq.battery_scripts.conflicts import ChargeConflict
 
 
 class GenericBatteryFixture(unittest.TestCase):
@@ -44,11 +46,14 @@ class GenericBatteryFixture(unittest.TestCase):
             return_value=str(self.bat)
         ))
         self.stack.enter_context(patch(
-            "auto_cpufreq.battery_scripts.priority.read_upower_battery",
-            return_value=UPowerBattery(
-                status="Charging", percentage=55, power_watts=5.0,
-                charge_protection_supported=False,
+            "auto_cpufreq.battery_scripts.priority.probe_charge_service",
+            return_value=ChargeServiceProbe(
+                "ready", ChargeCapabilities(charge_protection_supported=False),
             )
+        ))
+        self.stack.enter_context(patch(
+            "auto_cpufreq.battery_scripts.shared.competing_charge_manager",
+            return_value=ChargeConflict(False),
         ))
         self.stack.enter_context(patch(
             "auto_cpufreq.battery_scripts.battery.lsmod", return_value=False
@@ -124,7 +129,10 @@ class TestOptInGenericStop(GenericBatteryFixture):
             status="Charging", percentage=55, power_watts=12.0,
             charge_protection_supported=True, charge_protection_enabled=True,
         )
-        with patch("auto_cpufreq.battery_scripts.priority.read_upower_battery", return_value=mock):
+        with patch("auto_cpufreq.battery_scripts.priority.probe_charge_service",
+                   return_value=ChargeServiceProbe("ready", ChargeCapabilities(
+                       charge_protection_supported=True,
+                       charge_protection_enabled=True))):
             with patch.object(dev, "_write_value_to_file", side_effect=AssertionError("must not write")):
                 dev.apply_threshold_settings()
         self.assertEqual(self.read_stop(), 100)

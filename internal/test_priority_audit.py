@@ -9,6 +9,7 @@ from auto_cpufreq.battery_scripts import battery
 from auto_cpufreq.battery_scripts.generic import GenericKernelBatteryDevice
 from auto_cpufreq.battery_scripts.priority import resolve_charge_control
 from auto_cpufreq.modules.battery_upower import UPowerBattery
+from auto_cpufreq.battery_scripts.probe import ChargeServiceProbe, ChargeCapabilities
 from test_generic_kernel_threshold import GenericBatteryFixture
 
 
@@ -26,8 +27,18 @@ def upower(*, supported=True, enabled=True, kinds=("End threshold",),
 
 class PriorityResolverTests(GenericBatteryFixture):
     def _upower(self, value):
-        return patch("auto_cpufreq.battery_scripts.priority.read_upower_battery",
-                     return_value=value)
+        if value is None:
+            probe = ChargeServiceProbe("unavailable", reason="UPower unavailable")
+        else:
+            probe = ChargeServiceProbe("ready", ChargeCapabilities(
+                charge_protection_supported=value.charge_protection_supported,
+                charge_protection_enabled=value.charge_protection_enabled,
+                charge_control_types=value.charge_control_types,
+                configured_start_threshold=value.configured_start_threshold,
+                configured_end_threshold=value.configured_end_threshold,
+            ))
+        return patch("auto_cpufreq.battery_scripts.priority.probe_charge_service",
+                     return_value=probe)
 
     def _apply_without_writes(self, snapshot):
         dev = self.device()
@@ -179,7 +190,7 @@ class PriorityResolverTests(GenericBatteryFixture):
     def test_disabling_all_thresholds_blocks_preflight_calls(self):
         dev = self.device()
         cfg = self.set_config(enabled=False)
-        with patch("auto_cpufreq.battery_scripts.priority.read_upower_battery",
+        with patch("auto_cpufreq.battery_scripts.priority.probe_charge_service",
                    side_effect=AssertionError("unexpected UPower call")):
             dev.apply_threshold_settings()
         self.assertEqual(self.read_stop(), 100)
