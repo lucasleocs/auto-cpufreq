@@ -135,7 +135,11 @@ class SystemMonitor:
         return report, suggested_governor, suggested_turbo
 
     def _report_dispatch_error(self, error):
-        self._pipe_delivery_error = str(error)[:160]
+        message = str(error)[:160]
+        # A broken pipe may persist; one error per episode suffices.
+        if message == self._pipe_delivery_error:
+            return
+        self._pipe_delivery_error = message
         if self._diagnostics:
             self._diagnostics.warning("Urwid report dispatch error: %s", error)
 
