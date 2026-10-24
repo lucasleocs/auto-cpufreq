@@ -39,6 +39,8 @@ jobs:
         run: sudo /usr/bin/python3 internal_tests/rapl_systemd_integration.py
       - name: Exercise real source-installer transaction in isolated paths
         run: sudo /usr/bin/python3 -m unittest discover -s internal_tests -p 'test_rapl_installer_transactions.py' -v
+      - name: Exercise release tag checkout and updater staging in isolated paths
+        run: sudo /usr/bin/python3 -m unittest discover -s internal_tests -p 'test_rapl_update_staging.py' -v
       - name: Prove the ephemeral unit was removed
         if: always()
         run: |
