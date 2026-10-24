@@ -14,6 +14,7 @@ import time
 
 from auto_cpufreq.config.config import config, find_config_file
 from auto_cpufreq.gui.diagnostics import diagnostics
+from auto_cpufreq.modules.report_refresh import ReportRefreshCoordinator
 from auto_cpufreq.core import distro_info, get_formatted_version, get_override, get_turbo_override, sysinfo
 from auto_cpufreq.globals import GITHUB, IS_INSTALLED_WITH_AUR, IS_INSTALLED_WITH_SNAP
 from auto_cpufreq.modules.system_info import system_info
@@ -833,6 +834,10 @@ class MonitorModeView(Gtk.Box):
         self.running = True
         self.refresh_interval = refresh_interval
         self.refresh_id = None
+        self._refresh_coordinator = ReportRefreshCoordinator(
+            self._collect_report, self._dispatch_refresh_result,
+            thread_name="gtk-monitor-refresh",
+        )
 
         self.header = Gtk.Box(
             orientation=Gtk.Orientation.HORIZONTAL
@@ -948,57 +953,42 @@ class MonitorModeView(Gtk.Box):
 
     def refresh_in_thread(self):
         self.refresh_id = None
-
-        if not self.running:
-            return False
-
-        Thread(
-            target=self._refresh,
-            daemon=True,
-        ).start()
-
+        if self.running:
+            self._refresh_coordinator.request()
         return False
 
-    def _refresh(self):
-        started = time.monotonic()
+    def _collect_report(self):
+        report = system_info.generate_system_report()
+        suggested_governor = system_info.governor_suggestion(report)
+        suggested_turbo = None
+        if report.is_turbo_on[0] is not None:
+            suggested_turbo = system_info.turbo_on_suggestion(report)
+        return report, suggested_governor, suggested_turbo
+
+    def _dispatch_refresh_result(self, result):
+        GLib.idle_add(self._deliver_refresh_result, result)
+
+    def _deliver_refresh_result(self, result):
+        if (
+            not self.running
+            or not self._refresh_coordinator.is_current(result.generation)
+        ):
+            return False
+        diagnostics.record_duration(
+            "GTK monitor collection", result.duration,
+            slow_after=max(2.0, self.refresh_interval * 2),
+        )
         try:
-            report = (
-                system_info.generate_system_report()
-            )
-            suggested_governor = (
-                system_info.governor_suggestion(report)
-            )
-
-            suggested_turbo = None
-            if report.is_turbo_on[0] is not None:
-                suggested_turbo = (
-                    system_info.turbo_on_suggestion(
-                        report
-                    )
+            if result.error is not None:
+                diagnostics.warning(
+                    "GTK monitor collection failed: %s", result.error
                 )
-
-        except Exception as error:
-            diagnostics.exception("GTK monitor collection failed")
-            if self.running:
-                GLib.idle_add(
-                    self._show_error,
-                    str(error),
-                )
-            return
+                self._show_error(str(result.error))
+            else:
+                self._update_display(*result.report)
         finally:
-            diagnostics.record_duration(
-                "GTK monitor collection",
-                time.monotonic() - started,
-                slow_after=max(2.0, self.refresh_interval * 2),
-            )
-
-        if self.running:
-            GLib.idle_add(
-                self._update_display,
-                report,
-                suggested_governor,
-                suggested_turbo,
-            )
+            self._refresh_coordinator.acknowledge(result.generation)
+        return False
 
     def _show_error(self, message):
         if not self.running:
@@ -1114,6 +1104,7 @@ class MonitorModeView(Gtk.Box):
     def cleanup(self):
         diagnostics.info("GTK monitor view closed")
         self.running = False
+        self._refresh_coordinator.close()
 
         if self.refresh_id is not None:
             GLib.source_remove(self.refresh_id)
