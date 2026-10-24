@@ -826,9 +826,11 @@ class ToolWindow(Gtk.Window):
         self._refresh_coordinator.request()
 
     def _cleanup_refresh(self, *_args):
-        diagnostics.set_error_callback(None)
-        diagnostics.info("GTK window closing")
+        if self.destroyed:
+            return
         self.destroyed = True
+        # Free UI resources before optional diagnostic I/O. The destroy
+        # signal and explicit teardown may both call this method.
         self._refresh_coordinator.close()
         self.refresh_in_progress = False
         self.refresh_pending = False
@@ -842,6 +844,11 @@ class ToolWindow(Gtk.Window):
         self.power_apply_sources.clear()
         self.pending_power_updates.clear()
         self.pending_power_release.clear()
+        try:
+            diagnostics.set_error_callback(None)
+            diagnostics.info("GTK window closing")
+        except Exception:
+            pass  # Broken diagnostics must never prevent GTK shutdown.
 
     def show_debug_log_error(self, message):
         if self.destroyed:
