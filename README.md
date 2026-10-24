@@ -604,6 +604,21 @@ Log records use a bounded asynchronous queue so routine updates do not wait for 
 
 Disable logging using the same option when finished troubleshooting.
 
+#### Optional terminal diagnostics
+
+The CLI Stats, Monitor and Live interfaces can use the same opt-in logging library without enabling GTK logging:
+
+```sh
+auto-cpufreq --stats --diagnostic-log
+sudo auto-cpufreq --monitor --diagnostic-log
+sudo auto-cpufreq --live --diagnostic-log
+```
+
+The flag applies to **that one terminal invocation only**, and is unrelated to the existing one-shot `--debug` command or GTK's saved checkbox setting. The logger records terminal startup/exit, time spent collecting reports and recoverable telemetry errors. It does not yet provide continuous per-process CPU sampling or guaranteed post-crash records. Enabling this flag does **not** change the power-control behavior of `--live`.
+
+Unprivileged CLI sessions use `$XDG_STATE_HOME/auto-cpufreq/` (normally `~/.local/state/auto-cpufreq/`). For commands run with `sudo` as root, the CLI deliberately ignores inherited user HOME/XDG values and writes under root's own state directory (normally `/root/.local/state/auto-cpufreq/`). The files are private, named by component and invocation, and rotated. Review any diagnostic log before sharing it.
+
+
 
 ### Overriding governor
 
