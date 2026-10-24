@@ -15,8 +15,10 @@ _LOG = logging.getLogger(__name__)
 
 
 class LiveModeSession:
-    def __init__(self, policy, service_steps, watch_start, watch_stop):
+    def __init__(self, policy, service_steps, watch_start, watch_stop,
+                 tick_interval=1.0):
         self._policy = policy
+        self._tick_interval = max(0.01, float(tick_interval))
         self._service_steps = list(service_steps)
         self._watch_start = watch_start
         self._watch_stop = watch_stop
@@ -66,7 +68,7 @@ class LiveModeSession:
     def _run_policy(self):
         with self._stdout_proxy.silence_current_thread():
             try:
-                while not self._stop.wait(1):
+                while not self._stop.wait(self._tick_interval):
                     self._policy()
             except Exception as error:
                 with self._lock:
