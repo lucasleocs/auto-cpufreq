@@ -2,7 +2,6 @@
 import json
 import os
 import sys
-from pathlib import Path
 import tempfile
 from threading import Event, Lock, Thread, main_thread
 import time
