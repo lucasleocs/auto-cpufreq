@@ -11,7 +11,7 @@ event loop or changing privileged power policy.
 | `--live` | Same | Urwid `watch_pipe` + alarm | Yes | Yes, through `LiveModeSession` |
 | `--daemon` | Shared report for logs | CLI loop | Yes | Yes |
 | GTK dashboard | Shared report | `GLib.idle_add` + periodic timer | No | Only explicit privileged user actions |
-| GTK Monitor | Shared report, with suggestions | `GLib.idle_add` + timer after delivery | No | No |
+| GTK Monitor | Shared report, with suggestions | `GLib.idle_add` + shared periodic timer | No | No |
 | `--debug` | Snapshot and additional diagnostics | Synchronous text | No | No policy writes |
 
 ## Cross-mode invariants
@@ -20,6 +20,12 @@ event loop or changing privileged power policy.
   are coalesced, and results from closed views are discarded.
 - Toolkit-specific scheduling and widget mutation stay on their UI thread.
   GTK uses GLib; Urwid uses its own event loop and wakeup pipe.
+- Both GTK views own one periodic `GtkRefreshTimer` per active view. A busy
+  periodic tick checks for stalls but never queues an additional collection;
+  explicit user/configuration requests may coalesce one successor.
+- The same periodic tick can detect suspend/resume gaps by comparing Linux
+  CLOCK_BOOTTIME and CLOCK_MONOTONIC, without catching up missed ticks.
+  The optional diagnostic heartbeat remains independent of report collection.
 - The main GTK view can hold a field in **Applying…** until a fresh
   report confirms the observed state. Refactoring refresh must not override
   this transaction state with an older snapshot.
