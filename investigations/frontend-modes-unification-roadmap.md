@@ -68,6 +68,21 @@ This experimental phase implements the post-review robustness corrections withou
 
 **Verification:** use the latest commit's Issue 860 Runtime Regression, Linux Build and Nix Flake CI runs, not older results. An isolated real Linux Mint/X11 or Wayland session test remains required before the production PR.
 
+## October 24 — GUI update responsiveness and end-to-end timing
+
+Changes on the isolated experimental branch (not a production PR):
+
+- **Nonblocking update discovery:** `ToolWindow.handle_update()` now schedules `check_for_update()` on a daemon thread, returns immediately to the GTK main loop, and uses `GLib.idle_add` to show a dialog only if the window still exists. Simultaneous checks are suppressed. No background update *installation* is initiated without the existing explicit confirmation.
+- **Bounded requests:** GitHub release discovery uses `requests.get(..., timeout=(3.05, 5.0))` rather than an unbounded network wait. These are connection/read inactivity timeouts, not a hard global deadline. This is the read-only version-query helper in `core.py`, not a change to the daemon's energy policy.
+- **No global stdout redirect in a worker:** update-check results are returned by values, not parsed from process-wide redirected `stdout`. Existing console messages may still print when the user runs the launcher from a terminal.
+- **Latency decomposition:** `RefreshResult` includes queue wait, collection duration, request timestamp and collection completion timestamp; GTK and Urwid diagnostic adapters can record queue wait, delivery lag and request-to-render completion. These numbers help distinguish the intentional approximately 0.5-second CPU sampling wait from queue contention and an unresponsive UI thread.
+- **Strong acknowledgement contract:** an exception raised while the GTK dashboard schedules its pending successor is logged, and the coordinator still acknowledges the completed generation.
+- **Log-error state ownership:** GTK uses a separate `_last_gui_error` to deduplicate UI notifications, leaving the shared logger's `last_error` and `_error_count` under its own lock.
+- **Xvfb tests:** the update-check worker is exercised under a delayed synthetic network call, with close-during-check and exception cases. Tests also check the pending-refresh acknowledgement, real GTK daemon-absent buttons navigating to Monitor/Back, and timing breakdown when a collection waits in the process-level lane.
+- **No change to installation:** active production `auto-cpufreq`, privileged policy executors, `--live` service restoration, the original `master` and the user's isolated Linux Mint checkout are not modified by the GitHub commits.
+
+**Remaining gates:** inspect the newest experimental CI run and fix any failing tests, perform a longer end-to-end Cinnamon X11 measurement and optional suspension/resume, and eventually construct a clean upstream PR branch without these investigation notes or experimental workflows. The real bootstrapped GTK/Xvfb and component tests provide useful coverage but are not equivalent to exercising every packaging and privilege path.
+
 ## 1. Executive decision
 
 Pursue **one reusable, read-only observability stack** with separate GTK and Urwid event-loop adapters and separate privileged policy executors.
