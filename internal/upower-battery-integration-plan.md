@@ -455,3 +455,8 @@ Sources (official):
 - TLP conflicts: https://linrunner.de/tlp/faq/conflicts.html
 - TLP battery-care/EC persistence: https://linrunner.de/tlp/faq/battery.html
 
+### Persistence and configuration switching — adjacent acceptance checks
+
+- Threshold values can persist in EC/firmware across system restarts and even alternate operating systems. Disabling `enable_thresholds` means **stop writing**, not automatically resetting existing hardware values to 100%. A future reset-to-default operation must be a separate, explicit user-authorized action with driver-aware validation; for Samsung, 100 is documented as the 'off' value.
+- In existing `start_battery_daemon()`, the battery backend object is selected **once** before the hourly loop, even though `get_parsed_config()` is called during each iteration. If a user changes the config from numeric thresholds to explicit IdeaPad conservation mode or vice versa, the cached backend may not match the new mode until the service restarts. Preserve current behavior for the first PR and require a daemon restart or add a tested backend-refresh mechanism in the future; never silently mix controllers on a live config change.
+- The parent `BatteryDevice._get_batteries()` currently enumerates BAT-prefixed entries broadly, while the generic device restricts itself to one selected physical system battery. Any legacy refactor needs multi-battery and peripheral safeguards, without dropping dual-battery ThinkPad compatibility.

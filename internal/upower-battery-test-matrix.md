@@ -282,3 +282,7 @@ Observed (passing assertions): no UPower -> kernel; UPower explicitly unsupporte
 - DOC16: Strictly no config opt-in → no UPower arbitration/manager probe on write path, no write, no runtime policy change.
 
 These are **requirements for future tests**, not PASS statuses. Current 32/32 offline priority tests at commit `82b4d515...` validate prior behavior and do not cover DOC01-DOC16 yet.
+
+- DOC17: Disabling auto-cpufreq threshold control after a persisted hardware value of 80% causes **no write** and does not misleadingly claim hardware returned to 100%; an explicit restore operation is separate and tested.
+- DOC18: Config changes that require switching backend (generic stop threshold ↔ Lenovo firmware conservation) do not use a stale cached backend; require controlled reload/restart or a tested new selection on config change.
+- DOC19: Vendor fallback preserves intentional dual laptop batteries but never blindly touches BAT-prefixed peripheral or arbitrary filesystem paths.
