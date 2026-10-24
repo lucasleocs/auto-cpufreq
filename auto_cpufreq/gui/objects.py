@@ -7,6 +7,7 @@ from gi.repository import Gdk, GdkPixbuf, GLib, Gtk
 import sys
 from io import StringIO
 from os.path import isfile
+from pathlib import Path
 from platform import python_version
 from subprocess import getoutput, PIPE, run
 from threading import Thread
@@ -23,6 +24,36 @@ from auto_cpufreq.modules.system_info import system_info
 from auto_cpufreq.power_helper import bluetoothctl_exists
 
 auto_cpufreq_stats_path = ("/var/snap/auto-cpufreq/current" if IS_INSTALLED_WITH_SNAP else "/var/run") + "/auto-cpufreq.stats"
+
+
+def open_containing_folder(parent, file_path):
+    """Open the containing directory using the desktop's default URI handler.
+
+    This launches only a file manager; it does not edit the selected file,
+    require root privileges, or assume a particular desktop environment.
+    """
+    directory = Path(file_path).expanduser().absolute().parent
+    try:
+        if not directory.is_dir():
+            raise FileNotFoundError(f"Directory does not exist: {directory}")
+        if not Gtk.show_uri_on_window(
+            parent, directory.as_uri(), Gdk.CURRENT_TIME
+        ):
+            raise OSError("No application could open the directory")
+    except (OSError, GLib.Error) as error:
+        dialog = Gtk.MessageDialog(
+            transient_for=parent,
+            message_type=Gtk.MessageType.ERROR,
+            buttons=Gtk.ButtonsType.CLOSE,
+            text="Unable to open folder",
+        )
+        dialog.format_secondary_text(str(error))
+        dialog.set_destroy_with_parent(True)
+        dialog.connect("response", lambda widget, _response: widget.destroy())
+        dialog.show_all()
+        return False
+    return True
+
 
 def get_stats():
     if not isfile(auto_cpufreq_stats_path):
@@ -680,6 +711,7 @@ class DropDownMenu(Gtk.MenuButton):
             dialog.connect("response", lambda widget, _response: widget.destroy())
             dialog.show_all()
 
+
     def _show_debug_log_location(self, _item, parent):
         log_path = diagnostics.log_path
         dialog = Gtk.MessageDialog(
@@ -689,18 +721,22 @@ class DropDownMenu(Gtk.MenuButton):
             text="GTK debug log location",
         )
         dialog.format_secondary_text(
-            f"File: {log_path.name}\n"
-            f"Directory: {log_path.parent}\n\n"
+            f"File: {log_path.name}\\n"
+            f"Directory: {log_path.parent}\\n\\n"
             "Each time logging is enabled, a separate file is created. "
             "Each session supports three 1 MiB backups. "
             "Review the contents before sharing."
         )
         dialog.add_button("Copy full path", Gtk.ResponseType.APPLY)
-        if dialog.run() == Gtk.ResponseType.APPLY:
+        dialog.add_button("Open folder", Gtk.ResponseType.YES)
+        response = dialog.run()
+        if response == Gtk.ResponseType.APPLY:
             dialog.get_clipboard(Gdk.SELECTION_CLIPBOARD).set_text(
                 str(log_path), -1
             )
         dialog.destroy()
+        if response == Gtk.ResponseType.YES:
+            open_containing_folder(parent, log_path)
 
     def about_dialog(self, MenuItem, parent):
         dialog = AboutDialog(parent)
