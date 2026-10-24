@@ -35,6 +35,23 @@ This is a **partial implementation**, not the complete roadmap. All changes belo
 
 This working plan and the experimental workflow must not be included in the eventual clean upstream PR.
 
+## Hardening review — October 23, 2026 (current experimental iteration)
+
+Implemented without changing power writers, active daemon, or installed GTK/Stats:
+
+- **Thread ownership:** `ProcessHealthSampler.stop()` signals termination and retains the worker reference if a blocked `/proc` read outlasts the 200 ms join. A subsequent start refuses to create a duplicate worker while the previous one is still alive. The shared session logger likewise retains an active retiring file writer after its bounded shutdown wait, and refuses another logging session until that writer exits.
+- **Error visibility:** the toolkit-independent diagnostic engine stores last write failure and a monotonically increasing error count, retrievable from the UI. GTK retains its own GLib error notification; Urwid shows a persistent footer warning on the main loop when a new writer error occurs, without touching widgets from the background thread.
+- **Display robustness:** Urwid catches unexpected `_display_report()` exceptions, acknowledges the refresh result and schedules another attempt. Temporary sensor errors remain distinct from rendering errors.
+- **Data parity:** terminal battery percentage, AC state, charge thresholds and wattage now use the same typed interpretation as GTK rather than direct formatting. This does not refactor energy policy or driver APIs.
+- **Sampler reliability:** persistent `/proc` errors are rate-limited, subsequent recovery is logged, and a sustained high-CPU episode optionally records a bounded Python stack for the hottest Linux TID when the TID can be mapped to a live Python thread. This cannot obtain native-only stacks and is not a guarantee against GIL starvation. Stack trace paths may be sensitive; users must review logs before sharing them.
+- **Lifecycle tests:** blocked sampling, blocked writer, background write error, real busy-thread detection, GTK Monitor open/close cycles, and Stats terminal hangup with diagnostics enabled; Urwid render error and shared battery semantics are covered by separate tests.
+
+Validation reference for the first set of hardening changes: https://github.com/lucasleocs/auto-cpufreq/actions/runs/40054500032 (68 Python/terminal + 8 GTK/Xvfb tests; Linux build/Nix both passed at commit `72ca91e6a74c`). Follow-on hot-thread stack capture has its own CI run and must be checked before the new commit is described as fully verified.
+
+Not attempted by request: Python 3.9 compatibility adjustments or `pyproject.toml` version changes.
+
+Still required before an upstream production PR: isolated real GTK launch and long-duration resource benchmark on Linux Mint, repeated suspend/resume, privileged CLI diagnostics inspection without changing energy policy, and building a clean PR branch from current upstream master.
+
 ## 1. Executive decision
 
 Pursue **one reusable, read-only observability stack** with separate GTK and Urwid event-loop adapters and separate privileged policy executors.
