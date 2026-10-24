@@ -372,6 +372,12 @@ class BatteryDevice:
                 continue
             if not self.apply_threshold_settings_to_bat(bat, parsed_config):
                 print(f"ERROR: failed to set thresholds for battery {bat}")
+                after_failure = self.get_current_threshold(bat)
+                if after_failure != current:
+                    self._drift_guard.suspend(
+                        bat, signature,
+                        "Partial or concurrent threshold change; manual verification required"
+                    )
                 continue
             updated = self.get_current_threshold(bat)
             # Track only readbacks corresponding to an actual numeric writer.

@@ -40,8 +40,20 @@ class ChargeDriftGuard:
     def __init__(self):
         self._expected = {}
         self._suspended = set()
+        self._suspended_policy = {}
+
+    def suspend(self, battery: str, requested: tuple, reason: str) -> None:
+        """Track a partial write even if there was no prior successful write."""
+        self._suspended.add(battery)
+        self._suspended_policy[battery] = (requested, reason)
 
     def ready(self, battery: str, requested: tuple, observed: tuple) -> ChargeConflict:
+        policy = self._suspended_policy.get(battery)
+        if policy is not None and policy[0] != requested:
+            self._suspended_policy.pop(battery, None)
+            self._suspended.discard(battery)
+            self._expected.pop(battery, None)
+
         current = self._expected.get(battery)
         if current is not None and current[0] != requested:
             self._expected.pop(battery, None)
@@ -49,7 +61,10 @@ class ChargeDriftGuard:
             current = None
 
         if battery in self._suspended:
-            return ChargeConflict(True, "External threshold change detected; auto writes suspended")
+            reason = self._suspended_policy.get(
+                battery, (None, "External threshold change detected; auto writes suspended")
+            )[1]
+            return ChargeConflict(True, reason)
 
         if current is not None:
             _, baseline = current
@@ -59,7 +74,10 @@ class ChargeDriftGuard:
                 for expected, actual in zip(baseline, observed)
             )
             if changed:
-                self._suspended.add(battery)
+                self.suspend(
+                    battery, requested,
+                    "Kernel threshold changed after our verified application"
+                )
                 return ChargeConflict(
                     True, "Kernel threshold changed after our verified application"
                 )
@@ -69,3 +87,4 @@ class ChargeDriftGuard:
         if any(v is not None for v in observed):
             self._expected[battery] = (requested, observed)
             self._suspended.discard(battery)
+            self._suspended_policy.pop(battery, None)
