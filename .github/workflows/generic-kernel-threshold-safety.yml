@@ -1,0 +1,32 @@
+name: Generic battery threshold safety tests (temporary)
+
+on:
+  push:
+    branches:
+      - tmp/generic-kernel-charge-threshold-20261024
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ['3.9', '3.12']
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install isolated production dependencies
+        run: |
+          POETRY_DYNAMIC_VERSIONING_BYPASS=3.2.0 python -m pip install -e .
+      - name: Check syntax
+        run: |
+          python -m py_compile auto_cpufreq/modules/battery_upower.py auto_cpufreq/battery_scripts/generic.py auto_cpufreq/battery_scripts/battery.py
+      - name: Test no-write defaults and virtual kernel charge thresholds
+        run: python -m unittest discover -s internal -p 'test_generic_kernel_threshold.py' -v
