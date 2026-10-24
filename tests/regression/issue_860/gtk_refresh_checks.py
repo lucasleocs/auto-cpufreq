@@ -164,6 +164,49 @@ class GtkRefreshTests(unittest.TestCase):
         APP.system_info.generate_system_report = self.generator
         pump_until(lambda: True, timeout=0.1)
 
+    def test_periodic_tick_skips_busy_collection_without_pending_work(self):
+        started, release = threading.Event(), threading.Event()
+        calls = []
+
+        def collect():
+            calls.append(1)
+            started.set()
+            release.wait(timeout=3)
+            return object()
+
+        APP.system_info.generate_system_report = collect
+        try:
+            self.window.refresh_in_thread()
+            self.assertTrue(started.wait(timeout=2))
+            self.window._schedule_refresh()
+            for _ in range(30):
+                self.assertTrue(self.window._refresh_timer._tick())
+            self.assertFalse(self.window.refresh_pending)
+            self.assertEqual(len(calls), 1)
+            release.set()
+            self.assertTrue(pump_until(
+                lambda: len(self.window.applied) == 1
+                and not self.window._refresh_coordinator.in_progress,
+                timeout=3,
+            ))
+            self.assertEqual(len(calls), 1)
+        finally:
+            release.set()
+
+    def test_repeated_interval_changes_do_not_duplicate_timers(self):
+        self.window._schedule_refresh()
+        source = self.window.refresh_id
+        for interval in (2, 5, 1, 5, 2):
+            self.window.set_refresh_interval(interval)
+            self.assertIsNone(
+                GLib.MainContext.default().find_source_by_id(source)
+            )
+            source = self.window.refresh_id
+            self.assertIsNotNone(source)
+            self.assertIsNotNone(
+                GLib.MainContext.default().find_source_by_id(source)
+            )
+
     def test_pending_requests_are_coalesced(self):
         started = threading.Event()
         release = threading.Event()
