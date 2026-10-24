@@ -13,6 +13,7 @@ import re
 import secrets
 import sys
 from threading import Lock, Thread
+from auto_cpufreq.modules.process_health import ProcessHealthSampler
 import time
 import traceback
 
@@ -181,6 +182,7 @@ class SessionDiagnostics:
         self._writer = None
         self._events = None
         self._activated_once = False
+        self._health_sampler = None
         self.enabled = False
 
     @property
@@ -306,10 +308,22 @@ class SessionDiagnostics:
         self.enabled = True
         self._activated_once = True
         self.info("%s debug logging enabled; pid=%d", self.component, os.getpid())
+        # Sampling is opt-in and shares this process's own session log.
+        # It never touches cpufreq, daemon services or the GUI event loop.
+        sampler = ProcessHealthSampler(self)
+        try:
+            sampler.start()
+        except (OSError, RuntimeError) as error:
+            self.warning("Process health sampler unavailable: %s", error)
+        else:
+            self._health_sampler = sampler
 
     def _deactivate(self):
         if not self.enabled:
             return
+        sampler, self._health_sampler = self._health_sampler, None
+        if sampler is not None:
+            sampler.stop()
         self.info("%s debug logging disabled", self.component)
         self.enabled = False
         session = self._session
