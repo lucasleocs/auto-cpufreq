@@ -6,6 +6,7 @@ import tempfile
 import time
 import unittest
 import logging
+from threading import Event
 from unittest.mock import patch
 
 
@@ -182,21 +183,30 @@ class GuiDiagnosticsTests(unittest.TestCase):
 
     def test_queue_is_bounded_and_nonblocking_under_slow_disk(self):
         diagnostics = self.diagnostics
-        with patch.object(
-            MODULE._PrivateRotatingFileHandler,
-            "emit",
-            autospec=True,
-            side_effect=lambda *args: time.sleep(0.008),
-        ):
-            diagnostics.set_enabled(True)
-            started = time.monotonic()
-            for index in range(1500):
-                diagnostics.debug("saturated queue %d", index)
-            elapsed = time.monotonic() - started
-            self.assertLess(elapsed, 1.5)
-            self.assertLessEqual(diagnostics._events.qsize(), MODULE.QUEUE_SIZE)
-            self.assertGreater(diagnostics._dropped, 0)
-            diagnostics.shutdown()
+        release = Event()
+        actual_emit = MODULE._PrivateRotatingFileHandler.emit
+
+        def slow_emit(handler, record):
+            release.wait(timeout=2)
+            return actual_emit(handler, record)
+
+        with patch.object(MODULE._PrivateRotatingFileHandler, "emit", slow_emit):
+            try:
+                diagnostics.set_enabled(True)
+                started = time.monotonic()
+                for index in range(1500):
+                    diagnostics.debug("saturated queue %d", index)
+                elapsed = time.monotonic() - started
+                self.assertLess(elapsed, 1.5)
+                self.assertLessEqual(diagnostics._events.qsize(), MODULE.QUEUE_SIZE)
+                self.assertGreater(diagnostics._dropped, 0)
+            finally:
+                release.set()
+                self.wait_for(
+                    lambda: diagnostics._events.qsize() < 5,
+                    timeout=5,
+                )
+                diagnostics.shutdown()
 
     def test_repeated_toggle_uses_distinct_session_logs(self):
         diagnostics = self.diagnostics
@@ -225,6 +235,60 @@ class GuiDiagnosticsTests(unittest.TestCase):
         )
         self.assertNotIn("second-instance", self.diagnostics.log_path.read_text())
         self.assertNotIn("first-instance", second.log_path.read_text())
+
+    def test_completed_sessions_are_pruned_but_active_files_remain(self):
+        diagnostics = self.diagnostics
+        directory = diagnostics.state_dir
+        directory.mkdir(parents=True, exist_ok=True)
+        old_paths = []
+        for i in range(8):
+            name = f"gtk-20261023-1200{i:02d}-{os.getpid()}-{i:08x}.log"
+            path = directory / name
+            path.write_text(f"old session {i}")
+            (directory / (name + ".1")).write_text("old backup")
+            os.utime(path, (1000 + i, 1000 + i))
+            old_paths.append(path)
+
+        other = MODULE.GuiDiagnostics()
+        self.addCleanup(other.shutdown)
+        other.set_enabled(True)
+        current = other.log_path
+        with patch.object(MODULE, "RETAIN_SESSIONS", 2):
+            diagnostics.set_enabled(True)
+            self.wait_for(
+                lambda: sum(p.exists() for p in old_paths) == 2
+            )
+        self.assertTrue(current.exists())
+        self.assertTrue(diagnostics.log_path.exists())
+        self.assertEqual(
+            {p for p in old_paths if p.exists()}, set(old_paths[-2:])
+        )
+        for old in old_paths[:-2]:
+            self.assertFalse((old.parent / (old.name + ".1")).exists())
+
+    def test_enable_reports_initial_log_open_failure(self):
+        with patch.object(
+            MODULE,
+            "_PrivateRotatingFileHandler",
+            side_effect=PermissionError("write permission denied"),
+        ):
+            with self.assertRaisesRegex(OSError, "write permission denied"):
+                self.diagnostics.set_enabled(True)
+        self.assertFalse(self.diagnostics.enabled)
+
+    def test_refresh_durations_are_aggregated(self):
+        diagnostics = self.diagnostics
+        diagnostics.set_enabled(True)
+        diagnostics.record_duration("GTK dashboard collection", 0.1)
+        diagnostics.record_duration("GTK dashboard collection", 0.3)
+        diagnostics._flush_summary(force=True)
+        self.wait_for(
+            lambda: "GTK dashboard collection: 2 calls"
+            in diagnostics.log_path.read_text()
+        )
+        content = diagnostics.log_path.read_text()
+        self.assertIn("mean=0.200s", content)
+        self.assertIn("max=0.300s", content)
 
     def test_async_file_failure_is_exposed_to_ui(self):
         diagnostics = self.diagnostics
