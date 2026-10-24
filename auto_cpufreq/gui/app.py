@@ -489,7 +489,6 @@ class ToolWindow(Gtk.Window):
         self.set_default_size(920, 680)
         self.set_border_width(10)
         self.set_resizable(True)
-        self.refresh_in_progress = False
         self.refresh_pending = False
         self.refresh_interval = DEFAULT_REFRESH_INTERVAL
         self.pending_power_updates = set()
@@ -506,7 +505,6 @@ class ToolWindow(Gtk.Window):
             on_report=self._apply_refresh,
             on_error=self._finish_refresh_error,
             before_ack=self._run_pending_refresh,
-            after_ack=self._after_refresh_ack,
             thread_name="gtk-dashboard-refresh",
         )
         self._refresh_coordinator = self._refresh_bridge.coordinator
@@ -800,6 +798,11 @@ class ToolWindow(Gtk.Window):
         self.request_refresh()
 
     @property
+    def refresh_in_progress(self):
+        """Single authoritative collection/delivery state."""
+        return self._refresh_coordinator.in_progress
+
+    @property
     def refresh_id(self):
         """Active periodic timer source, exposed for legacy UI inspection."""
         return self._refresh_timer.source_id
@@ -843,7 +846,6 @@ class ToolWindow(Gtk.Window):
         # Free UI resources before optional diagnostic I/O. The destroy
         # signal and explicit teardown may both call this method.
         self._refresh_coordinator.close()
-        self.refresh_in_progress = False
         self.refresh_pending = False
 
         self._refresh_timer.stop()
@@ -1044,12 +1046,7 @@ class ToolWindow(Gtk.Window):
             self.refresh_pending = True
             diagnostics.debug("GTK refresh requested during active collection")
             return True
-        self.refresh_in_progress = True
-        try:
-            self._refresh_coordinator.request()
-        except RuntimeError:
-            self.refresh_in_progress = False
-            raise
+        self._refresh_coordinator.request()
         return True
 
     def _collect_report(self):
@@ -1063,13 +1060,9 @@ class ToolWindow(Gtk.Window):
     def _deliver_refresh_result(self, result):
         return self._refresh_bridge.deliver(result)
 
-    def _after_refresh_ack(self):
-        self.refresh_in_progress = self._refresh_coordinator.in_progress
-
     def _apply_refresh(self, report):
         if self.destroyed:
-            self.refresh_in_progress = False
-            return False
+                return False
 
         started = time.monotonic()
         try:
@@ -1101,8 +1094,7 @@ class ToolWindow(Gtk.Window):
 
     def _finish_refresh_error(self, message):
         if self.destroyed:
-            self.refresh_in_progress = False
-            return False
+                return False
 
         diagnostics.warning("GTK dashboard collection error: %s", message)
         self.refresh_error_label.set_text(
