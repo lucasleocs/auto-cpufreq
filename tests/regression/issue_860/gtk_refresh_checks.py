@@ -89,6 +89,7 @@ class WindowState:
     _collect_report = APP.ToolWindow._collect_report
     _dispatch_refresh_result = APP.ToolWindow._dispatch_refresh_result
     _deliver_refresh_result = APP.ToolWindow._deliver_refresh_result
+    _after_refresh_ack = APP.ToolWindow._after_refresh_ack
     _apply_refresh = APP.ToolWindow._apply_refresh
     _finish_refresh_error = APP.ToolWindow._finish_refresh_error
     request_refresh = APP.ToolWindow.request_refresh
@@ -101,10 +102,19 @@ class WindowState:
 
     def __init__(self):
         self.destroyed = False
-        self._refresh_coordinator = APP.ReportRefreshCoordinator(
-            self._collect_report, self._dispatch_refresh_result,
+        self._refresh_bridge = APP.GtkRefreshBridge(
+            self._collect_report,
+            component="GTK dashboard",
+            diagnostics=APP.diagnostics,
+            active=lambda: not self.destroyed,
+            interval=lambda: self.refresh_interval,
+            on_report=self._apply_refresh,
+            on_error=self._finish_refresh_error,
+            before_ack=self._run_pending_refresh,
+            after_ack=self._after_refresh_ack,
             thread_name="gtk-test-refresh",
         )
+        self._refresh_coordinator = self._refresh_bridge.coordinator
         self.refresh_in_progress = False
         self.refresh_pending = False
         self.refresh_interval = 1
