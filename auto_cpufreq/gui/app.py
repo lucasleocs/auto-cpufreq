@@ -11,7 +11,7 @@ from threading import Thread
 import time
 
 from auto_cpufreq.gui.diagnostics import diagnostics
-from auto_cpufreq.modules.report_refresh import ReportRefreshCoordinator
+from auto_cpufreq.gui.refresh_bridge import GtkRefreshBridge
 from auto_cpufreq.modules.report_presentation import (
     present_report, interpret_turbo, interpret_battery,
 )
@@ -499,14 +499,19 @@ class ToolWindow(Gtk.Window):
         self.power_apply_sources = {}
         self.destroyed = False
         self._update_check_pending = False
-        self._refresh_coordinator = ReportRefreshCoordinator(
+        self._refresh_bridge = GtkRefreshBridge(
             self._collect_report,
-            self._dispatch_refresh_result,
+            component="GTK dashboard",
+            diagnostics=diagnostics,
+            active=lambda: not self.destroyed,
+            interval=lambda: self.refresh_interval,
+            on_report=self._apply_refresh,
+            on_error=self._finish_refresh_error,
+            before_ack=self._run_pending_refresh,
+            after_ack=self._after_refresh_ack,
             thread_name="gtk-dashboard-refresh",
-            on_dispatch_error=lambda error: diagnostics.warning(
-                "GTK dashboard report delivery failed: %s", error
-            ),
         )
+        self._refresh_coordinator = self._refresh_bridge.coordinator
         self.connect("destroy", self._cleanup_refresh)
         diagnostics.info("GTK window created")
         self.load_css()
@@ -1054,76 +1059,16 @@ class ToolWindow(Gtk.Window):
         return system_info.generate_system_report()
 
     def _dispatch_refresh_result(self, result):
-        # Worker thread: the actual UI update is exclusively on GLib.
-        GLib.idle_add(self._deliver_refresh_result, result)
+        # Compatibility with existing GTK callers/tests; new coordinator
+        # dispatch goes directly through the shared GLib bridge.
+        return self._refresh_bridge.dispatch(result)
 
     def _deliver_refresh_result(self, result):
-        if (
-            self.destroyed
-            or not self._refresh_coordinator.is_current(result.generation)
-        ):
-            return False
-        try:
-            # Diagnostic failures must never suppress presentation or leave
-            # the coordinator waiting for an acknowledgement.
-            try:
-                diagnostics.record_duration(
-                    "GTK dashboard queue", result.queue_seconds,
-                    slow_after=max(1.0, self.refresh_interval),
-                )
-                diagnostics.record_duration(
-                    "GTK dashboard collection", result.duration,
-                    slow_after=max(2.0, self.refresh_interval * 2),
-                )
-                if result.completed_at:
-                    diagnostics.record_duration(
-                        "GTK dashboard delivery latency",
-                        max(0.0, time.monotonic() - result.completed_at),
-                        slow_after=max(1.0, self.refresh_interval),
-                    )
-            except Exception:
-                pass  # Diagnostics are best-effort; UI refresh is essential.
+        return self._refresh_bridge.deliver(result)
 
-            if result.error is not None:
-                try:
-                    diagnostics.warning(
-                        "GTK dashboard collection failed: %s", result.error
-                    )
-                except Exception:
-                    pass
-                self._finish_refresh_error(str(result.error))
-            else:
-                self._apply_refresh(result.report)
-        finally:
-            try:
-                if result.requested_at:
-                    try:
-                        diagnostics.record_duration(
-                            "GTK dashboard end-to-end refresh",
-                            max(0.0, time.monotonic() - result.requested_at),
-                            slow_after=max(2.0, self.refresh_interval * 2),
-                        )
-                    except Exception:
-                        pass
-                try:
-                    self._run_pending_refresh()
-                except Exception:
-                    try:
-                        diagnostics.exception(
-                            "GTK pending refresh scheduling failed"
-                        )
-                    except Exception:
-                        pass
-            finally:
-                # This must run even when diagnostics or rendering fails.
-                try:
-                    self._refresh_coordinator.acknowledge(result.generation)
-                finally:
-                    self.refresh_in_progress = (
-                        self._refresh_coordinator.in_progress
-                    )
-                    self._stalled_refresh_reported = False
-        return False
+    def _after_refresh_ack(self):
+        self.refresh_in_progress = self._refresh_coordinator.in_progress
+        self._stalled_refresh_reported = False
 
     def _apply_refresh(self, report):
         if self.destroyed:
