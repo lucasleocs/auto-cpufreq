@@ -8,11 +8,7 @@ from threading import Event, Lock, Thread, main_thread
 import time
 import traceback
 
-from auto_cpufreq.modules.diagnostics import (
-    MAX_LOG_BYTES, LOG_BACKUPS, QUEUE_SIZE, RETAIN_SESSIONS,
-    SessionDiagnostics, _PrivateRotatingFileHandler, _BoundedQueueHandler,
-    _xdg_path,
-)
+from auto_cpufreq.modules.diagnostics import SessionDiagnostics, _xdg_path
 
 
 HEARTBEAT_SECONDS = 5
@@ -47,12 +43,6 @@ class GuiDiagnostics(SessionDiagnostics):
         self._last_summary = time.monotonic()
         self._error_callback = None
         self._last_gui_error = None
-
-        if self._read_preference():
-            try:
-                self._activate()
-            except OSError as error:
-                self._report_error(error)
 
     def _read_preference(self):
         try:
@@ -103,8 +93,18 @@ class GuiDiagnostics(SessionDiagnostics):
         self._notify_error(message)
 
     def attach_mainloop(self, glib):
+        """Activate saved logging only when the GTK app actually starts.
+
+        Importing the UI modules, including from unit tests, must not
+        create diagnostic files or background threads.
+        """
         self._glib = glib
-        if self.enabled:
+        if not self.enabled and self._read_preference():
+            try:
+                self._activate()
+            except OSError as error:
+                self._report_error(error)
+        elif self.enabled:
             self._start_heartbeat()
 
     def _start_heartbeat(self):
