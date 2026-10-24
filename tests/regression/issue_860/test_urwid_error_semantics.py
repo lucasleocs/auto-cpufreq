@@ -1,4 +1,5 @@
 """Urwid errors and battery semantics without a real terminal or power writes."""
+import os
 import threading
 import time
 from queue import SimpleQueue
@@ -46,6 +47,80 @@ class UrwidConsistencyTests(unittest.TestCase):
         monitor._refresh_coordinator = FakeCoordinator()
         monitor._refresh_results = SimpleQueue()
         return monitor
+
+    def test_run_closes_resources_when_shutdown_diagnostics_fail(self):
+        monitor = SystemMonitor(type=ViewType.STATS)
+        read_fd, write_fd = os.pipe()
+        alarm = object()
+        actions = []
+
+        def info(message, *_args):
+            if "stopped" in message:
+                raise OSError("log unavailable during shutdown")
+
+        monitor._diagnostics = SimpleNamespace(
+            _activate=lambda: actions.append("activate"),
+            info=info,
+            shutdown=lambda: (actions.append("shutdown")),
+        )
+        monitor.loop = SimpleNamespace(
+            watch_pipe=lambda _callback: write_fd,
+            set_alarm_in=lambda *_args: alarm,
+            run=lambda: actions.append("loop"),
+            remove_alarm=lambda handle: actions.append(
+                ("alarm", handle)
+            ),
+            remove_watch_pipe=lambda fd: actions.append(("pipe", fd)),
+        )
+        original_close = monitor._refresh_coordinator.close
+        monitor._refresh_coordinator.close = lambda: (
+            actions.append("coordinator"), original_close()
+        )
+        try:
+            monitor.run(on_quit=lambda: actions.append("on_quit"))
+            self.assertTrue(monitor._refresh_coordinator.closed)
+            self.assertFalse(monitor.running)
+            self.assertIsNone(monitor._alarm_handle)
+            self.assertIsNone(monitor._refresh_pipe_fd)
+            self.assertIn("coordinator", actions)
+            self.assertIn(("alarm", alarm), actions)
+            self.assertIn(("pipe", write_fd), actions)
+            self.assertIn("on_quit", actions)
+            self.assertIn("shutdown", actions)
+            self.assertEqual(actions.count("on_quit"), 1)
+            self.assertLess(actions.index("coordinator"),
+                            actions.index("on_quit"))
+            with self.assertRaises(OSError):
+                os.fstat(write_fd)
+        finally:
+            monitor._refresh_coordinator.close()
+            os.close(read_fd)
+
+    def test_run_releases_pipe_even_if_alarm_removal_fails(self):
+        monitor = SystemMonitor(type=ViewType.STATS)
+        read_fd, write_fd = os.pipe()
+        actions = []
+        monitor.loop = SimpleNamespace(
+            watch_pipe=lambda _callback: write_fd,
+            set_alarm_in=lambda *_args: object(),
+            run=lambda: None,
+            remove_alarm=lambda _alarm: (_ for _ in ()).throw(
+                RuntimeError("alarm removal failure")
+            ),
+            remove_watch_pipe=lambda fd: actions.append(("pipe", fd)),
+        )
+        try:
+            with self.assertRaisesRegex(RuntimeError, "alarm removal failure"):
+                monitor.run(on_quit=lambda: actions.append("on_quit"))
+            self.assertTrue(monitor._refresh_coordinator.closed)
+            self.assertIsNone(monitor._refresh_pipe_fd)
+            self.assertIn(("pipe", write_fd), actions)
+            self.assertIn("on_quit", actions)
+            with self.assertRaises(OSError):
+                os.fstat(write_fd)
+        finally:
+            monitor._refresh_coordinator.close()
+            os.close(read_fd)
 
     def test_periodic_urwid_ticks_do_not_queue_busy_successors(self):
         monitor = self.make()
