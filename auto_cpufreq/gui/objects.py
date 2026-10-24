@@ -14,7 +14,7 @@ import time
 
 from auto_cpufreq.config.config import config, find_config_file
 from auto_cpufreq.gui.diagnostics import diagnostics
-from auto_cpufreq.modules.report_refresh import ReportRefreshCoordinator
+from auto_cpufreq.gui.refresh_bridge import GtkRefreshBridge
 from auto_cpufreq.core import distro_info, get_formatted_version, get_override, get_turbo_override, sysinfo
 from auto_cpufreq.globals import GITHUB, IS_INSTALLED_WITH_AUR, IS_INSTALLED_WITH_SNAP
 from auto_cpufreq.modules.system_info import system_info
@@ -840,13 +840,17 @@ class MonitorModeView(Gtk.Box):
         self._health_timer_id = None
         self._stalled_refresh_reported = False
         self.connect("destroy", self._on_destroy)
-        self._refresh_coordinator = ReportRefreshCoordinator(
-            self._collect_report, self._dispatch_refresh_result,
+        self._refresh_bridge = GtkRefreshBridge(
+            self._collect_report,
+            component="GTK monitor",
+            diagnostics=diagnostics,
+            active=lambda: self.running,
+            interval=lambda: self.refresh_interval,
+            on_report=lambda payload: self._update_display(*payload),
+            on_error=self._show_error,
             thread_name="gtk-monitor-refresh",
-            on_dispatch_error=lambda error: diagnostics.warning(
-                "GTK monitor report delivery failed: %s", error
-            ),
         )
+        self._refresh_coordinator = self._refresh_bridge.coordinator
 
         self.header = Gtk.Box(
             orientation=Gtk.Orientation.HORIZONTAL
@@ -1007,66 +1011,11 @@ class MonitorModeView(Gtk.Box):
         )
 
     def _dispatch_refresh_result(self, result):
-        GLib.idle_add(self._deliver_refresh_result, result)
+        # Kept as a thin compatibility path for UI integration tests.
+        return self._refresh_bridge.dispatch(result)
 
     def _deliver_refresh_result(self, result):
-        if (
-            not self.running
-            or not self._refresh_coordinator.is_current(result.generation)
-        ):
-            return False
-        try:
-            try:
-                diagnostics.record_duration(
-                    "GTK monitor queue", result.queue_seconds,
-                    slow_after=max(1.0, self.refresh_interval),
-                )
-                diagnostics.record_duration(
-                    "GTK monitor collection", result.duration,
-                    slow_after=max(2.0, self.refresh_interval * 2),
-                )
-                if result.completed_at:
-                    diagnostics.record_duration(
-                        "GTK monitor delivery latency",
-                        max(0.0, time.monotonic() - result.completed_at),
-                        slow_after=max(1.0, self.refresh_interval),
-                    )
-            except Exception:
-                pass  # Diagnostic failures cannot block the UI.
-
-            try:
-                if result.error is not None:
-                    try:
-                        diagnostics.warning(
-                            "GTK monitor collection failed: %s", result.error
-                        )
-                    except Exception:
-                        pass
-                    self._show_error(str(result.error))
-                else:
-                    self._update_display(*result.report)
-            except Exception as error:
-                try:
-                    diagnostics.exception("GTK monitor presentation failed")
-                except Exception:
-                    pass
-                self._show_error(str(error))
-        finally:
-            try:
-                if result.requested_at:
-                    try:
-                        diagnostics.record_duration(
-                            "GTK monitor end-to-end refresh",
-                            max(0.0, time.monotonic() - result.requested_at),
-                            slow_after=max(2.0, self.refresh_interval * 2),
-                        )
-                    except Exception:
-                        pass
-            finally:
-                # A failed log, error widget or render must never leave
-                # ReportRefreshCoordinator stuck in its delivering state.
-                self._refresh_coordinator.acknowledge(result.generation)
-        return False
+        return self._refresh_bridge.deliver(result)
 
     def _show_error(self, message):
         if not self.running:
