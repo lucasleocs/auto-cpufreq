@@ -721,8 +721,8 @@ class DropDownMenu(Gtk.MenuButton):
             text="GTK debug log location",
         )
         dialog.format_secondary_text(
-            f"File: {log_path.name}\\n"
-            f"Directory: {log_path.parent}\\n\\n"
+            f"File: {log_path.name}\n"
+            f"Directory: {log_path.parent}\n\n"
             "Each time logging is enabled, a separate file is created. "
             "Each session supports three 1 MiB backups. "
             "Review the contents before sharing."
