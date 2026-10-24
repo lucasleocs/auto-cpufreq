@@ -20,7 +20,7 @@ from auto_cpufreq.modules.platform_profile import (
     PlatformProfileDevice, PlatformProfileSnapshot,
 )
 from auto_cpufreq.modules.system_info import (
-    BatteryInfo, CoreInfo, SystemReport,
+    BatteryInfo, CoreInfo, SystemInfo, SystemReport,
     format_platform_profile_summary, format_system_report,
 )
 from auto_cpufreq.modules import system_monitor
@@ -143,6 +143,68 @@ class FrontendReportParityTests(unittest.TestCase):
         self.assertEqual(
             [row for grid, row, shown in visibility
              if grid is view.battery_grid and not shown],
+            [1, 2, 3, 4, 5],
+        )
+
+    def test_no_battery_real_collection_path_keeps_ac_and_ui_consistent(self):
+        # Exercise SystemInfo's real battery_info() branch, not a synthetic
+        # None that the normal collector never returns.
+        with patch.object(SystemInfo, "get_battery_path", return_value=None):
+            battery = SystemInfo.battery_info()
+
+        self.assertIsInstance(battery, BatteryInfo)
+        self.assertIs(battery.is_present, False)
+        self.assertIs(battery.is_ac_plugged, True)
+        self.assertIsNone(battery.battery_level)
+
+        report = sample_report(battery=battery)
+        self.assertEqual(
+            present_report(report).battery.status.text, "No battery detected"
+        )
+        lines = terminal_lines(report)
+        self.assertIn("Battery status: No battery detected", lines)
+        self.assertNotIn("Battery percentage: Unavailable", lines)
+        view, visible = self.render_gtk(report)
+        view.battery_values["status"].set_text.assert_called_with(
+            "No battery detected"
+        )
+        self.assertEqual(
+            [row for grid, row, shown in visible
+             if grid is view.battery_grid and not shown],
+            [1, 2, 3, 4, 5],
+        )
+
+    def test_detected_battery_keeps_charge_status_and_all_rows(self):
+        # Mock sysfs reads while exercising the production collector branch.
+        with patch.object(
+            SystemInfo, "get_battery_path",
+            return_value="/synthetic/BAT0",
+        ):
+            with patch.object(
+                SystemInfo, "read_file",
+                side_effect=lambda name: (
+                    "Charging" if name.endswith("/status")
+                    else "60" if name.endswith("/capacity")
+                    else None
+                ),
+            ):
+                with patch.object(
+                    SystemInfo, "external_power_state", return_value=True
+                ):
+                    with patch.object(
+                        SystemInfo, "_battery_power_watts", return_value=5.0
+                    ):
+                        battery = SystemInfo.battery_info()
+
+        self.assertIs(battery.is_present, True)
+        self.assertIs(battery.is_ac_plugged, True)
+        report = sample_report(battery=battery)
+        self.assertIn("Battery status: Charging", terminal_lines(report))
+        view, visible = self.render_gtk(report)
+        view.battery_values["status"].set_text.assert_called_with("Charging")
+        self.assertEqual(
+            [row for grid, row, shown in visible
+             if grid is view.battery_grid and shown],
             [1, 2, 3, 4, 5],
         )
 
