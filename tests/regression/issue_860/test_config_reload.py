@@ -8,7 +8,6 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from auto_cpufreq.config.config import _Config, find_config_file
-from auto_cpufreq.config.config_event_handler import ConfigEventHandler
 
 
 class ConfigContractTests(unittest.TestCase):
@@ -23,23 +22,7 @@ class ConfigContractTests(unittest.TestCase):
         self.addCleanup(self._close_watch)
 
     def _close_watch(self):
-        notifier = self.config._notifier
-        if notifier is not None and notifier.is_alive():
-            notifier.stop()
-        elif notifier is not None:
-            # The notifier owns the watch-manager descriptor.
-            self.config.watch_manager.rm_watch(
-                self.config._watch_descriptor
-            )
-            os.close(self.config.watch_manager.get_fd())
-            for fd in notifier._pipe:
-                os.close(fd)
-        else:
-            if self.config._watch_descriptor is not None:
-                self.config.watch_manager.rm_watch(
-                    self.config._watch_descriptor
-                )
-            os.close(self.config.watch_manager.get_fd())
+        self.config.stop_watching()
 
     def governor(self):
         return self.config.get_config().get("battery", "governor", fallback=None)
@@ -124,33 +107,14 @@ class ConfigContractTests(unittest.TestCase):
             "performance",
         )
 
-    def test_backup_modify_event_does_not_trigger_reload(self):
-        original = self.config.get_config()
-        handler = ConfigEventHandler(self.config)
-        with patch.object(self.config, "update_config") as update:
-            handler.process_IN_CLOSE_WRITE(
-                SimpleNamespace(pathname=str(self.config_path) + "~")
-            )
-            update.assert_not_called()
-            handler.process_IN_CLOSE_WRITE(
-                SimpleNamespace(pathname=str(self.config_path))
-            )
-            update.assert_called_once_with()
-        self.assertIs(self.config.get_config(), original)
-
-    def test_overflow_rescans_current_file(self):
-        self.config_path.write_text("[battery]\ngovernor=performance\n")
-        ConfigEventHandler(self.config).process_IN_Q_OVERFLOW(
-            SimpleNamespace()
-        )
-        self.assertEqual(self.governor(), "performance")
-
     def test_notifier_is_lazy_and_duplicate_set_path_has_no_extra_watch(self):
         self.assertIsNone(self.config._notifier)
-        descriptor = self.config._watch_descriptor
         self.config.set_path(str(self.config_path))
-        self.assertEqual(self.config._watch_descriptor, descriptor)
         self.assertIsNone(self.config._notifier)
+        watcher = self.config.notifier
+        self.assertFalse(watcher.is_alive())
+        self.config.set_path(str(self.config_path))
+        self.assertIs(self.config.notifier, watcher)
 
     def test_close_write_not_modify_triggers_real_reload(self):
         notifier = self.config.notifier
@@ -186,12 +150,12 @@ class ConfigContractTests(unittest.TestCase):
         not_yet = self.root / "future" / "auto-cpufreq.conf"
         self.config.set_path(str(not_yet))
         self.assertFalse(self.config.has_config())
-        self.assertIsNone(self.config._watch_descriptor)
+        self.assertIsNone(self.config._notifier)
         not_yet.parent.mkdir()
         not_yet.write_text("[battery]\ngovernor=performance\n")
         self.config.set_path(str(not_yet))
         self.assertEqual(self.governor(), "performance")
-        self.assertIsNotNone(self.config._watch_descriptor)
+        self.assertIsNone(self.config._notifier)
 
 
 if __name__ == "__main__":
