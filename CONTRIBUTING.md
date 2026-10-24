@@ -25,8 +25,7 @@ Prefer a development environment over replacing a running system installation. D
 | Responsibility | Start here |
 | --- | --- |
 | Read-only hardware telemetry and `SystemReport` | `auto_cpufreq/modules/system_info.py` |
-| Shared governor/Turbo suggestion rules | `auto_cpufreq/modules/report_recommendations.py` |
-| Read-only Monitor recommendation status and applicability | `auto_cpufreq/modules/report_recommendations.py` |
+| Read-only governor/Turbo suggestion rules and Monitor recommendation states | `auto_cpufreq/modules/report_recommendations.py` |
 | Shared report semantics (missing battery/sensors, platform profile, config, offline CPUs) | `auto_cpufreq/modules/report_presentation.py` |
 | Cross-interface refresh concurrency | `auto_cpufreq/modules/report_refresh.py` |
 | GTK report layout for dashboard and Monitor | `auto_cpufreq/gui/report_view.py` |
@@ -62,9 +61,21 @@ Both frontends receive the same `SystemReport` data model. Do not duplicate
 presentation rules in separate toolkit modules. `report_presentation.py`
 defines semantic text and availability, including absent batteries, unavailable
 temperature and frequency-limit measurements, absent governor data, offline
-CPUs, config-file labels and platform-profile providers. `gui/report_view.py` and `modules/system_monitor.py` only decide
-**where** and **how** to show each field. The legacy text formatters in
-`system_info.py` delegate platform-profile interpretation to that shared rule.
+CPUs, config-file labels and platform-profile providers. `gui/report_view.py`
+and `modules/system_monitor.py` only decide **where** and **how** to show
+each field. Legacy text formatters in `system_info.py` delegate platform-profile
+interpretation to the shared presentation rule.
+
+A **missing battery** is different from an unknown AC source. Hardware
+collection in `SystemInfo.battery_info()` returns a `BatteryInfo` even when
+no battery path is found: `is_present=False` marks physical absence,
+while `is_ac_plugged=True` retains the existing daemon power-source fallback.
+The shared `battery_present()` function determines which battery rows GTK
+and Stats display. Older `BatteryInfo` objects omit `is_present` and
+remain compatible (treated as present). Do not replace a missing battery
+with `None` inside hardware collection or use presence to change daemon policy.
+When modifying this contract, test both actual collector branches (battery
+path absent/present) using mocked sysfs reads, and check both frontends.
 
 When changing a report field, add a synthetic scenario to
 `tests/test_frontend_report_parity.py` and verify both frontends. Keep
