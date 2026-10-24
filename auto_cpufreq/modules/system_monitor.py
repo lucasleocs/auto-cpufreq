@@ -543,10 +543,18 @@ class SystemMonitor:
 
         try:
             if self._diagnostics:
-                self._diagnostics._activate()
-                self._diagnostics.info(
-                    "%s UI started; terminal PID=%d", self.type, os.getpid()
-                )
+                try:
+                    self._diagnostics._activate()
+                except (OSError, RuntimeError) as error:
+                    # Diagnostics are optional; a non-writable log
+                    # destination must not prevent telemetry display.
+                    self._diagnostics._report_error(error)
+                    self._surface_diagnostic_error()
+                else:
+                    self._diagnostics.info(
+                        "%s UI started; terminal PID=%d",
+                        self.type, os.getpid(),
+                    )
             self._refresh_pipe_fd = self.loop.watch_pipe(
                 self._refresh_ready
             )
