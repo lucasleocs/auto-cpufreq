@@ -173,6 +173,21 @@ class GtkRefreshTests(unittest.TestCase):
         finally:
             release.set()
 
+    def test_pending_scheduler_failure_still_acknowledges_report(self):
+        self.window._run_pending_refresh = lambda: (
+            _ for _ in ()
+        ).throw(RuntimeError("synthetic scheduling error"))
+        self.window.refresh_in_thread()
+        self.assertTrue(pump_until(lambda: len(self.window.applied) == 1))
+        self.assertTrue(pump_until(
+            lambda: not self.window._refresh_coordinator.in_progress
+        ))
+        self.assertFalse(self.window.refresh_in_progress)
+        # The coordinator remains usable after the faulty callback.
+        self.window._run_pending_refresh = lambda: None
+        self.window.refresh_in_thread()
+        self.assertTrue(pump_until(lambda: len(self.window.applied) == 2))
+
     def test_destroy_during_collection(self):
         started = threading.Event()
         release = threading.Event()
