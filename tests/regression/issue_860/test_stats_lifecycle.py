@@ -187,6 +187,29 @@ class StatsLifecycleTests(unittest.TestCase):
             result = child.wait_exit(timeout=4)
             self.assertIsNotNone(result, "Monitor survived PTY hangup")
 
+    def test_idle_cpu_after_multiple_refreshes(self):
+        with self.terminal() as child:
+            start_cpu = child.cpu_seconds()
+            start = time.monotonic()
+            time.sleep(5)
+            self.assertIsNone(child.proc.poll(), child.drain()[-2500:])
+            elapsed = time.monotonic() - start
+            ratio = (child.cpu_seconds() - start_cpu) / elapsed
+            print(f"active-terminal: CPU/core={ratio:.3f}")
+            self.assertLess(ratio, 0.5, "Monitor spins during ordinary refresh")
+            child.send(b"q")
+            self.assertEqual(child.wait_exit(), 0, child.drain()[-2500:])
+
+    def test_hangup_after_multiple_refreshes(self):
+        with self.terminal() as child:
+            time.sleep(5)
+            self.assertIsNone(child.proc.poll(), child.drain()[-2500:])
+            child.close_terminal()
+            self.assertIsNotNone(
+                child.wait_exit(timeout=4),
+                "Monitor survived PTY hangup after refresh cycles",
+            )
+
     def test_ignored_hup_does_not_spin(self):
         with self.terminal(ignore_hup=True) as child:
             child.close_terminal()
