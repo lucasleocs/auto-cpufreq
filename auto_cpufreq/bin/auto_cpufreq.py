@@ -86,7 +86,6 @@ def main(monitor, live, daemon, install, update, remove, force, turbo, config, s
                 sys.exit(0)
             running_daemon_check()
             root_check()
-            conf.notifier.start()
             if IS_INSTALLED_WITH_SNAP:
                 gnome_power_detect_snap()
                 tlp_service_detect_snap()
@@ -105,6 +104,7 @@ def main(monitor, live, daemon, install, update, remove, force, turbo, config, s
                 suggestion=True, type=ViewType.MONITOR,
                 diagnostic_log=diagnostic_log,
             )
+            conf.notifier.start()
             try:
                 monitor.run(on_quit=conf.stop_watching)
             finally:
@@ -116,7 +116,6 @@ def main(monitor, live, daemon, install, update, remove, force, turbo, config, s
             running_daemon_check()
             root_check()
             start_battery_daemon()
-            conf.notifier.start()
             if IS_INSTALLED_WITH_SNAP:
                 gnome_power_detect_snap()
                 tlp_service_detect_snap()
@@ -182,6 +181,7 @@ def main(monitor, live, daemon, install, update, remove, force, turbo, config, s
                             name="auto-cpufreq-live-policy")
             sys.stdout = live_stdout
             try:
+                conf.notifier.start()
                 thread.start()
                 started = True
                 monitor = SystemMonitor(
