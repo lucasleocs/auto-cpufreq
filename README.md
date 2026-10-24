@@ -358,9 +358,6 @@ sudo "$(poetry env info --path)/bin/python" -m auto_cpufreq.power_helper --gnome
 
 For the list of helper options, replace `--gnome_power_disable` with `--help`.
 
-`inotify-simple` 2.0.1 is an external dependency licensed under BSD-2-Clause.
-The auto-cpufreq project remains GPL-3.0-or-later.
-
 ### 2: `--force` governor override
 
 By default, auto-cpufreq uses `balanced` mode which works best for many systems and situations.
@@ -840,10 +837,10 @@ stop_threshold = 80
 ```
 
 You will need to specify both `start_threshold` AND `stop_threshold` in most cases.
-For these changes to have an effect, you will need to restart the daemon:
+To apply threshold changes immediately, restart the daemon through your init system (systemd example below). The battery worker also reapplies the configured thresholds periodically, currently once per hour.
 
 ```shell
-systemctl restart auto-cpufreq.service
+sudo systemctl restart auto-cpufreq.service
 ```
 
 See more here on the kernel doc pages: [docs.kernel.org](https://docs.kernel.org/admin-guide/laptops/thinkpad-acpi.html#battery-charge-control)
