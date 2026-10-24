@@ -20,7 +20,9 @@ class ProcessSamplerTests(unittest.TestCase):
         self.assertGreaterEqual(current["rss_mib"], 0)
         self.assertGreaterEqual(current["threads"], 1)
         self.assertIn(pid, current["task_ticks"])
-        self.assertEqual(
+        # /proc CPU counters can advance between separate file reads.
+        # Equality is not guaranteed on a busy CI runner.
+        self.assertLessEqual(
             current["ticks"],
             SAMPLER.cpu_ticks(Path(f"/proc/{pid}/stat").read_text()),
         )
