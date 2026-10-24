@@ -752,12 +752,13 @@ class DropDownMenu(Gtk.MenuButton):
             )
         dialog.destroy()
         if response == Gtk.ResponseType.YES:
-            hint = (
-                "Enable debug logging first to create the log directory."
-                if not logging_enabled else
-                "Debug logging is enabled, but the directory is missing. "
-                "Check for logging errors."
-            )
+            if logging_enabled:
+                hint = (
+                    "Debug logging is enabled, but the directory is missing. "
+                    "Check for logging errors."
+                )
+            else:
+                hint = "Enable debug logging first to create the log directory."
             open_containing_folder(parent, log_path, missing_hint=hint)
 
     def about_dialog(self, MenuItem, parent):
