@@ -79,11 +79,25 @@ class UPowerBatteryTests(unittest.TestCase):
         fixtures = [dict(Type=3), dict(PowerSupply=False), dict(IsPresent=False),
                     dict(NativePath="BAT0"), dict(State=0), dict(State="4"),
                     dict(Percentage=-1), dict(Percentage=101), dict(Percentage=float("nan")),
-                    dict(EnergyRate=-1), dict(EnergyRate=float("inf")),
+                    dict(EnergyRate=float("nan")), dict(EnergyRate=float("inf")),
                     dict(EnergyRate="0")]
         for fixture in fixtures:
             with self.subTest(fixture=fixture):
                 self.assertIsNone(_decode(props(**fixture), BAT1))
+
+    def test_signed_upower_power_is_magnitude(self):
+        cases = [
+            (1, -12.5, "Charging", 12.5),
+            (2, 12.5, "Discharging", 12.5),
+            (1, 12.5, "Charging", 12.5),
+            (2, -12.5, "Discharging", 12.5),
+            (4, 0, "Fully charged", 0.0),
+        ]
+        for state, rate, expected_state, expected_power in cases:
+            with self.subTest(state=state, rate=rate):
+                value = _decode(props(State=state, EnergyRate=rate), BAT1)
+                self.assertEqual(value.status, expected_state)
+                self.assertEqual(value.power_watts, expected_power)
 
     def test_optional_threshold_capabilities(self):
         value = _decode(props(ChargeThresholdSupported=True, ChargeThresholdEnabled=True,
