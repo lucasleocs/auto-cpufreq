@@ -3,6 +3,7 @@ import logging
 import os
 import pwd
 import sys
+import threading
 from configparser import ConfigParser, Error as ConfigError
 
 from auto_cpufreq.config.file_watcher import ConfigFileWatcher
@@ -54,6 +55,7 @@ class _Config:
         self.path: str = ""
         self._config: ConfigParser = ConfigParser()
         self._notifier = None
+        self._reload_lock = threading.RLock()
 
     @property
     def notifier(self) -> ConfigFileWatcher:
@@ -71,11 +73,12 @@ class _Config:
 
     def set_path(self, path: str) -> None:
         selected = os.path.abspath(os.path.expanduser(path))
-        if self._notifier is not None:
-            # A running observer must never silently keep the old pathname.
-            self._notifier.set_path(selected)
-        self.path = selected
-        self.update_config()
+        with self._reload_lock:
+            if self._notifier is not None:
+                # A running observer must never silently keep the old pathname.
+                self._notifier.set_path(selected)
+            self.path = selected
+            self.update_config()
 
     def has_config(self) -> bool:
         return bool(self.path) and os.path.isfile(self.path)
@@ -86,6 +89,12 @@ class _Config:
         return self._config
 
     def update_config(self) -> bool:
+        # Serialize simultaneous callback and foreground reloads so a slow
+        # earlier reader cannot publish over a newer completed reload.
+        with self._reload_lock:
+            return self._update_config_locked()
+
+    def _update_config_locked(self) -> bool:
         if not self.path:
             return False
         replacement = ConfigParser()
