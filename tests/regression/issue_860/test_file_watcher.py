@@ -6,6 +6,9 @@ import threading
 import time
 import unittest
 from unittest.mock import patch
+from types import SimpleNamespace
+
+from inotify_simple import flags
 
 from auto_cpufreq.config.file_watcher import ConfigFileWatcher
 
@@ -129,6 +132,50 @@ class FileWatcherTests(unittest.TestCase):
             self.assertLess(time.process_time() - start, 0.15)
             self.watcher.stop()
             self.assertFalse(self.watcher.is_alive())
+
+    def test_simulated_queue_overflow_rescans_latest_file(self):
+        # Kernel overflows are difficult to induce deterministically. Deliver
+        # the exact API event over a fake selectable inotify descriptor.
+        class FakeINotify:
+            instance = None
+
+            def __init__(self, nonblocking=False):
+                self.read_fd, self.write_fd = os.pipe()
+                self.queued = []
+                FakeINotify.instance = self
+
+            def fileno(self):
+                return self.read_fd
+
+            def add_watch(self, path, mask):
+                return 11
+
+            def rm_watch(self, wd):
+                pass
+
+            def read(self, timeout=0):
+                os.read(self.read_fd, 1)
+                result, self.queued = self.queued, []
+                return result
+
+            def send_overflow(self):
+                self.queued.append(
+                    SimpleNamespace(
+                        wd=-1, mask=flags.Q_OVERFLOW, cookie=0, name="",
+                    )
+                )
+                os.write(self.write_fd, b"x")
+
+            def close(self):
+                os.close(self.read_fd)
+                os.close(self.write_fd)
+
+        with patch("auto_cpufreq.config.file_watcher.INotify", FakeINotify):
+            self.start_clean()
+            self.path.write_text("state-after-lost-events")
+            FakeINotify.instance.send_overflow()
+            self.wait_for("state-after-lost-events")
+
 
     @unittest.skipUnless(Path("/proc/self/fd").is_dir(), "Linux /proc required")
     def test_repeated_start_stop_does_not_leak_descriptors(self):
