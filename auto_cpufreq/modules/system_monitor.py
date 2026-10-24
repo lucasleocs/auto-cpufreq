@@ -70,13 +70,12 @@ class SystemMonitor:
             dividechars=0,
         )
 
-        self.footer = urwid.AttrMap(
-            urwid.Text(
-                "Press Q or Ctrl+C to quit | Use ↑↓ or PageUp/PageDown to scroll",
-                align="center",
-            ),
-            "footer",
+        self.footer_text = urwid.Text(
+            "Press Q or Ctrl+C to quit | Use ↑↓ or PageUp/PageDown to scroll",
+            align="center",
         )
+        self.footer = urwid.AttrMap(self.footer_text, "footer")
+        self._diagnostic_error_shown = 0
 
         self.frame = urwid.Frame(
             body=self.columns,
@@ -143,6 +142,18 @@ class SystemMonitor:
             # The terminal may have closed while collection was in flight.
             self._refresh_coordinator.acknowledge(result.generation)
 
+    def _surface_diagnostic_error(self):
+        if not self._diagnostics:
+            return
+        count, message = self._diagnostics.error_status()
+        if count <= self._diagnostic_error_shown or not message:
+            return
+        self._diagnostic_error_shown = count
+        self.footer_text.set_text(
+            "Diagnostic log write failure (check directory/permissions): "
+            f"{message[:120]} | Press Q to quit"
+        )
+
     def _refresh_ready(self, _data):
         try:
             result = self._refresh_results.get_nowait()
@@ -157,6 +168,7 @@ class SystemMonitor:
                 "Urwid collection duration=%.3fs generation=%d",
                 result.duration, result.generation,
             )
+        self._surface_diagnostic_error()
         try:
             if result.error is not None or result.report is None:
                 message = str(
@@ -174,8 +186,18 @@ class SystemMonitor:
                 self._display_report(
                     report, suggested_governor, suggested_turbo
                 )
+        except Exception as error:
+            # A bad widget/formatting value must not exit the Urwid loop.
+            self.title_header.set_text(
+                f"{self.type} Mode - display error: {str(error)[:100]}"
+            )
+            if self._diagnostics:
+                self._diagnostics.warning(
+                    "Urwid report presentation failed: %s", error
+                )
         finally:
             self._refresh_coordinator.acknowledge(result.generation)
+            self._surface_diagnostic_error()
 
         if self.running and self._alarm_handle is None:
             self._alarm_handle = self.loop.set_alarm_in(2, self.update)
@@ -315,24 +337,22 @@ class SystemMonitor:
                     urwid.AttrMap(aligned_text("Battery Stats"), "header"),
                     aligned_text(f"Battery status: {presentation.battery.status.text}"),
                     aligned_text(
-                        f"Battery percentage: {(str(report.battery_info.battery_level) + '%') if report.battery_info.battery_level is not None else 'Unknown'}"
+                        f"Battery percentage: {presentation.battery.level.text}"
                     ),
                     aligned_text(
-                        f'AC plugged: {("Yes" if report.battery_info.is_ac_plugged else "No") if report.battery_info.is_ac_plugged is not None else "Unknown"}'
+                        f"AC plugged: {presentation.battery.ac.text}"
                     ),
                     aligned_text(
-                        f'Charging start threshold: {report.battery_info.charging_start_threshold if report.battery_info.is_ac_plugged is not None else "Unknown"}'
+                        "Charging start threshold: "
+                        f"{presentation.battery.charge_start.text}"
                     ),
                     aligned_text(
-                        f'Charging stop threshold: {report.battery_info.charging_stop_threshold if report.battery_info.is_ac_plugged is not None else "Unknown"}'
+                        "Charging stop threshold: "
+                        f"{presentation.battery.charge_stop.text}"
                     ),
                     aligned_text(
                         f"{battery_power_label(report.battery_info)}: "
-                        + (
-                            f"{report.battery_info.power_watts:.2f} W"
-                            if report.battery_info.power_watts is not None
-                            else "Unavailable"
-                        )
+                        + presentation.battery.power_watts.text
                     ),
                     aligned_text(""),
                 ]
