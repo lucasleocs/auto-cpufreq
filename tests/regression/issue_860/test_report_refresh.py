@@ -133,6 +133,89 @@ class RefreshCoordinatorTests(unittest.TestCase):
         self.assertTrue(wait_until(lambda: not coordinator.in_progress))
         self.assertTrue(coordinator.request())
 
+    def test_only_one_process_collector_across_two_views(self):
+        first_entered = threading.Event()
+        first_release = threading.Event()
+        second_entered = threading.Event()
+        first_results, second_results = [], []
+        concurrent = []
+        active = []
+        lock = threading.Lock()
+
+        def collect_one():
+            with lock:
+                active.append(1)
+                concurrent.append(len(active))
+            first_entered.set()
+            first_release.wait(timeout=3)
+            with lock:
+                active.pop()
+            return "one"
+
+        def collect_two():
+            with lock:
+                active.append(2)
+                concurrent.append(len(active))
+            second_entered.set()
+            with lock:
+                active.pop()
+            return "two"
+
+        one = ReportRefreshCoordinator(collect_one, first_results.append)
+        two = ReportRefreshCoordinator(collect_two, second_results.append)
+        self.addCleanup(one.close)
+        self.addCleanup(two.close)
+        try:
+            self.assertTrue(one.request())
+            self.assertTrue(first_entered.wait(timeout=1))
+            self.assertTrue(two.request())
+            self.assertFalse(second_entered.wait(timeout=0.1))
+            self.assertEqual(max(concurrent), 1)
+        finally:
+            first_release.set()
+        self.assertTrue(wait_until(lambda: len(second_results) == 1))
+        self.assertEqual(max(concurrent), 1)
+        one.acknowledge(first_results[0].generation)
+        two.acknowledge(second_results[0].generation)
+
+    def test_close_queued_view_never_starts_collection(self):
+        entered, release = threading.Event(), threading.Event()
+        queued_calls = []
+        primary = ReportRefreshCoordinator(
+            lambda: (entered.set(), release.wait(2), "done")[-1],
+            lambda _result: None,
+        )
+        obsolete = ReportRefreshCoordinator(
+            lambda: queued_calls.append(1),
+            lambda _result: None,
+        )
+        self.addCleanup(primary.close)
+        self.addCleanup(obsolete.close)
+        try:
+            primary.request()
+            self.assertTrue(entered.wait(1))
+            obsolete.request()
+            obsolete.close()
+        finally:
+            release.set()
+        self.assertTrue(wait_until(lambda: not primary.in_progress or
+                                   not entered.is_set(), timeout=2))
+        time.sleep(0.05)
+        self.assertEqual(queued_calls, [])
+
+    def test_dispatch_errors_are_reported_to_callback(self):
+        reported = []
+        def fail(_result):
+            raise OSError("closed display pipe")
+        coordinator = ReportRefreshCoordinator(
+            lambda: "data", fail, on_dispatch_error=reported.append
+        )
+        self.addCleanup(coordinator.close)
+        self.assertTrue(coordinator.request())
+        self.assertTrue(wait_until(lambda: len(reported) == 1))
+        self.assertIn("closed display pipe", str(reported[0]))
+        self.assertTrue(wait_until(lambda: not coordinator.in_progress))
+
     def test_no_gui_or_policy_runtime_imports(self):
         from pathlib import Path
         from auto_cpufreq.modules import report_refresh
