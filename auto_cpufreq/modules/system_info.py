@@ -20,7 +20,9 @@ from auto_cpufreq.globals import (
     IS_INSTALLED_WITH_SNAP,
     POWER_SUPPLY_DIR,
 )
-from auto_cpufreq.modules.report_presentation import present_platform_profile
+from auto_cpufreq.modules.report_presentation import (
+    present_platform_profile, offline_cpus_text,
+)
 from auto_cpufreq.modules.report_recommendations import (
     evaluate_recommendations,
     governor_candidate,
@@ -1007,14 +1009,9 @@ def format_system_report(
             f"{temperature}     {frequency}"
         )
 
-    if report.offline_cpus:
-        lines.extend(
-            [
-                "",
-                "Disabled CPUs: "
-                + ",".join(str(cpu) for cpu in report.offline_cpus),
-            ]
-        )
+    offline_text = offline_cpus_text(report.offline_cpus)
+    if offline_text:
+        lines.extend(["", offline_text])
 
     if report.cpu_fan_speed is not None:
         lines.extend(["", f"CPU fan speed: {report.cpu_fan_speed} RPM"])
