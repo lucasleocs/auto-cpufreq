@@ -845,6 +845,7 @@ class ToolWindow(Gtk.Window):
         self.refresh_in_thread()
 
     def _cleanup_refresh(self, *_args):
+        diagnostics.set_error_callback(None)
         diagnostics.info("GTK window closing")
         self.destroyed = True
         self.refresh_in_progress = False
@@ -859,6 +860,19 @@ class ToolWindow(Gtk.Window):
         self.power_apply_sources.clear()
         self.pending_power_updates.clear()
         self.pending_power_release.clear()
+
+    def show_debug_log_error(self, message):
+        if self.destroyed:
+            return
+        dialog = Gtk.MessageDialog(
+            transient_for=self,
+            message_type=Gtk.MessageType.WARNING,
+            buttons=Gtk.ButtonsType.CLOSE,
+            text="GUI debug logging error",
+        )
+        dialog.format_secondary_text(message)
+        dialog.connect("response", lambda widget, response: widget.destroy())
+        dialog.show_all()
 
     def snap(self):
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, halign=Gtk.Align.CENTER, valign=Gtk.Align.CENTER)
@@ -1001,9 +1015,10 @@ class ToolWindow(Gtk.Window):
                 )
             return
         finally:
-            diagnostics.debug(
-                "GTK dashboard collection duration=%.3fs",
+            diagnostics.record_duration(
+                "GTK dashboard collection",
                 time.monotonic() - started,
+                slow_after=max(2.0, self.refresh_interval * 2),
             )
 
         if not self.destroyed:
@@ -1032,9 +1047,10 @@ class ToolWindow(Gtk.Window):
             )
             self.refresh_error_label.show()
         finally:
-            diagnostics.debug(
-                "GTK dashboard render duration=%.3fs",
+            diagnostics.record_duration(
+                "GTK dashboard render",
                 time.monotonic() - started,
+                slow_after=1.0,
             )
             self.refresh_in_progress = False
             self._run_pending_refresh()
