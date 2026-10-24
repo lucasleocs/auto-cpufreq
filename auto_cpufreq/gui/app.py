@@ -4,8 +4,7 @@ gi.require_version("GdkPixbuf", "2.0")
 gi.require_version("Gtk", "3.0")
 from gi.repository import Gdk, GdkPixbuf, Gio, GLib, Gtk, Pango
 
-from contextlib import redirect_stdout
-from io import StringIO
+from importlib.metadata import PackageNotFoundError, version as package_version
 from os.path import isdir
 from subprocess import PIPE, run
 from threading import Thread
@@ -492,6 +491,7 @@ class ToolWindow(Gtk.Window):
         self.pending_power_release = set()
         self.power_apply_sources = {}
         self.destroyed = False
+        self._update_check_pending = False
         self._refresh_coordinator = ReportRefreshCoordinator(
             self._collect_report,
             self._dispatch_refresh_result,
@@ -864,17 +864,60 @@ class ToolWindow(Gtk.Window):
         self.add(box)
 
     def handle_update(self):
-        new_stdout = StringIO()
-        with redirect_stdout(new_stdout):
-            if not check_for_update(): return
-        captured_output = new_stdout.getvalue().splitlines()
-        dialog = UpdateDialog(self, captured_output[1], captured_output[2])
+        """Check for updates without blocking the GTK event loop."""
+        if self.destroyed or self._update_check_pending:
+            return False
+        self._update_check_pending = True
+        try:
+            Thread(
+                target=self._check_update_async,
+                daemon=True, name="gtk-update-check",
+            ).start()
+        except RuntimeError:
+            self._update_check_pending = False
+            raise
+        return False
+
+    def _check_update_async(self):
+        # No redirect_stdout here: stdout is process-global and redirecting
+        # it from a thread could interfere with concurrent debug output.
+        try:
+            available_tag = check_for_update()
+            error = None
+        except Exception as exc:
+            available_tag, error = None, exc
+        try:
+            GLib.idle_add(self._finish_update_check, available_tag, error)
+        except Exception as exc:
+            diagnostics.warning("Cannot deliver GTK update result: %s", exc)
+
+    def _finish_update_check(self, available_tag, error):
+        self._update_check_pending = False
+        if self.destroyed:
+            return False
+        if error is not None:
+            diagnostics.warning("Update check failed: %s", error)
+            return False
+        if not available_tag:
+            return False
+
+        try:
+            installed_version = package_version("auto-cpufreq")
+        except (PackageNotFoundError, ValueError):
+            installed_version = "unknown"
+
+        dialog = UpdateDialog(
+            self,
+            f"Current version: {installed_version}",
+            f"Latest version: {available_tag}",
+        )
         response = dialog.run()
         dialog.destroy()
-        if response != Gtk.ResponseType.YES: return
-
+        if self.destroyed or response != Gtk.ResponseType.YES:
+            return False
         self.set_sensitive(False)
         Thread(target=self._run_update, daemon=True).start()
+        return False
 
     def _run_update(self):
         try:
