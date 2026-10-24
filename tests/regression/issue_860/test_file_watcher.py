@@ -270,6 +270,26 @@ class FileWatcherTests(unittest.TestCase):
         self.wait_for("revision-24")
 
 
+    def test_repeated_select_errors_back_off_and_stop_promptly(self):
+        attempts = []
+
+        def unavailable_select(*_args, **_kwargs):
+            attempts.append(time.monotonic())
+            raise OSError("simulated failed select")
+
+        with patch(
+            "auto_cpufreq.config.file_watcher.select.select",
+            side_effect=unavailable_select,
+        ):
+            self.watcher.start()
+            time.sleep(0.47)
+            self.assertLessEqual(len(attempts), 5, "Repeated select error spun")
+            begin = time.monotonic()
+            self.watcher.stop()
+            self.assertLess(time.monotonic() - begin, 0.5)
+            self.assertEqual(self.watcher.state, "stopped")
+
+
     @unittest.skipUnless(Path("/proc/self/fd").is_dir(), "Linux /proc required")
     def test_repeated_start_stop_does_not_leak_descriptors(self):
         before = len(list(Path("/proc/self/fd").iterdir()))
