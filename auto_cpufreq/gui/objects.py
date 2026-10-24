@@ -834,6 +834,8 @@ class MonitorModeView(Gtk.Box):
         self.running = True
         self.refresh_interval = refresh_interval
         self.refresh_id = None
+        self._health_timer_id = None
+        self._stalled_refresh_reported = False
         self._refresh_coordinator = ReportRefreshCoordinator(
             self._collect_report, self._dispatch_refresh_result,
             thread_name="gtk-monitor-refresh",
@@ -953,6 +955,23 @@ class MonitorModeView(Gtk.Box):
         )
 
         self.refresh_in_thread()
+        self._health_timer_id = GLib.timeout_add_seconds(
+            2, self._health_tick,
+        )
+
+    def _health_tick(self):
+        if not self.running:
+            return False
+        age = self._refresh_coordinator.request_age_seconds()
+        if age is None:
+            self._stalled_refresh_reported = False
+        elif age >= 20 and not self._stalled_refresh_reported:
+            self._stalled_refresh_reported = True
+            diagnostics.warning(
+                "GTK Monitor collection/delivery pending for %.1fs; "
+                "keeping shared single-flight worker", age,
+            )
+        return True
 
     def refresh_in_thread(self):
         self.refresh_id = None
@@ -1131,6 +1150,10 @@ class MonitorModeView(Gtk.Box):
         if self.refresh_id is not None:
             GLib.source_remove(self.refresh_id)
             self.refresh_id = None
+
+        if self._health_timer_id is not None:
+            GLib.source_remove(self._health_timer_id)
+            self._health_timer_id = None
 
 
 class DaemonNotRunningView(Gtk.Box):
