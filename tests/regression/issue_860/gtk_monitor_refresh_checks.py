@@ -11,6 +11,7 @@ from gi.repository import GLib, Gtk
 
 from gtk_logging_ui_checks import WIDGETS
 from auto_cpufreq.gui import monitor_view as MONITOR_VIEW
+from auto_cpufreq.modules.report_recommendations import RecommendationStatus as State
 
 
 def pump_until(predicate, timeout=4):
@@ -76,9 +77,10 @@ class MonitorRefreshTests(unittest.TestCase):
         MONITOR_VIEW.system_info = WIDGETS.system_info = SimpleNamespace(
             generate_system_report=collector,
             monitor_recommendations=lambda report: SimpleNamespace(
-                governor=SimpleNamespace(suggested="powersave"),
+                governor=SimpleNamespace(suggested="powersave", status=State.NO_CHANGE),
                 turbo=SimpleNamespace(
-                    suggested=True if report.is_turbo_on[0] is not None else None
+                    suggested=True if report.is_turbo_on[0] is not None else None,
+                    status=State.NO_CHANGE
                 ),
             ),
         )
@@ -97,9 +99,10 @@ class MonitorRefreshTests(unittest.TestCase):
         MONITOR_VIEW.system_info = WIDGETS.system_info = SimpleNamespace(
             generate_system_report=self.report,
             monitor_recommendations=lambda report: SimpleNamespace(
-                governor=SimpleNamespace(suggested="powersave"),
+                governor=SimpleNamespace(suggested="powersave", status=State.NO_CHANGE),
                 turbo=SimpleNamespace(
-                    suggested=True if report.is_turbo_on[0] is not None else None
+                    suggested=True if report.is_turbo_on[0] is not None else None,
+                    status=State.NO_CHANGE
                 ),
             ),
         )
