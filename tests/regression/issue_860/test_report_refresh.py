@@ -133,6 +133,38 @@ class RefreshCoordinatorTests(unittest.TestCase):
         self.assertTrue(wait_until(lambda: not coordinator.in_progress))
         self.assertTrue(coordinator.request())
 
+    def test_result_exposes_queue_wait_collection_and_completion_timestamps(self):
+        first_started, release = threading.Event(), threading.Event()
+        results = []
+        second_results = []
+
+        def slow():
+            first_started.set()
+            release.wait(timeout=3)
+            return "slow"
+
+        one = ReportRefreshCoordinator(slow, results.append)
+        two = ReportRefreshCoordinator(lambda: "fast", second_results.append)
+        self.addCleanup(one.close)
+        self.addCleanup(two.close)
+        try:
+            one.request()
+            self.assertTrue(first_started.wait(timeout=1))
+            two.request()
+            time.sleep(0.07)
+        finally:
+            release.set()
+        self.assertTrue(wait_until(lambda: len(second_results) == 1))
+        measured = second_results[0]
+        self.assertGreaterEqual(measured.queue_seconds, 0.05)
+        self.assertGreater(measured.completed_at, measured.requested_at)
+        self.assertGreaterEqual(measured.duration, 0.0)
+        self.assertGreaterEqual(measured.completed_at - measured.requested_at,
+                                measured.queue_seconds)
+        two.acknowledge(measured.generation)
+        if results:
+            one.acknowledge(results[0].generation)
+
     def test_only_one_process_collector_across_two_views(self):
         first_entered = threading.Event()
         first_release = threading.Event()
