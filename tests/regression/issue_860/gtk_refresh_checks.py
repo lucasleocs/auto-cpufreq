@@ -89,7 +89,7 @@ class WindowState:
     _collect_report = APP.ToolWindow._collect_report
     _dispatch_refresh_result = APP.ToolWindow._dispatch_refresh_result
     _deliver_refresh_result = APP.ToolWindow._deliver_refresh_result
-    _after_refresh_ack = APP.ToolWindow._after_refresh_ack
+    refresh_in_progress = APP.ToolWindow.refresh_in_progress
     _apply_refresh = APP.ToolWindow._apply_refresh
     _finish_refresh_error = APP.ToolWindow._finish_refresh_error
     request_refresh = APP.ToolWindow.request_refresh
@@ -113,7 +113,6 @@ class WindowState:
             on_report=self._apply_refresh,
             on_error=self._finish_refresh_error,
             before_ack=self._run_pending_refresh,
-            after_ack=self._after_refresh_ack,
             thread_name="gtk-test-refresh",
         )
         self._refresh_coordinator = self._refresh_bridge.coordinator
@@ -125,7 +124,6 @@ class WindowState:
             component="GTK dashboard",
             interval=1,
         )
-        self.refresh_in_progress = False
         self.refresh_pending = False
         self.refresh_interval = 1
         self.pending_power_updates = set()
@@ -240,7 +238,7 @@ class GtkRefreshTests(unittest.TestCase):
             release.set()
 
     def test_pending_scheduler_failure_still_acknowledges_report(self):
-        self.window._run_pending_refresh = lambda: (
+        self.window._refresh_bridge._before_ack = lambda: (
             _ for _ in ()
         ).throw(RuntimeError("synthetic scheduling error"))
         self.window.refresh_in_thread()
@@ -250,7 +248,7 @@ class GtkRefreshTests(unittest.TestCase):
         ))
         self.assertFalse(self.window.refresh_in_progress)
         # The coordinator remains usable after the faulty callback.
-        self.window._run_pending_refresh = lambda: None
+        self.window._refresh_bridge._before_ack = lambda: None
         self.window.refresh_in_thread()
         self.assertTrue(pump_until(lambda: len(self.window.applied) == 2))
 
