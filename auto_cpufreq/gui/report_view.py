@@ -15,16 +15,7 @@ from auto_cpufreq.modules.system_info import (
 )
 
 HBOX_PADDING = 20
-CONTROL_OPTION_MARGIN = 8
 SECTION_SPACING = 12
-
-DEFAULT_REFRESH_INTERVAL = 2
-REFRESH_INTERVALS = (1, 2, 5)
-
-# The daemon normally applies overrides on its next ~2 second cycle.
-# Keep the affected state hidden until a later, fresh report is collected.
-CONTROL_APPLY_DELAY_SECONDS = 3
-
 
 def _new_section(title):
     frame = Gtk.Frame()
