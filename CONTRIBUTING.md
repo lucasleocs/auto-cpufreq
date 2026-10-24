@@ -69,8 +69,7 @@ Telemetry and recommendations must remain **read-only**. Only dedicated power-po
 
 ## Before submitting a pull request
 
-Keep the diff small, preserve CLI and GTK entrypoints, and avoid unrelated dependency updates or formatting-only changes. Run compilation and the available targeted tests in an isolated
-development checkout (never against the system-installed executable):
+Keep the change coherent, preserve CLI and GTK entrypoints, and avoid unrelated dependency updates or formatting-only changes. Run compilation and the frontend regression suite in an isolated development checkout (never against the system-installed executable):
 
 ```bash
 python -m compileall -q auto_cpufreq tests
@@ -85,6 +84,24 @@ Monitor evaluator), and include a no-hardware-I/O snapshot scenario.
 Record manual GTK and terminal validation against the **exact branch commit**.
 Do not treat test results from a separate lab branch as evidence for the
 current commit.
+
+The frontend regression suite includes pure report tests, deterministic
+refresh worker-race tests, and GTK/GLib adapter tests. The GitHub Actions
+`Frontend regression tests` workflow runs them with distro-provided GTK
+introspection bindings. Tests must not require root, run the daemon, install
+the package system-wide, or modify power-policy settings. When adding a new
+feature, ensure the suite can still be discovered with the command above.
+
+### Opt-in diagnostic logging
+
+`gui/diagnostics.py` holds the GTK preference, but importing a GUI module
+must **not** open logs or start diagnostic threads: GTK's entrypoint activates
+saved logging when it attaches the GLib main loop. For the terminal, the
+`--diagnostic-log` option is supported only with `--stats`, `--monitor`
+and `--live`. It uses `modules/diagnostics.py`, and does not replace
+the existing CLI `--debug` command. Keep logging read-only, bound its
+resource usage, and test missing or unwritable directories. Do not make
+diagnostic I/O prevent the UI from updating or closing.
 
 For changes to scheduling, include evidence that refresh requests do not overlap, old GTK/Urwid callbacks are cleaned up, and the view recovers after a failed collection. For power-policy changes, explain how temporary actions and competing services are restored on error or exit.
 
