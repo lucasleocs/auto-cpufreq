@@ -22,6 +22,8 @@ HEARTBEAT_SECONDS = 5
 STALL_SECONDS = 20
 SUMMARY_SECONDS = 60
 SESSION_RE = re.compile(r"^gtk-\d{8}-\d{6}-(\d+)-[0-9a-f]{8}\.log$")
+_ACTIVE_LOGS = set()
+_ACTIVE_LOCK = Lock()
 
 
 def _boottime():
@@ -200,14 +202,24 @@ class GuiDiagnostics:
                         (dropped,), None,
                     ))
         finally:
-            output.close()
+            try:
+                output.close()
+            finally:
+                with _ACTIVE_LOCK:
+                    _ACTIVE_LOGS.discard(Path(output.baseFilename))
 
     def _prune_old_sessions(self):
         try:
             old = []
             for path in self.state_dir.glob("gtk-*.log"):
                 match = SESSION_RE.match(path.name)
-                if not match or path == self.log_path or _is_running(int(match[1])):
+                if not match:
+                    continue
+                with _ACTIVE_LOCK:
+                    if path in _ACTIVE_LOGS:
+                        continue
+                pid = int(match[1])
+                if pid != os.getpid() and _is_running(pid):
                     continue
                 old.append(path)
             old.sort(key=lambda p: p.stat().st_mtime, reverse=True)
@@ -321,7 +333,21 @@ class GuiDiagnostics:
         self.enabled = True
         self.last_error = None
         self._activated_once = True
-        writer.start()
+        with _ACTIVE_LOCK:
+            _ACTIVE_LOGS.add(self.log_path)
+        try:
+            writer.start()
+        except RuntimeError:
+            with _ACTIVE_LOCK:
+                _ACTIVE_LOGS.discard(self.log_path)
+            self._logger.removeHandler(handler)
+            output.close()
+            self._handler = None
+            self._events = None
+            self._file_handler = None
+            self._writer = None
+            self.enabled = False
+            raise
         self.info("GUI debug logging enabled; pid=%d session=%s", os.getpid(),
                   os.environ.get("XDG_SESSION_TYPE", "unknown"))
         self._start_heartbeat()
