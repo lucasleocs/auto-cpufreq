@@ -44,8 +44,11 @@ class GenericBatteryFixture(unittest.TestCase):
             return_value=str(self.bat)
         ))
         self.stack.enter_context(patch(
-            "auto_cpufreq.battery_scripts.generic.read_upower_battery",
-            return_value=None
+            "auto_cpufreq.battery_scripts.priority.read_upower_battery",
+            return_value=UPowerBattery(
+                status="Charging", percentage=55, power_watts=5.0,
+                charge_protection_supported=False,
+            )
         ))
         self.stack.enter_context(patch(
             "auto_cpufreq.battery_scripts.battery.lsmod", return_value=False
@@ -121,7 +124,7 @@ class TestOptInGenericStop(GenericBatteryFixture):
             status="Charging", percentage=55, power_watts=12.0,
             charge_protection_supported=True, charge_protection_enabled=True,
         )
-        with patch("auto_cpufreq.battery_scripts.generic.read_upower_battery", return_value=mock):
+        with patch("auto_cpufreq.battery_scripts.priority.read_upower_battery", return_value=mock):
             with patch.object(dev, "_write_value_to_file", side_effect=AssertionError("must not write")):
                 dev.apply_threshold_settings()
         self.assertEqual(self.read_stop(), 100)
@@ -178,11 +181,11 @@ class TestOptInGenericStop(GenericBatteryFixture):
                 return_value=str(evil)):
             self.assertIsNone(battery.get_battery_device())
 
-    def test_vendor_paths_have_precedence(self):
+    def test_standard_kernel_selected_before_vendor_when_supported(self):
         with patch("auto_cpufreq.battery_scripts.battery.lsmod",
                    side_effect=lambda name: name == "thinkpad_acpi"):
             dev = battery.get_battery_device()
-        self.assertNotIsInstance(dev, GenericKernelBatteryDevice)
+        self.assertIsInstance(dev, GenericKernelBatteryDevice)
 
 
 if __name__ == "__main__":

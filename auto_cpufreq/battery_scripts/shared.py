@@ -229,6 +229,9 @@ class BatteryDevice:
                 os.path.join(POWER_SUPPLY_DIR, bat),
                 parsed_config["stop_threshold"],
                 parsed_config["start_threshold"],
+                firmware_operation=(
+                    parsed_config.get("ideapad_conservation_mode") is not None
+                ),
             )
             if request.action == "satisfied":
                 continue

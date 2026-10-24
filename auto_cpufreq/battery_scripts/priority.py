@@ -30,6 +30,7 @@ def _kernel_threshold(battery_path: str, names: tuple[str, ...]) -> int | None:
 
 def resolve_charge_control(
     battery_path: str, requested_stop: int, requested_start: int | None = None,
+    *, firmware_operation: bool = False,
 ) -> ChargeControlDecision:
     """Preflight an explicitly enabled charge request, without side effects.
 
@@ -53,6 +54,11 @@ def resolve_charge_control(
     if not info.charge_protection_enabled:
         return ChargeControlDecision(
             "apply", "UPower protection is currently disabled"
+        )
+
+    if firmware_operation:
+        return ChargeControlDecision(
+            "blocked", "UPower protection is active; do not override firmware mode"
         )
 
     if "Firmware managed" in info.charge_control_types and not (
