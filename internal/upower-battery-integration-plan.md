@@ -52,15 +52,47 @@ Before implementing, run a small **read-only dependency/packaging spike**. Compa
 6. Normalize UPower states and kernel fallback statuses through one formatter; retain `Fully charged`, `Pending charge` and `Pending discharge` when available. If the kernel reports `Discharging` and AC is online, show its literal state when fallback is active; do not invent a power threshold to override it.
 7. Battery presentation must never change CPU governor, policy selection, AC detection, daemon decisions, or the existing charge threshold writer.
 
-## Read-only UI behavior
+## Read-only UI behavior — revised compact presentation (2026-10-23)
 
-Keep the existing GTK fields and names: `Status`, `Charge`, `AC power`, `Start threshold`, `Stop threshold`, and battery power label. Retain terminal `--stats` names unless a precise correction is necessary.
+**New presentation design, not yet implemented** in the UPower experimental code. Apply the same semantics to GTK, the legacy battery box if in scope, and terminal `--stats`; preserve the existing data-model/provider behavior.
 
-- With UPower 1.90.3: UPower-derived status/percentage/rate may improve values, but no threshold capability block appears. The layout stays the same, even if `Status` changes from `Not charging` to `Fully charged`.
-- With newer UPower and `ChargeThresholdSupported = true`: conditionally add concise read-only information, for example `Charge protection: Enabled`, `Supported controls: End threshold`, and the configured levels when meaningful. Make the same information available in `--stats`.
-- With `ChargeThresholdSupported = false`, missing property, or no matching device: show the legacy fields without an additional block. Existing numeric sysfs thresholds remain visible when present; never imply a missing UPower API means no sysfs threshold.
-- Values are **configured limits**, not a list of permissible values. No slider, toggle, edit field or control button is part of this phase.
-- Avoid duplicate threshold rows and avoid changing current labels in anticipation of later controls.
+- Keep the existing rows: `Status`, `Charge`, `AC power`, `Start threshold`, `Stop threshold`, and battery power. `Charge` always means **actual state of charge**, e.g. `99%`, not the charge-control target. The label `Battery power` means watts, not the UPower service: spell that source `UPower`, not `Power`.
+- For UPower 1.90.3 or missing capability API: no extra rows and no change to the established layout; only the underlying telemetry state may improve from `Not charging` to `Fully charged`. Keep sysfs threshold readings as available.
+- If modern UPower reports a valid start/end configured limit, incorporate it beside the appropriate **threshold value**, e.g. `Stop threshold: 80% (UPower)` or `Start threshold: 75% (UPower)`, *only when the UPower protection is reported enabled and the standard-kernel reading does not contradict it*. The threshold type is already encoded in the row name: a separate `Supported controls: End threshold` row is redundant.
+- No separate `Charge protection` row in the ordinary numeric case. The enabled state is used to decide whether a UPower-configured value may be presented as in use; `disabled` must not look active. If UPower has a configured preset but disabled protection, keep the observed kernel value as primary and, only if useful, add `UPower preset: 80% (inactive)` inline with the stop threshold. Do not infer protection is enabled merely because the property exists.
+- If UPower and the kernel disagree, preserve both source-attributed facts on the **same threshold row** or a wrapped continuation: `Stop threshold: 100% (kernel) · 80% configured (UPower)`. This is not a claim that either is the verified hardware-effective charging limit; show UPower enabled/inactive within the same concise line only when needed. Do not silently replace 100 with 80. The Samsung private-bus experiment deliberately constructs this mismatch.
+- Firmware-only mode (bitmask 4, no valid numeric limits): show the description once, e.g. `Charge limit: Firmware managed (UPower)`, **not** `Charge protection: Enabled` plus another support row. If numeric start/end fields are absent, do not imply they are configurable or assume 100 is a firmware limit.
+- If no UPower/supported sysfs threshold values exist, preserve `Unavailable`. Standardize `Charging start threshold: None` in terminal stats to `Unavailable`; do not change genuine zero-valued telemetry or valid readbacks.
+- The settings bitmask identifies *types* of control, never a list of accepted percentages. No GTK editor, selector, slider, toggle, automatic writing, or model-specific logic. Use shared formatting helpers to avoid drift between GTK and terminal.
+
+Illustrative compact output (not a literal claim about the current Samsung hardware):
+
+```text
+Status                  Charging
+Charge                  79%
+AC power                Connected
+Start threshold         75% (UPower)
+Stop threshold          80% (UPower)
+Battery power           4.20 W
+```
+
+Modern end-only with divergent sources, as in the simulated GalaxyMint lab:
+
+```text
+Charge                  99%
+Start threshold         Unavailable
+Stop threshold          100% (kernel) · 80% configured (UPower)
+Battery power           0.00 W
+```
+
+Firmware-only, without a specified percentage:
+
+```text
+Charge                  79%
+Charge limit            Firmware managed (UPower)
+```
+
+Prefer short, self-explanatory labels and good GTK wrapping over multiple repeated descriptive rows. Keep existing legacy UPower-unsupported output unchanged except deliberate `None` → `Unavailable` normalization. **Do not collapse actual battery percentage and the configured stopping point into an unlabeled 80%**: they are different quantities.
 
 ## Code integration inventory
 
@@ -111,24 +143,16 @@ Observation: `--stats` currently prints `Charging start threshold: None` where G
 
 Decision: keep the mock/CI workflow on disposable branches. Neither the private-bus lab nor this internal record belongs in the final contribution PR.
 
-## Observed GalaxyMint GTK results and separate CPU/fan follow-up (2026-10-23)
+## Observed GalaxyMint GTK results and resolved fan-speed observation (2026-10-23)
 
-Reference: the user tested the experimental `SystemReportView` against their installed GTK on Samsung GalaxyMint (Mint 22.3, kernel 7.2.12-x64v3-xanmod1).
+Reference: GalaxyMint (Samsung Galaxy Book, Linux Mint 22.3, kernel 7.2.12-x64v3-xanmod1).
 
-- **UPower/Battery verified:** both views showed BAT1 99%, AC connected, start threshold unavailable, end threshold 100, battery power 0.00 W. Installed GTK showed `Not charging`; UPower experimental GTK correctly showed `Fully charged`. UPower 1.90.3 returned no charge-capability API, and both optional GTK labels were confirmed hidden (`False`). Repeated telemetry duration has **not** yet been characterized; one end-to-end call measured 23.9 ms.
-- **Prototype layout:** the experimental window intentionally rendered `SystemReportView` alone, without the production control panel, CSS and full shell. Header spacing and styling differences are expected; this is not an established GTK regression.
-- **CPU fan RPM:** both screenshots showed `CPU fan speed: 0 RPM`. The user reports that an actual RPM value was visible previously. Present `SystemInfo.cpu_fan_speed()` consults `psutil.sensors_fans()`, returns the first strictly positive reading, else zero if **any** entry reports zero, else None. Thus a zero may be a real stopped fan, a transient firmware/EC reading, or an exposed but unreliable sensor; the screenshot alone cannot distinguish them. Neither the experimental UPower module nor the battery UI computes fan speed. **Open investigation; do not modify the battery PR.**
-- **Temperatures:** one screenshot contained CPU sample temperatures around 90–93 C and the other showed several readings around 80–93 C. These are snapshots at different loads; they do not establish a thermal regression from UPower. If elevated temperatures persist under low load, investigate separately.
-- **Minor pre-existing presentation inconsistency:** legacy `BatteryInfoBox.refresh()` displays `None` for missing threshold numbers while the main `SystemReportView` renders `Unavailable`. The new UPower feature should not expand scope just to restyle this; optionally address in a separate UI consistency PR.
-
-### Deferred fan/sensor investigation — separate PR only if warranted
-
-1. Capture repeated readings of `psutil.sensors_fans()` and corresponding `/sys/class/hwmon/hwmon*/fan*_input`, including sensor labels and device names, while noting load/temperature and whether a fan is audibly spinning. Read only; do not alter BIOS/EC, fan curves, RAPL, governor or kernel.
-2. Compare `SystemInfo.cpu_fan_speed()` output with all raw candidate sensor values. Determine whether the first positive value is actually CPU fan rather than a different fan, whether all values are zero, or whether the kernel provides no reliable RPM.
-3. Compare with the installed program *at the same time and system state*, using its own environment and installed psutil version, rather than inferring a regression from screenshots.
-4. If a bug is confirmed, handle it in an independent targeted PR, ideally representing `Unavailable` when there is no reliable fan reading rather than reporting a false zero. Preserve real zero when verifiably supported. Evaluate deterministic sensor selection without vendor/model tables.
-
-**Exit rule:** no fan, temperature or unrelated CPU changes enter the UPower telemetry PR without a separate supported rationale and tests.
+- **UPower/Battery verified:** BAT1 99%, AC connected, start threshold unavailable, kernel stop 100, battery power 0.00 W. Installed GTK showed `Not charging`; UPower experimental GTK correctly showed `Fully charged`. UPower 1.90.3 provided no charge-capability API, so optional labels were hidden.
+- **Performance measured on the actual notebook:** 20 successive `SystemInfo.battery_info()` reads, 20/20 sourced from UPower, median **5.5 ms**, maximum **122.5 ms**. One earlier integrated call measured 23.9 ms. This is a limited sample, not a hard latency guarantee.
+- **Prototype layout:** the experimental window intentionally rendered `SystemReportView` alone, without the production control panel, CSS and full shell. Header spacing and styling differences are expected.
+- **Fan/RPM concern resolved for now:** the user identified a prior Fn+F11 switch from `performance` to `low-power`; `0 RPM` appears in `low-power`, while other profiles show RPM. This is consistent with a profile-dependent fan state and **is no longer an open suspected auto-cpufreq bug**. Remove the fan/sensor investigation and any associated proposed correction PR from scope. Reopen only if contradictory evidence arises independently.
+- **Temperatures:** earlier screenshots near 90–93 °C were load-dependent snapshots; a later capture around 58 °C at low CPU usage does not support a battery-feature regression. No temperature fix is requested in this PR.
+- **Minor presentation inconsistency:** legacy `BatteryInfoBox.refresh()` and the stats formatter show missing thresholds differently from the main GTK. Normalize to `Unavailable` as a small shared output correction if it is done without changing threshold semantics.
 
 ## Future workstream — declarative charge limits in auto-cpufreq.conf (NOT part of this reporting PR)
 

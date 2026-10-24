@@ -112,24 +112,27 @@ Run: https://github.com/lucasleocs/auto-cpufreq/actions/runs/40042055797 (PASS).
 - P07: Presentational mismatch `None` vs `Unavailable` for the start threshold remains open.
 - P08: Actual newer UPower daemon/udev detection on physical Samsung was **not** tested. Do not conflate the mock with a real upgraded UPower service.
 
-## Real GTK comparison and deferred fan-speed anomaly
+## Real GTK comparison and resolved fan-speed observation
 
-Observed on Samsung GalaxyMint: UPower integration gave 99%, Fully charged, 0.00 W; baseline GTK gave Not charging, 99%, 0.00 W. Both reported start unavailable and stop 100. Confirmed with the live GTK instance that optional `protection` and `controls` labels were invisible.
+Observed on GalaxyMint: UPower gave 99%, Fully charged, 0.00 W; baseline GTK gave Not charging, 99%, 0.00 W; kernel stop remained 100. Optional charge capability rows were hidden on the installed UPower 1.90.3. Repeated UPower readings: 20/20, median 5.5 ms, peak 122.5 ms.
 
-The same paired screenshots showed CPU fan speed 0 RPM, although the user remembers receiving a positive RPM previously, and CPU sample temperatures around 80–93 C. These remain **observations, not proof of a regression**. Record only; follow up independently of the battery change.
-
-Future fan checks (read-only): raw `psutil.sensors_fans()`, hwmon `fan*_input`, labels, temporal samples, program-installed psutil version, compare positive/zero/absent readings. No kernel parameter, EC write, fan profile or daemon policy change.
+The user subsequently traced 0 RPM to Fn+F11 changing the platform profile from `performance` to `low-power`; other profiles reported RPM. **Close and remove the fan-speed bug investigation/correction work item**. No fan change should be bundled with the UPower PR; reconsider only on new contradicting evidence. The earlier high temperature snapshots likewise do not establish a UPower-related regression.
 
 ### Additional read-only battery release checks
 
-- R01: Main Gtk.show_all() never reveals unsupported UPower rows after initial construction and after subsequent updates.
-- R02: Simulated end-only UPower capability renders `Charge protection` and `Supported controls` with no editable fields; terminal stats conveys the same values.
-- R03: Simulated firmware-managed capability has no invented end percentage.
-- R04: UPower supported then unavailable across successive reports hides optional GTK rows again.
-- R05: `SystemMonitor.format_system_info(report)` renders correct `Fully charged`, zero watts, and no optional rows for UPower 1.90.3.
-- R06: Repeated UPower queries have bounded runtime and no persistent orphaned tasks, beyond one healthy sample at 23.9 ms.
-- R07: A failed read falls back to sysfs while leaving external AC detection and charging threshold writer untouched.
-- R08: Sensor and fan values remain outside the battery feature's changed-data surface.
+These tests refer to the **revised compact UI design**, which is still pending implementation. Earlier PASS results for the old verbose UI must not be treated as validation of this revised layout.
+
+- R01: Legacy UPower/unknown API renders original GTK rows, with no charge-protection or supported-controls decoration.
+- R02: Consistent, enabled UPower end-only 80% and observed kernel 80% renders one `Stop threshold: 80% (UPower)` row, no redundant separate `Charge protection` or `Supported controls` rows; terminal stats conveys the same information.
+- R03: Consistent start/end 75/80 shows both values adjacent to corresponding threshold labels, not grouped into a third duplicate row.
+- R04: Configured UPower stop=80 and kernel=100 retains both labeled values on the same threshold row or wrapped continuation, and never reports the configured value as confirmed applied.
+- R05: UPower threshold property present but protection disabled does not imply 80% is active; if the preset is displayed, clearly mark it inactive.
+- R06: Firmware-only mask=4 has one `Charge limit: Firmware managed (UPower)` description and no invented percentages or numeric end-threshold claim.
+- R07: `Charge` remains actual battery level; do not misidentify it as the stopping threshold when e.g. Charge=99% and configured stop=80%.
+- R08: After supported→unsupported transitions, optional labels disappear and don't reappear via Gtk.show_all().
+- R09: Terminal stats uses `Unavailable` for unknown start/stop thresholds, not the literal `None`.
+- R10: Repeated UPower queries do not cause a hung UI or persistent orphaned tasks. Real machine 20/20 UPower, 5.5 ms median and 122.5 ms max observed.
+- R11: A failed UPower read falls back to sysfs and does not change CPU policy, AC interpretation or battery threshold writer.
 
 ## Build and CI validation
 
