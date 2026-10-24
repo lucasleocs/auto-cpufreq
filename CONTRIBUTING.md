@@ -33,7 +33,7 @@ Prefer a development environment over replacing a running system installation. D
 | Main GTK window and navigation | `auto_cpufreq/gui/app.py` |
 | GTK scheduling and delivery | `auto_cpufreq/gui/refresh_timer.py`, `refresh_bridge.py` |
 | Terminal Stats, Monitor, Live display | `auto_cpufreq/modules/system_monitor.py` |
-| Live-mode service restore / shutdown | `auto_cpufreq/modules/live_session.py` |
+| Live-mode service lifecycle | `auto_cpufreq/bin/auto_cpufreq.py`, `auto_cpufreq/power_helper.py` |
 | Configuration and file notifications | `auto_cpufreq/config/` |
 
 Some older GTK widget imports remain available from `gui/objects.py` for compatibility. For new work, prefer the component's responsible module.
