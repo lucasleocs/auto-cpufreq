@@ -1,0 +1,44 @@
+name: Intel RAPL full disposable VM integration
+
+on:
+  push:
+    branches:
+      - lab/intel-rapl-capability-20261023
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  ubuntu-vm-real-source-lifecycle:
+    name: Real source install and daemon lifecycle (ephemeral Ubuntu VM)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    env:
+      CI: "true"
+      AUTO_CPUFREQ_DISPOSABLE_VM: "YES"
+      DEBIAN_FRONTEND: noninteractive
+      TERM: xterm
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Verify hosted VM isolation and no pre-existing installation
+        run: |
+          test "$(cat /proc/1/comm)" = systemd
+          test ! -e /opt/auto-cpufreq
+          test ! -e /usr/local/bin/auto-cpufreq
+          test ! -e /etc/systemd/system/auto-cpufreq.service
+          bash -n ./auto-cpufreq-installer internal_tests/rapl_full_vm_e2e.sh
+          echo "RAPL is default-off; no powercap writer is enabled in this test."
+      - name: Install source package, launch daemon, test recovery barrier, remove
+        run: |
+          timeout --signal=TERM --kill-after=20s 27m \
+            bash internal_tests/rapl_full_vm_e2e.sh
+      - name: Publish test outcome and diagnostics
+        if: always()
+        run: |
+          if test -f "$RUNNER_TEMP/rapl-vm-e2e-result.txt"; then
+            cat "$RUNNER_TEMP/rapl-vm-e2e-result.txt" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          sudo journalctl --no-pager -u auto-cpufreq.service -n 80 || true
