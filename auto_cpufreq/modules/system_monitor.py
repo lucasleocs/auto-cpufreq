@@ -13,6 +13,9 @@ from .system_info import (
 from auto_cpufreq.config.config import config
 from auto_cpufreq.modules.report_presentation import present_report
 from auto_cpufreq.modules.report_refresh import ReportRefreshCoordinator
+from auto_cpufreq.modules.diagnostics import (
+    SessionDiagnostics, cli_state_directory,
+)
 from enum import Enum
 
 
@@ -26,8 +29,18 @@ class ViewType(str, Enum):
 
 
 class SystemMonitor:
-    def __init__(self, type: ViewType, suggestion: bool = False):
+    def __init__(
+        self, type: ViewType, suggestion: bool = False,
+        diagnostic_log: bool = False,
+    ):
         self.type: ViewType = type
+        self._diagnostics = (
+            SessionDiagnostics(
+                component=type.name.lower(),
+                state_dir=cli_state_directory(),
+            )
+            if diagnostic_log else None
+        )
         self.title_header = urwid.Text(f"{type} Mode", align="center")
         self.header = urwid.Columns(
             [
@@ -139,6 +152,11 @@ class SystemMonitor:
         if not self._refresh_coordinator.is_current(result.generation):
             return True
 
+        if self._diagnostics:
+            self._diagnostics.info(
+                "Urwid collection duration=%.3fs generation=%d",
+                result.duration, result.generation,
+            )
         try:
             if result.error is not None or result.report is None:
                 message = str(
@@ -147,6 +165,10 @@ class SystemMonitor:
                 self.title_header.set_text(
                     f"{self.type} Mode - telemetry error: {message[:100]}"
                 )
+                if self._diagnostics:
+                    self._diagnostics.warning(
+                        "Telemetry collection error: %s", message
+                    )
             else:
                 report, suggested_governor, suggested_turbo = result.report
                 self._display_report(
@@ -414,6 +436,11 @@ class SystemMonitor:
         self.running = True
 
         try:
+            if self._diagnostics:
+                self._diagnostics._activate()
+                self._diagnostics.info(
+                    "%s UI started; terminal PID=%d", self.type, os.getpid()
+                )
             self._refresh_pipe_fd = self.loop.watch_pipe(
                 self._refresh_ready
             )
@@ -423,9 +450,13 @@ class SystemMonitor:
             )
             self.loop.run()
         except KeyboardInterrupt:
+            if self._diagnostics:
+                self._diagnostics.info("Terminal interrupted by Ctrl+C")
             sys.exit(0)
         finally:
             self.running = False
+            if self._diagnostics:
+                self._diagnostics.info("%s UI stopped", self.type)
             self._refresh_coordinator.close()
 
             callback = self.on_quit
@@ -450,5 +481,9 @@ class SystemMonitor:
                         except OSError:
                             pass
             finally:
-                if callback:
-                    callback()
+                try:
+                    if callback:
+                        callback()
+                finally:
+                    if self._diagnostics:
+                        self._diagnostics.shutdown()
