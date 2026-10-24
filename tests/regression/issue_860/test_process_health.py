@@ -239,7 +239,7 @@ class HealthSamplerTests(unittest.TestCase):
                 self.count = 0
 
             def is_set(self):
-                return self.count >= len(events)
+                return self.count >= 8
 
             def wait(self, _interval):
                 self.count += 1
