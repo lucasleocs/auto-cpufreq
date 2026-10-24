@@ -254,6 +254,7 @@ class SystemMonitor:
                 pass
             try:
                 self._refresh_coordinator.acknowledge(result.generation)
+                self._stalled_refresh_reported = False
             finally:
                 try:
                     self._surface_diagnostic_error()
