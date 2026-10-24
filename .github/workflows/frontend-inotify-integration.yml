@@ -1,0 +1,46 @@
+name: Frontend and inotify integration checks
+
+on:
+  push:
+    branches:
+      - test/frontend-inotify-license-hardening
+    paths:
+      - "auto_cpufreq/**"
+      - "tests/**"
+      - "pyproject.toml"
+      - "poetry.lock"
+      - ".github/workflows/frontend-inotify-integration.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  integration:
+    name: Frontend and real inotify regression (Python 3.12)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install GTK introspection runtime
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y python3-gi gir1.2-gtk-3.0 python3-venv
+      - name: Install Poetry
+        run: pipx install poetry
+      - name: Create Python environment using distro GI bindings
+        run: |
+          poetry config virtualenvs.options.system-site-packages true --local
+          poetry env use /usr/bin/python3
+          poetry install --no-interaction --no-ansi
+      - name: Run frontend and real inotify regression tests
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+          XDG_CONFIG_HOME: ${{ runner.temp }}/auto-cpufreq-config
+          XDG_STATE_HOME: ${{ runner.temp }}/auto-cpufreq-state
+        run: |
+          poetry run python -m compileall -q auto_cpufreq tests
+          poetry run python -m unittest discover -s tests -p 'test_*.py' -v
+          poetry run python -m unittest discover -s tests/regression/issue_860 -p 'test_*.py' -v
