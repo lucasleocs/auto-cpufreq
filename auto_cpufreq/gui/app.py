@@ -43,17 +43,9 @@ CONTROL_APPLY_DELAY_SECONDS = 3
 
 
 def _configuration_label_text():
-    # The GTK process may run as a different user from the root daemon.
-    # Do not imply that this user-selected file necessarily controls it.
-    prefix = (
-        "GTK configuration file"
-        if config.has_config()
-        else "GTK configuration candidate (not found)"
-    )
-    return (
-        f"{prefix}: {config.path} "
-        "(the daemon may use a different configuration)"
-    )
+    if config.has_config():
+        return f"Configuration file: {config.path}"
+    return f"Configuration file (not found): {config.path}"
 
 
 class ToolWindow(Gtk.Window):
