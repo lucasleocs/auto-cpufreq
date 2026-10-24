@@ -276,3 +276,13 @@ Gate W6: review release packaging, README, service lifecycle, `--stats` presenta
 - Linux power supply class: https://docs.kernel.org/power/power_supply_class.html
 - Linux sysfs charge threshold ABI: https://github.com/torvalds/linux/blob/master/Documentation/ABI/testing/sysfs-class-power
 - dbus-next transport reference (candidate only): https://python-dbus-next.readthedocs.io/en/latest/index.html
+
+## Full native GTK with private UPower D-Bus — validated (2026-10-24)
+
+- Branch `tmp/upower-full-gtk-privatebus-20261024`, commit `fe404680328dfb56adaae14da02287105f9b944a`. Only disposable fixture `internal/upower_full_gtk_preview.py` and dedicated temporary GitHub Actions workflow `.github/workflows/upower-full-gtk-privatebus.yml` were added to the previous mock branch; the clean contribution and upstream-synced `master` were unchanged.
+- The full `ToolWindow` (not just `SystemReportView`) was created, with Controls, menu, ordinary stylesheet and icon, and the real CPU/system data; installed daemon detection is preserved on the actual notebook, but CI with no daemon uses an explicit `--mock-battery` fake to select the full panel. No autoupdate startup check is invoked.
+- A private, separately launched `dbus-daemon` supplies `org.freedesktop.UPower` D-Bus replies as the client's **system bus override within this test process**, without replacing the desktop session D-Bus or the host's system UPower service. Privileged GUI actions are intercepted in the test. The optional `--mock-kernel-stop 80` intercepts only Python reads of BAT1 threshold attributes to show a matching readback; it does not write to sysfs or configure hardware.
+- CI https://github.com/lucasleocs/auto-cpufreq/actions/runs/40049136671: PASS with a complete GTK under Xvfb for `charging-55`, `reached-80`, `full-100`, `start-end`, `firmware`, `firmware-disabled`, `disabled`, and `legacy`. It checked the required Controls panel and correct battery status/percent/threshold/charge-limit labels. Linux Build and Nix Flake for same commit also passed (runs 40049136447, 40049136544).
+- This tests modern **UPower properties** and app rendering; it does not install, update, or execute a real UPower 1.91.x service. Real newer-daemon physical hardware tests and strict Snap-confinement runtime remain outside this coverage.
+- The user also ran a complete GTK preview against their actual installed daemon, without privilege changes, and supplied a screenshot showing the full Controls panel plus BAT1 99%, Fully charged, AC connected, start Unavailable, stop 100%, battery power 0.00 W. The production layout was preserved.
+

@@ -183,3 +183,13 @@ Gate E: no write paths, no CPU policy changes, no vendor-specific code.
 Gate F: temporary artifacts excluded from final contribution.
 
 Sources: https://upower.freedesktop.org/docs/Device.html ; https://upower.freedesktop.org/docs/UPower.html ; https://docs.kernel.org/power/power_supply_class.html
+
+## End-to-end full GTK + isolated UPower service
+
+- FG01: Full GTK retains Controls, Governor Override, Turbo Override, config label and menu; not just SystemReportView. PASS (run 40049136671).
+- FG02: Physical system daemon remains unmodified and is detected normally in user's full GTK experiment. PASS by user's terminal output and screenshot.
+- FG03: Simulated 55% Charging, -12.50 W UPower EnergyRate, stop 80% confirmed in mocked sysfs readback: PASS.
+- FG04: Simulated 80% Pending charge with 80% stop, 100% Fully charged with 80% stop: PASS. Does not infer discharge or charging from threshold alone.
+- FG05: Simulated start+end control, firmware-only enabled/disabled, numerical control disabled, old no-capability API: PASS.
+- FG06: Private D-Bus uses client-side DBUS_SYSTEM_BUS_ADDRESS override only; mock threshold is Python-only read interception and privileged GUI actions are rejected. PASS by fixture design; no actual battery threshold write.
+- FG07: Full GTK real updated daemon UPower 1.91.x and confined Snap deployment: NOT TESTED; do not conflate with mock success.
