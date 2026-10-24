@@ -1,0 +1,29 @@
+name: Issue 860 Runtime Regression
+
+on:
+  push:
+    branches:
+      - test/issue-860-runtime-20261023
+    paths:
+      - tests/regression/issue_860/**
+      - .github/workflows/issue-860-experimental.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  stats-lifecycle:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install isolated terminal UI dependency
+        run: python -m pip install 'urwid>=3.0.2,<5.0.0'
+      - name: Compile regression test
+        run: python -m py_compile tests/regression/issue_860/test_stats_lifecycle.py
+      - name: Exercise terminal lifecycle
+        run: python -m unittest discover -s tests/regression/issue_860 -p 'test_*.py' -v
