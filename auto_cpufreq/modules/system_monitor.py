@@ -11,7 +11,9 @@ from .system_info import (
     system_info,
 )
 from auto_cpufreq.config.config import config
-from auto_cpufreq.modules.report_presentation import present_report
+from auto_cpufreq.modules.report_presentation import (
+    present_report, configuration_file_text, offline_cpus_text,
+)
 from auto_cpufreq.modules.report_refresh import ReportRefreshCoordinator
 from auto_cpufreq.modules.diagnostics import (
     SessionDiagnostics, cli_state_directory,
@@ -366,11 +368,12 @@ class SystemMonitor:
             ]
         )
 
-        if config.has_config():
-            self.left_content.append(
-                aligned_text(f"Using settings defined in {config.path} file")
+        self.left_content.append(
+            aligned_text(
+                configuration_file_text(config.path, config.has_config())
             )
-            self.left_content.append(aligned_text(""))
+        )
+        self.left_content.append(aligned_text(""))
 
         # CPU Stats
         self.left_content.extend(
@@ -410,6 +413,11 @@ class SystemMonitor:
                 )
             )
 
+        offline_text = offline_cpus_text(report.offline_cpus)
+        if offline_text:
+            self.left_content.append(aligned_text(""))
+            self.left_content.append(aligned_text(offline_text))
+
         if report.cpu_fan_speed is not None:
             self.left_content.append(aligned_text(""))
             self.left_content.append(
@@ -439,6 +447,17 @@ class SystemMonitor:
                     aligned_text(
                         f"{battery_power_label(report.battery_info)}: "
                         + presentation.battery.power_watts.text
+                    ),
+                    aligned_text(""),
+                ]
+            )
+
+        else:
+            self.right_content.extend(
+                [
+                    urwid.AttrMap(aligned_text("Battery Stats"), "header"),
+                    aligned_text(
+                        f"Battery status: {presentation.battery.status.text}"
                     ),
                     aligned_text(""),
                 ]
@@ -529,13 +548,12 @@ class SystemMonitor:
                 )
             )
 
-        if presentation.average_temperature.is_available:
-            self.right_content.append(
-                aligned_text(
-                    "Average CPU temperature: "
-                    f"{presentation.average_temperature.text}"
-                )
+        self.right_content.append(
+            aligned_text(
+                "Average CPU temperature: "
+                f"{presentation.average_temperature.text}"
             )
+        )
 
     def run(self, on_quit: Callable[[], None] | None = None):
         self.on_quit = on_quit
