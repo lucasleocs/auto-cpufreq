@@ -26,16 +26,19 @@ from auto_cpufreq.power_helper import bluetoothctl_exists
 auto_cpufreq_stats_path = ("/var/snap/auto-cpufreq/current" if IS_INSTALLED_WITH_SNAP else "/var/run") + "/auto-cpufreq.stats"
 
 
-def open_containing_folder(parent, file_path):
-    """Open the containing directory using the desktop's default URI handler.
+def open_containing_folder(parent, file_path, *, missing_hint=None):
+    """Open a file's parent directory using the desktop's URI handler.
 
-    This requests the desktop's registered folder handler; it does not edit
-    the selected file or assume a particular file manager.
+    An optional hint explains expected missing directories, such as the
+    diagnostic directory before logging has been enabled.
     """
     directory = Path(file_path).expanduser().absolute().parent
     try:
         if not directory.is_dir():
-            raise FileNotFoundError(f"Directory does not exist: {directory}")
+            message = f"Directory does not exist: {directory}"
+            if missing_hint:
+                message += f"\n{missing_hint}"
+            raise FileNotFoundError(message)
         if not Gtk.show_uri_on_window(
             parent, directory.as_uri(), Gdk.CURRENT_TIME
         ):
@@ -714,6 +717,19 @@ class DropDownMenu(Gtk.MenuButton):
 
     def _show_debug_log_location(self, _item, parent):
         log_path = diagnostics.log_path
+        logging_enabled = diagnostics.enabled
+        if not log_path.is_file():
+            if logging_enabled:
+                status = "Log file unavailable. Check for logging errors."
+            else:
+                status = (
+                    "No log file yet. Enable debug logging to create one."
+                )
+        elif logging_enabled:
+            status = "Debug logging is enabled."
+        else:
+            status = "Debug logging is disabled. Showing the last session path."
+
         dialog = Gtk.MessageDialog(
             transient_for=parent,
             message_type=Gtk.MessageType.INFO,
@@ -723,7 +739,7 @@ class DropDownMenu(Gtk.MenuButton):
         dialog.format_secondary_text(
             f"File: {log_path.name}\n"
             f"Directory: {log_path.parent}\n\n"
-            "Each time logging is enabled, a separate file is created. "
+            f"{status}\n\n"
             "Each session supports three 1 MiB backups. "
             "Review the contents before sharing."
         )
@@ -736,7 +752,13 @@ class DropDownMenu(Gtk.MenuButton):
             )
         dialog.destroy()
         if response == Gtk.ResponseType.YES:
-            open_containing_folder(parent, log_path)
+            hint = (
+                "Enable debug logging first to create the log directory."
+                if not logging_enabled else
+                "Debug logging is enabled, but the directory is missing. "
+                "Check for logging errors."
+            )
+            open_containing_folder(parent, log_path, missing_hint=hint)
 
     def about_dialog(self, MenuItem, parent):
         dialog = AboutDialog(parent)
