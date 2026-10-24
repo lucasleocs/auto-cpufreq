@@ -198,9 +198,12 @@ class RefreshCoordinatorTests(unittest.TestCase):
             obsolete.close()
         finally:
             release.set()
-        self.assertTrue(wait_until(lambda: not primary.in_progress or
-                                   not entered.is_set(), timeout=2))
-        time.sleep(0.05)
+        primary.close()
+        from auto_cpufreq.modules import report_refresh
+        self.assertTrue(wait_until(
+            lambda: report_refresh._PROCESS_LANE._worker is None,
+            timeout=2,
+        ))
         self.assertEqual(queued_calls, [])
 
     def test_dispatch_errors_are_reported_to_callback(self):
