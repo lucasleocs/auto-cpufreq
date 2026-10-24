@@ -20,7 +20,11 @@ from auto_cpufreq.globals import (
     IS_INSTALLED_WITH_SNAP,
     POWER_SUPPLY_DIR,
 )
-from auto_cpufreq.modules.report_recommendations import evaluate_recommendations
+from auto_cpufreq.modules.report_recommendations import (
+    evaluate_recommendations,
+    governor_candidate,
+    turbo_candidate,
+)
 from auto_cpufreq.modules.platform_profile import (
     PlatformProfileSnapshot,
     platform_profile,
@@ -773,8 +777,8 @@ class SystemInfo:
 
     @staticmethod
     def turbo_on_suggestion(report: SystemReport | None = None) -> bool:
+        """Legacy suggestion API; delegate the decision to the shared rule."""
         usage = report.cpu_usage if report is not None else SystemInfo.cpu_usage()
-
         if report is not None:
             if report.cpu_avg_temp is not None:
                 avg_temp = report.cpu_avg_temp
@@ -786,28 +790,22 @@ class SystemInfo:
                 ]
                 avg_temp = (
                     sum(temperatures) / len(temperatures)
-                    if temperatures
-                    else 0.0
+                    if temperatures else 0.0
                 )
         else:
             avg_temp = SystemInfo.avg_temp()
-
-        if usage >= 20.0:
-            return True
-        elif usage <= 25 and avg_temp >= 70:
-            return False
-        return False
+        return turbo_candidate(usage, avg_temp)
 
     @staticmethod
     def governor_suggestion(report: SystemReport | None = None) -> str:
+        """Legacy suggestion API; preserve its historical AC fallback."""
         battery_info = (
-            report.battery_info
-            if report is not None
+            report.battery_info if report is not None
             else SystemInfo.battery_info()
         )
-        if battery_info.is_ac_plugged is not False:
-            return AVAILABLE_GOVERNORS_SORTED[0]
-        return AVAILABLE_GOVERNORS_SORTED[-1]
+        return governor_candidate(
+            battery_info.is_ac_plugged, AVAILABLE_GOVERNORS_SORTED
+        )
 
     @staticmethod
     def monitor_recommendations(report: SystemReport):
