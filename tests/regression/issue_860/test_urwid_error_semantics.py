@@ -91,6 +91,51 @@ class UrwidConsistencyTests(unittest.TestCase):
             if monitor._alarm_handle is not None:
                 monitor.loop.remove_alarm(monitor._alarm_handle)
 
+    def test_diagnostic_failure_before_render_still_acknowledges(self):
+        monitor = self.make()
+        diag = FakeDiagnostics()
+        diag.info = lambda *args: (_ for _ in ()).throw(
+            OSError("diagnostic sink unavailable")
+        )
+        monitor._diagnostics = diag
+        monitor._refresh_results.put(RefreshResult(
+            generation=28,
+            report=("report", None, None),
+            error=None,
+            duration=0.01,
+        ))
+        try:
+            self.assertTrue(monitor._refresh_ready(b"1"))
+            self.assertEqual(
+                monitor._refresh_coordinator.acknowledged, [28]
+            )
+            self.assertIsNotNone(monitor._alarm_handle)
+        finally:
+            if monitor._alarm_handle is not None:
+                monitor.loop.remove_alarm(monitor._alarm_handle)
+
+    def test_diagnostic_status_failure_still_acknowledges(self):
+        monitor = self.make()
+        diag = FakeDiagnostics()
+        diag.error_status = lambda: (_ for _ in ()).throw(
+            ValueError("unexpected diagnostic state")
+        )
+        monitor._diagnostics = diag
+        monitor._refresh_results.put(RefreshResult(
+            generation=29,
+            report=("report", None, None),
+            error=None,
+            duration=0.01,
+        ))
+        try:
+            self.assertTrue(monitor._refresh_ready(b"1"))
+            self.assertEqual(
+                monitor._refresh_coordinator.acknowledged, [29]
+            )
+        finally:
+            if monitor._alarm_handle is not None:
+                monitor.loop.remove_alarm(monitor._alarm_handle)
+
     def test_pipe_write_failure_falls_back_to_periodic_delivery(self):
         from unittest.mock import patch
         monitor = self.make()
