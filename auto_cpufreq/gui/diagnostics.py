@@ -101,7 +101,9 @@ class GuiDiagnostics(SessionDiagnostics):
         if not self.enabled and self._read_preference():
             try:
                 self._activate()
-            except OSError as error:
+            except (OSError, RuntimeError) as error:
+                # A saved preference must not make GTK startup depend on
+                # the availability of optional log and watchdog threads.
                 self._report_error(error)
         elif self.enabled:
             self._start_heartbeat()
@@ -204,25 +206,27 @@ class GuiDiagnostics(SessionDiagnostics):
                 raise OSError("Previous GTK diagnostic watchdog is still stopping")
         self._watchdog_thread = None
         super()._activate()
-        with self._lock:
-            self._last_summary = time.monotonic()
-            self._summary = {}
-            self._stall_reported = False
-            self._last_gui_error = None
-        self.info("GUI session=%s", os.environ.get("XDG_SESSION_TYPE", "unknown"))
-        self._start_heartbeat()
-        stop = Event()
-        worker = Thread(
-            target=self._watchdog, args=(stop,), daemon=True,
-            name="gui-debug-watchdog",
-        )
         try:
+            with self._lock:
+                self._last_summary = time.monotonic()
+                self._summary = {}
+                self._stall_reported = False
+                self._last_gui_error = None
+            self.info("GUI session=%s", os.environ.get("XDG_SESSION_TYPE", "unknown"))
+            self._start_heartbeat()
+            stop = Event()
+            worker = Thread(
+                target=self._watchdog, args=(stop,), daemon=True,
+                name="gui-debug-watchdog",
+            )
             worker.start()
-        except RuntimeError:
-            self._deactivate()
+            self._watchdog_stop = stop
+            self._watchdog_thread = worker
+        except (OSError, RuntimeError):
+            # A failure after opening the log must also release its timer,
+            # health sampler and writer before reporting activation failure.
+            self._deactivate(wait=True)
             raise
-        self._watchdog_stop = stop
-        self._watchdog_thread = worker
 
     def _deactivate(self, *, wait=False):
         if not self.enabled:
