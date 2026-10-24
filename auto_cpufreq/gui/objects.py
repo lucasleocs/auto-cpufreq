@@ -837,6 +837,9 @@ class MonitorModeView(Gtk.Box):
         self._refresh_coordinator = ReportRefreshCoordinator(
             self._collect_report, self._dispatch_refresh_result,
             thread_name="gtk-monitor-refresh",
+            on_dispatch_error=lambda error: diagnostics.warning(
+                "GTK monitor report delivery failed: %s", error
+            ),
         )
 
         self.header = Gtk.Box(
