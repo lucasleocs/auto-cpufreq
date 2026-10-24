@@ -593,14 +593,17 @@ class SystemStatsLabel(Gtk.Label):
         self.refresh()
 
     def refresh(self):
-        # change stdout and store label text to file-like object
+        # Legacy widget: always restore process stdout, including on errors.
+        # Current dashboard uses SystemReport instead of this print capture.
         old_stdout = sys.stdout
         text = StringIO()
-        sys.stdout = text
-        distro_info()
-        sysinfo()
-        self.set_label(text.getvalue())
-        sys.stdout = old_stdout
+        try:
+            sys.stdout = text
+            distro_info()
+            sysinfo()
+            self.set_label(text.getvalue())
+        finally:
+            sys.stdout = old_stdout
     
 class CPUFreqStatsLabel(Gtk.Label):
     def __init__(self):
