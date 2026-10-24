@@ -80,12 +80,23 @@ class RefreshCoordinatorTests(unittest.TestCase):
             finished.set()
             return "late report"
 
-        coordinator = ReportRefreshCoordinator(collect, received.append)
+        coordinator = ReportRefreshCoordinator(
+            collect, received.append, thread_name="test-discard-late-report"
+        )
         self.assertTrue(coordinator.request())
         self.assertTrue(started.wait(1))
         coordinator.close()
         release.set()
         self.assertTrue(finished.wait(2))
+        # The collector signals 'finished' before the coordinator has
+        # necessarily evaluated its closed-generation gate. Wait for
+        # its worker to exit before asserting no callback was delivered.
+        self.assertTrue(wait_until(
+            lambda: not any(
+                t.name == "test-discard-late-report" and t.is_alive()
+                for t in threading.enumerate()
+            )
+        ))
         self.assertFalse(coordinator.request())
         self.assertFalse(coordinator.in_progress)
         self.assertFalse(received)
