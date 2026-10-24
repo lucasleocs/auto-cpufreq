@@ -113,3 +113,12 @@ Observed excerpt:
 - The observed late memory increase may be transient UI activity or another normal allocation pattern; the excerpt does not establish a leak or its trigger.
 
 Required follow-up: analyze all 60 CSV rows, note any user interaction or view change around 21:59:33–21:59:37, and compare a longer idle capture before any suspend/resume trial. Do not modify runtime implementation based on this trace alone.
+
+
+## Cinnamon suspend/resume — preserved partial sample
+
+The user suspended the laptop for several seconds and resumed successfully with the GTK application still responsive. The GUI Python PID remained 207115. A complete post-resume capture was taken but then overwritten by a second invocation using the same CSV output filename; that second invocation was interrupted after two samples. The complete original post-resume data is therefore not available from this path.
+
+The surviving two samples, 22:05:46 and 22:05:48 -03:00, both reported 1.00% CPU of one logical core, 41.27 MiB RSS, five threads, and 15 open FDs. This does not reproduce the high-CPU condition, but the sample is too short to characterize post-resume stability. The difference from the earlier 61.66 MiB / six-thread last sample is not evidence of a regression or leak.
+
+Next: perform a new 60-sample capture while leaving the same resumed GTK process running, saving under a timestamped filename to prevent accidental overwrite. Repeating the physical suspension is not required for this immediate observation; a later multi-resume stress test may be useful if the symptom remains intermittent.
