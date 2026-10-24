@@ -817,7 +817,12 @@ class ConfirmDialog(Gtk.Dialog):
         self.add_buttons("Yes", Gtk.ResponseType.YES, "No", Gtk.ResponseType.NO)
         self.label = Gtk.Label(label=message)
 
-        self.box.pack_stclass MonitorModeView(Gtk.Box):
+        self.box.pack_start(self.label, True, False, 0)
+
+        self.show_all()
+
+
+class MonitorModeView(Gtk.Box):
     def __init__(
         self,
         parent,
@@ -1106,10 +1111,6 @@ class ConfirmDialog(Gtk.Dialog):
         self._refresh_timer.stop()
         try:
             diagnostics.info("GTK monitor view closed")
-        except Exception:
-            pass
-
- view closed")
         except Exception:
             pass
 
