@@ -153,6 +153,59 @@ class SharedLoggingTests(unittest.TestCase):
             finally:
                 release.set()
 
+    def test_blocked_writer_refuses_new_session_until_it_exits(self):
+        log = self.make()
+        entered, release = Event(), Event()
+        original = module._PrivateRotatingFileHandler.emit
+
+        def blocked_emit(output, record):
+            entered.set()
+            release.wait(timeout=3)
+            return original(output, record)
+
+        with patch.object(
+            module._PrivateRotatingFileHandler, "emit", blocked_emit
+        ):
+            log._activate()
+            log.info("first session")
+            self.assertTrue(entered.wait(timeout=1))
+            old_path = log.log_path
+            try:
+                log._deactivate()
+                self.assertFalse(log.enabled)
+                with self.assertRaisesRegex(OSError, "still stopping"):
+                    log._activate()
+            finally:
+                release.set()
+            deadline = time.monotonic() + 2
+            while (
+                log._retiring_session.writer.is_alive()
+                and time.monotonic() < deadline
+            ):
+                time.sleep(0.01)
+            self.assertFalse(log._retiring_session.writer.is_alive())
+        log._activate()
+        self.assertNotEqual(old_path, log.log_path)
+        log._deactivate()
+
+    def test_background_write_failure_is_queryable_without_ui_toolkit(self):
+        log = self.make()
+        def broken_emit(_output, _record):
+            raise OSError("simulated disk error")
+        with patch.object(
+            module._PrivateRotatingFileHandler,
+            "emit", broken_emit,
+        ):
+            log._activate()
+            log.info("trigger failure")
+            deadline = time.monotonic() + 2
+            while log.error_status()[0] == 0 and time.monotonic() < deadline:
+                time.sleep(0.01)
+            count, message = log.error_status()
+            self.assertGreater(count, 0)
+            self.assertIn("simulated disk error", message)
+            log._deactivate()
+
     def test_privileged_cli_ignores_inherited_user_log_directory(self):
         from types import SimpleNamespace
         with patch.dict(os.environ, {
