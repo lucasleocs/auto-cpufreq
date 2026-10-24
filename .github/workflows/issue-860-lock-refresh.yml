@@ -1,0 +1,42 @@
+name: Issue 860 Lock Refresh (Temporary)
+
+on:
+  push:
+    branches:
+      - test/issue-860-runtime-20261023
+    paths:
+      - pyproject.toml
+      - .github/workflows/issue-860-lock-refresh.yml
+
+permissions:
+  contents: write
+
+jobs:
+  refresh-lock:
+    if: github.ref == 'refs/heads/test/issue-860-runtime-20261023'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install Poetry matching lock generator
+        run: python -m pip install poetry==2.5.1
+      - name: Resolve and verify dependency lock
+        run: |
+          poetry lock
+          poetry check --lock
+      - name: Commit only the generated lockfile to the experiment branch
+        run: |
+          git add poetry.lock
+          if git diff --cached --quiet; then
+            echo "The lockfile is already current."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "Regenerate Poetry lock for inotify-simple migration"
+          git push origin HEAD:refs/heads/test/issue-860-runtime-20261023
