@@ -669,6 +669,10 @@ auto-cpufreq --stats
 
 In addition to CPU and battery telemetry, the stats interface reports the current **Platform Profile**, detected interface, control availability, available platform profiles, and provider information. CPU power controls such as the governor, EPP, EPB, HWP Dynamic Boost, and Turbo Boost are grouped separately under **CPU Power State**.
 
+Battery power measures the flow of energy through the battery, not total system or CPU power use. A reading of `0.00 W` is normal when the battery is neither charging nor discharging.
+
+Battery status, charge percentage, and rate are read from UPower when a matching system battery is available, with a kernel sysfs fallback. The connection to external power and any charge thresholds already exposed by the kernel remain separate readings. When UPower exposes charging-limit capabilities, the GTK interface and `--stats` report them without changing the configured limits. If UPower and sysfs disagree, both reported values are identified rather than presented as a confirmed applied limit. Charging settings are not editable from the GTK interface.
+
 ### bluetooth_boot_off
 
 Turn off Bluetooth on boot (only)! Bluetooth can still be turned on manually when needed. This option is executed during the installation of the auto-cpufreq daemon, but it can also be run independently without installing the daemon.

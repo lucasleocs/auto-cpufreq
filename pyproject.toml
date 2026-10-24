@@ -26,6 +26,7 @@ psutil = ">=6.0.0,<8.0.0"
 click = "^8.1.0"
 distro = "^1.8.0"
 requests = "^2.32.4"
+dbus-next = ">=0.2.3,<0.3.0"
 # PyGObject remains an optional extra for Poetry/development GUI installs.
 # Debian/Ubuntu source installs use the distribution-provided python3-gi
 # runtime through the installer's --system-site-packages virtual environment.

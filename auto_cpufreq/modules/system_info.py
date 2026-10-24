@@ -20,6 +20,7 @@ from auto_cpufreq.globals import (
     IS_INSTALLED_WITH_SNAP,
     POWER_SUPPLY_DIR,
 )
+from auto_cpufreq.modules.battery_upower import read_upower_battery
 from auto_cpufreq.modules.platform_profile import (
     PlatformProfileSnapshot,
     platform_profile,
@@ -45,24 +46,101 @@ class BatteryInfo:
     charging_stop_threshold: int | None
     battery_level: int | None
     power_watts: float | None
+    status: str | None = None
+    source: str = "sysfs"
+    charge_protection_supported: bool = False
+    charge_protection_enabled: bool | None = None
+    charge_control_types: tuple[str, ...] = ()
+    upower_configured_start: int | None = None
+    upower_configured_end: int | None = None
 
     def __repr__(self) -> str:
-        if self.is_charging:
-            return "charging"
-        if self.is_ac_plugged is False:
-            return "discharging"
-        if self.is_ac_plugged is None:
-            return "Unknown"
-        return "Not Charging"
+        return battery_status_label(self)
+
+
+def battery_status_label(battery: BatteryInfo | None) -> str:
+    if battery is None:
+        return "Unavailable"
+    status = (battery.status or "").strip().lower()
+    states = {
+        "charging": "Charging",
+        "discharging": "Discharging",
+        "not charging": "Not charging",
+        "full": "Full",
+        "fully charged": "Fully charged",
+        "pending charge": "Pending charge",
+        "pending discharge": "Pending discharge",
+        "empty": "Empty",
+        "unknown": "Unknown",
+    }
+    if status in states:
+        return states[status]
+    if battery.is_charging is True:
+        return "Charging"
+    return "Unknown"
+
+
+@dataclass(frozen=True)
+class BatteryThresholdDisplay:
+    """Read-only labels; configured UPower limits are not necessarily applied."""
+    start: str
+    stop: str
+    charge_limit: str | None = None
+    firmware_only: bool = False
+
+
+def battery_threshold_display(battery: BatteryInfo | None) -> BatteryThresholdDisplay:
+    if battery is None:
+        return BatteryThresholdDisplay("Unavailable", "Unavailable")
+
+    def observed(value: int | None) -> str:
+        return f"{value}%" if value is not None else "Unavailable"
+
+    start = observed(battery.charging_start_threshold)
+    stop = observed(battery.charging_stop_threshold)
+    if not battery.charge_protection_supported:
+        return BatteryThresholdDisplay(start, stop)
+
+    controls = battery.charge_control_types
+    firmware = "Firmware managed" in controls
+    numeric = "Start threshold" in controls or "End threshold" in controls
+    enabled = battery.charge_protection_enabled
+
+    if firmware and not numeric:
+        status = ("active" if enabled is True else
+                  "disabled" if enabled is False else "state unknown")
+        return BatteryThresholdDisplay(
+            start, stop, f"Firmware managed ({status})", firmware_only=True
+        )
+
+    if enabled is False:
+        return BatteryThresholdDisplay(start, stop, "Supported (disabled)")
+    if enabled is None:
+        return BatteryThresholdDisplay(start, stop, "Supported (state unknown)")
+
+    def described(observed_limit: int | None, configured_limit: int | None) -> str:
+        if configured_limit is None:
+            return observed(observed_limit)
+        if observed_limit is None or observed_limit == configured_limit:
+            return f"{configured_limit}% (UPower)"
+        return (
+            f"{observed_limit}% (kernel) · "
+            f"{configured_limit}% configured (UPower)"
+        )
+
+    if "Start threshold" in controls:
+        start = described(battery.charging_start_threshold, battery.upower_configured_start)
+    if "End threshold" in controls:
+        stop = described(battery.charging_stop_threshold, battery.upower_configured_end)
+
+    return BatteryThresholdDisplay(start, stop)
 
 
 def battery_power_label(battery: BatteryInfo | None) -> str:
-    """Describe the direction of the reported battery power."""
-    if battery is None:
-        return "Battery power"
-    if battery.is_charging is True:
+    status = battery_status_label(battery)
+    if status == "Charging":
         return "Charging power"
-    if battery.is_ac_plugged is False:
+    if status == "Discharging":
         return "Discharge power"
     return "Battery power"
 
@@ -761,6 +839,13 @@ class SystemInfo:
         charging_stop_threshold = int(charge_stop_threshold) if charge_stop_threshold \
             and charge_stop_threshold.isdigit() else None
 
+        upower = read_upower_battery(battery_path)
+        if upower is not None:
+            battery_status = upower.status
+            battery_level = upower.percentage
+            power_watts = upower.power_watts
+            is_charging = battery_status == "Charging"
+
         return BatteryInfo(
             is_charging=is_charging,
             is_ac_plugged=is_ac_plugged,
@@ -768,6 +853,13 @@ class SystemInfo:
             charging_stop_threshold=charging_stop_threshold,
             battery_level=battery_level,
             power_watts=power_watts,
+            status=battery_status,
+            source="upower" if upower is not None else "sysfs",
+            charge_protection_supported=upower.charge_protection_supported if upower else False,
+            charge_protection_enabled=upower.charge_protection_enabled if upower else None,
+            charge_control_types=upower.charge_control_types if upower else (),
+            upower_configured_start=upower.configured_start_threshold if upower else None,
+            upower_configured_end=upower.configured_end_threshold if upower else None,
         )
 
     @staticmethod

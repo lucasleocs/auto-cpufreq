@@ -16,6 +16,8 @@ from auto_cpufreq.globals import GITHUB, IS_INSTALLED_WITH_SNAP
 from auto_cpufreq.gui.objects import BluetoothBootControl, DaemonNotRunningView, DropDownMenu, MonitorModeView, RadioButtonView, CPUTurboOverride, UpdateDialog
 from auto_cpufreq.modules.system_info import (
     battery_power_label,
+    battery_status_label,
+    battery_threshold_display,
     format_platform_profile_choices,
     system_info,
 )
@@ -88,15 +90,7 @@ def _set_row_visible(grid, row, visible):
 
 
 def _battery_status(battery):
-    if battery is None:
-        return "Unavailable"
-    if battery.is_charging is True:
-        return "Charging"
-    if battery.is_ac_plugged is False:
-        return "Discharging"
-    if battery.is_ac_plugged is True:
-        return "Not charging"
-    return "Unknown"
+    return battery_status_label(battery)
 
 
 def _governor_status(report):
@@ -267,6 +261,18 @@ class SystemReportView(Gtk.Box):
             )
             self.battery_names[key] = name_label
             self.battery_values[key] = value_label
+        for key in ("start", "stop"):
+            self.battery_values[key].set_line_wrap(True)
+            self.battery_values[key].set_line_wrap_mode(Pango.WrapMode.WORD_CHAR)
+            self.battery_values[key].set_max_width_chars(40)
+
+        self.charge_limit_name, self.charge_limit_value = _add_row(
+            self.battery_grid, len(self.battery_names), "Charge limit"
+        )
+        self.charge_limit_name.set_no_show_all(True)
+        self.charge_limit_value.set_no_show_all(True)
+        self.charge_limit_name.hide()
+        self.charge_limit_value.hide()
         self.right_column.pack_start(battery_frame, False, False, 0)
 
         stats_frame, stats_grid = _new_section("System Statistics")
@@ -460,16 +466,9 @@ class SystemReportView(Gtk.Box):
                 if battery.is_ac_plugged is False
                 else "Unknown"
             )
-            self.battery_values["start"].set_text(
-                str(battery.charging_start_threshold)
-                if battery.charging_start_threshold is not None
-                else "Unavailable"
-            )
-            self.battery_values["stop"].set_text(
-                str(battery.charging_stop_threshold)
-                if battery.charging_stop_threshold is not None
-                else "Unavailable"
-            )
+            limits = battery_threshold_display(battery)
+            self.battery_values["start"].set_text(limits.start)
+            self.battery_values["stop"].set_text(limits.stop)
             self.battery_names["power"].set_text(
                 battery_power_label(battery)
             )
@@ -478,6 +477,25 @@ class SystemReportView(Gtk.Box):
                 if battery.power_watts is not None
                 else "Unavailable"
             )
+
+        limits = battery_threshold_display(battery)
+        for key in ("start", "stop"):
+            self.battery_names[key].set_no_show_all(True)
+            self.battery_values[key].set_no_show_all(True)
+            if limits.firmware_only:
+                self.battery_names[key].hide()
+                self.battery_values[key].hide()
+            else:
+                self.battery_names[key].show()
+                self.battery_values[key].show()
+
+        if limits.charge_limit is not None:
+            self.charge_limit_value.set_text(limits.charge_limit)
+            self.charge_limit_name.show()
+            self.charge_limit_value.show()
+        else:
+            self.charge_limit_name.hide()
+            self.charge_limit_value.hide()
 
         self.stats_values["usage"].set_text(
             f"{report.cpu_usage:.1f}%"

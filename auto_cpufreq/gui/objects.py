@@ -15,7 +15,7 @@ import time
 from auto_cpufreq.config.config import config, find_config_file
 from auto_cpufreq.core import distro_info, get_formatted_version, get_override, get_turbo_override, sysinfo
 from auto_cpufreq.globals import GITHUB, IS_INSTALLED_WITH_AUR, IS_INSTALLED_WITH_SNAP
-from auto_cpufreq.modules.system_info import system_info
+from auto_cpufreq.modules.system_info import system_info, battery_threshold_display
 from auto_cpufreq.power_helper import bluetoothctl_exists
 
 auto_cpufreq_stats_path = ("/var/snap/auto-cpufreq/current" if IS_INSTALLED_WITH_SNAP else "/var/run") + "/auto-cpufreq.stats"
@@ -389,6 +389,14 @@ class BatteryInfoBox(Gtk.Box):
         self.pack_start(self.start_threshold_label, False, False, 0)
         self.pack_start(self.stop_threshold_label, False, False, 0)
 
+        self.protection_label = Gtk.Label(label="")
+        self.protection_label.set_halign(Gtk.Align.START)
+        self.protection_label.set_no_show_all(True)
+        self.protection_label.hide()
+        self.pack_start(self.protection_label, False, False, 0)
+        self.start_threshold_label.set_no_show_all(True)
+        self.stop_threshold_label.set_no_show_all(True)
+
         self.refresh()
 
     def refresh(self):
@@ -409,17 +417,20 @@ class BatteryInfoBox(Gtk.Box):
                 ac_text = "Unknown"
             self.ac_label.set_label(f"AC plugged: {ac_text}")
 
-            if battery_info.is_ac_plugged is not None:
-                start_text = str(battery_info.charging_start_threshold) if battery_info.charging_start_threshold is not None else "None"
+            limits = battery_threshold_display(battery_info)
+            self.start_threshold_label.set_label(f"Charging start threshold: {limits.start}")
+            self.stop_threshold_label.set_label(f"Charging stop threshold: {limits.stop}")
+            if limits.firmware_only:
+                self.start_threshold_label.hide()
+                self.stop_threshold_label.hide()
             else:
-                start_text = "Unknown"
-            self.start_threshold_label.set_label(f"Charging start threshold: {start_text}")
-
-            if battery_info.is_ac_plugged is not None:
-                stop_text = str(battery_info.charging_stop_threshold) if battery_info.charging_stop_threshold is not None else "None"
+                self.start_threshold_label.show()
+                self.stop_threshold_label.show()
+            if limits.charge_limit is None:
+                self.protection_label.hide()
             else:
-                stop_text = "Unknown"
-            self.stop_threshold_label.set_label(f"Charging stop threshold: {stop_text}")
+                self.protection_label.set_label(f"Charge limit: {limits.charge_limit}")
+                self.protection_label.show()
 
         except Exception:
             self.status_label.set_label("Battery status: Unknown")
@@ -427,6 +438,7 @@ class BatteryInfoBox(Gtk.Box):
             self.ac_label.set_label("AC plugged: Unknown")
             self.start_threshold_label.set_label("Charging start threshold: Unknown")
             self.stop_threshold_label.set_label("Charging stop threshold: Unknown")
+            self.protection_label.hide()
 
 class CPUFreqScalingBox(Gtk.Box):
     def __init__(self):

@@ -8,6 +8,7 @@ import time
 from .system_info import (
     SystemReport,
     battery_power_label,
+    battery_threshold_display,
     format_platform_profile_summary,
     system_info,
 )
@@ -290,34 +291,37 @@ class SystemMonitor:
             )
 
         # Right Column - Battery, Platform Profile, CPU Power State, and System Stats
-        if report.battery_info is not None:
-            self.right_content.extend(
-                [
-                    urwid.AttrMap(aligned_text("Battery Stats"), "header"),
-                    aligned_text(f"Battery status: {str(report.battery_info)}"),
-                    aligned_text(
-                        f"Battery percentage: {(str(report.battery_info.battery_level) + '%') if report.battery_info.battery_level is not None else 'Unknown'}"
-                    ),
-                    aligned_text(
-                        f'AC plugged: {("Yes" if report.battery_info.is_ac_plugged else "No") if report.battery_info.is_ac_plugged is not None else "Unknown"}'
-                    ),
-                    aligned_text(
-                        f'Charging start threshold: {report.battery_info.charging_start_threshold if report.battery_info.is_ac_plugged is not None else "Unknown"}'
-                    ),
-                    aligned_text(
-                        f'Charging stop threshold: {report.battery_info.charging_stop_threshold if report.battery_info.is_ac_plugged is not None else "Unknown"}'
-                    ),
-                    aligned_text(
-                        f"{battery_power_label(report.battery_info)}: "
-                        + (
-                            f"{report.battery_info.power_watts:.2f} W"
-                            if report.battery_info.power_watts is not None
-                            else "Unavailable"
-                        )
-                    ),
-                    aligned_text(""),
-                ]
+        battery = report.battery_info
+        if battery is not None:
+            limits = battery_threshold_display(battery)
+            battery_rows = [
+                urwid.AttrMap(aligned_text("Battery Stats"), "header"),
+                aligned_text(f"Battery status: {str(battery)}"),
+                aligned_text(
+                    f"Battery percentage: {battery.battery_level}%"
+                    if battery.battery_level is not None
+                    else "Battery percentage: Unknown"
+                ),
+                aligned_text(
+                    f'AC plugged: {("Yes" if battery.is_ac_plugged else "No") if battery.is_ac_plugged is not None else "Unknown"}'
+                ),
+            ]
+            if not limits.firmware_only:
+                battery_rows.extend([
+                    aligned_text(f"Charging start threshold: {limits.start}"),
+                    aligned_text(f"Charging stop threshold: {limits.stop}"),
+                ])
+            battery_rows.append(
+                aligned_text(
+                    f"{battery_power_label(battery)}: "
+                    + (f"{battery.power_watts:.2f} W"
+                       if battery.power_watts is not None else "Unavailable")
+                )
             )
+            if limits.charge_limit is not None:
+                battery_rows.append(aligned_text(f"Charge limit: {limits.charge_limit}"))
+            battery_rows.append(aligned_text(""))
+            self.right_content.extend(battery_rows)
 
         # Platform Profile
         self.right_content.append(

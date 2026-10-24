@@ -701,6 +701,18 @@ typing-extensions = {version = ">=4.13.2", markers = "python_full_version < \"3.
 ssh = ["bcrypt (>=3.1.5)"]
 
 [[package]]
+name = "dbus-next"
+version = "0.2.3"
+description = "A zero-dependency DBus library for Python with asyncio support"
+optional = false
+python-versions = ">=3.6.0"
+groups = ["main"]
+files = [
+    {file = "dbus_next-0.2.3-py3-none-any.whl", hash = "sha256:58948f9aff9db08316734c0be2a120f6dc502124d9642f55e90ac82ffb16a18b"},
+    {file = "dbus_next-0.2.3.tar.gz", hash = "sha256:f4eae26909332ada528c0a3549dda8d4f088f9b365153952a408e28023a626a5"},
+]
+
+[[package]]
 name = "distlib"
 version = "0.4.4"
 description = "Distribution utilities"
@@ -2229,4 +2241,4 @@ gui = ["PyGObject"]
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.9, <4.0"
-content-hash = "44a1897c3b2afe9b2670a77e83dec0124abb7ed3207fceb9c58e9bdc8b4d5451"
+content-hash = "71a8bc91ef660db1e77cedf26366348f9da396341197918f18d731489315d29d"
