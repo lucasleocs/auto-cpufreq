@@ -129,9 +129,13 @@ class GtkTimerTests(unittest.TestCase):
 
     def test_inactive_tick_removes_source_and_new_start_is_ignored(self):
         self.scheduler.start()
+        source = self.scheduler.source_id
         self.active = False
+        # Invoked directly rather than by GLib: emulate GLib's automatic
+        # source removal after the callback returns False.
         self.assertFalse(self.scheduler._tick())
         self.assertIsNone(self.scheduler.source_id)
+        GLib.source_remove(source)
         self.scheduler.start()
         self.assertIsNone(self.scheduler.source_id)
 
