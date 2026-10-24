@@ -839,6 +839,7 @@ class MonitorModeView(Gtk.Box):
         self.refresh_id = None
         self._health_timer_id = None
         self._stalled_refresh_reported = False
+        self.connect("destroy", self._on_destroy)
         self._refresh_coordinator = ReportRefreshCoordinator(
             self._collect_report, self._dispatch_refresh_result,
             thread_name="gtk-monitor-refresh",
@@ -970,14 +971,28 @@ class MonitorModeView(Gtk.Box):
             self._stalled_refresh_reported = False
         elif age >= 20 and not self._stalled_refresh_reported:
             self._stalled_refresh_reported = True
-            diagnostics.warning(
-                "GTK Monitor collection/delivery pending for %.1fs; "
-                "keeping shared single-flight worker", age,
-            )
+            try:
+                diagnostics.warning(
+                    "GTK Monitor collection/delivery pending for %.1fs; "
+                    "keeping shared single-flight worker", age,
+                )
+            except Exception:
+                pass  # Diagnostics must not destroy the health timer.
         return True
 
-    def refresh_in_thread(self):
+    def _scheduled_refresh(self):
+        # The GLib one-shot source is about to return False: forget its ID
+        # before another refresh can schedule the successor.
         self.refresh_id = None
+        return self.refresh_in_thread()
+
+    def _schedule_next_refresh(self):
+        if self.running and self.refresh_id is None:
+            self.refresh_id = GLib.timeout_add_seconds(
+                self.refresh_interval, self._scheduled_refresh
+            )
+
+    def refresh_in_thread(self):
         if self.running:
             self._refresh_coordinator.request()
         return False
@@ -1000,39 +1015,57 @@ class MonitorModeView(Gtk.Box):
             or not self._refresh_coordinator.is_current(result.generation)
         ):
             return False
-        diagnostics.record_duration(
-            "GTK monitor queue", result.queue_seconds,
-            slow_after=max(1.0, self.refresh_interval),
-        )
-        diagnostics.record_duration(
-            "GTK monitor collection", result.duration,
-            slow_after=max(2.0, self.refresh_interval * 2),
-        )
-        if result.completed_at:
-            diagnostics.record_duration(
-                "GTK monitor delivery latency",
-                max(0.0, time.monotonic() - result.completed_at),
-                slow_after=max(1.0, self.refresh_interval),
-            )
         try:
-            if result.error is not None:
-                diagnostics.warning(
-                    "GTK monitor collection failed: %s", result.error
-                )
-                self._show_error(str(result.error))
-            else:
-                self._update_display(*result.report)
-        except Exception as error:
-            diagnostics.exception("GTK monitor presentation failed")
-            self._show_error(str(error))
-        finally:
-            if result.requested_at:
+            try:
                 diagnostics.record_duration(
-                    "GTK monitor end-to-end refresh",
-                    max(0.0, time.monotonic() - result.requested_at),
+                    "GTK monitor queue", result.queue_seconds,
+                    slow_after=max(1.0, self.refresh_interval),
+                )
+                diagnostics.record_duration(
+                    "GTK monitor collection", result.duration,
                     slow_after=max(2.0, self.refresh_interval * 2),
                 )
-            self._refresh_coordinator.acknowledge(result.generation)
+                if result.completed_at:
+                    diagnostics.record_duration(
+                        "GTK monitor delivery latency",
+                        max(0.0, time.monotonic() - result.completed_at),
+                        slow_after=max(1.0, self.refresh_interval),
+                    )
+            except Exception:
+                pass  # Diagnostic failures cannot block the UI.
+
+            try:
+                if result.error is not None:
+                    try:
+                        diagnostics.warning(
+                            "GTK monitor collection failed: %s", result.error
+                        )
+                    except Exception:
+                        pass
+                    self._show_error(str(result.error))
+                else:
+                    self._update_display(*result.report)
+            except Exception as error:
+                try:
+                    diagnostics.exception("GTK monitor presentation failed")
+                except Exception:
+                    pass
+                self._show_error(str(error))
+        finally:
+            try:
+                if result.requested_at:
+                    try:
+                        diagnostics.record_duration(
+                            "GTK monitor end-to-end refresh",
+                            max(0.0, time.monotonic() - result.requested_at),
+                            slow_after=max(2.0, self.refresh_interval * 2),
+                        )
+                    except Exception:
+                        pass
+            finally:
+                # A failed log, error widget or render must never leave
+                # ReportRefreshCoordinator stuck in its delivering state.
+                self._refresh_coordinator.acknowledge(result.generation)
         return False
 
     def _show_error(self, message):
@@ -1045,12 +1078,7 @@ class MonitorModeView(Gtk.Box):
         )
         self.error_label.show()
 
-        self.refresh_id = (
-            GLib.timeout_add_seconds(
-                self.refresh_interval,
-                self.refresh_in_thread,
-            )
-        )
+        self._schedule_next_refresh()
         return False
 
     def _update_display(
@@ -1068,11 +1096,14 @@ class MonitorModeView(Gtk.Box):
             diagnostics.exception("GTK monitor render failed")
             raise
         finally:
-            diagnostics.record_duration(
-                "GTK monitor render",
-                time.monotonic() - started,
-                slow_after=1.0,
-            )
+            try:
+                diagnostics.record_duration(
+                    "GTK monitor render",
+                    time.monotonic() - started,
+                    slow_after=1.0,
+                )
+            except Exception:
+                pass
 
     def _render_display(
         self,
@@ -1132,12 +1163,7 @@ class MonitorModeView(Gtk.Box):
             self.turbo_name.hide()
             self.turbo_suggestion.hide()
 
-        self.refresh_id = (
-            GLib.timeout_add_seconds(
-                self.refresh_interval,
-                self.refresh_in_thread,
-            )
-        )
+        self._schedule_next_refresh()
         return False
 
     def on_back_clicked(self, _button):
@@ -1146,18 +1172,25 @@ class MonitorModeView(Gtk.Box):
         self.parent.daemon_not_running()
         self.parent.show_all()
 
+    def _on_destroy(self, *_args):
+        self.cleanup()
+
     def cleanup(self):
-        diagnostics.info("GTK monitor view closed")
+        # Both Back and Gtk.Widget.destroy() can reach here.
+        if not self.running:
+            return
         self.running = False
         self._refresh_coordinator.close()
 
-        if self.refresh_id is not None:
-            GLib.source_remove(self.refresh_id)
-            self.refresh_id = None
-
-        if self._health_timer_id is not None:
-            GLib.source_remove(self._health_timer_id)
-            self._health_timer_id = None
+        refresh_id, self.refresh_id = self.refresh_id, None
+        health_id, self._health_timer_id = self._health_timer_id, None
+        for source_id in (refresh_id, health_id):
+            if source_id is not None:
+                GLib.source_remove(source_id)
+        try:
+            diagnostics.info("GTK monitor view closed")
+        except Exception:
+            pass
 
 
 class DaemonNotRunningView(Gtk.Box):
