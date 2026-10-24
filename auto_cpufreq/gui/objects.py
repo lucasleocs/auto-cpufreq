@@ -682,8 +682,8 @@ class DropDownMenu(Gtk.MenuButton):
         )
         dialog.format_secondary_text(
             f"{diagnostics.log_path}\n"
-            "Logs are retained locally and rotated when they reach 1 MiB. "
-            "Please review them before sharing."
+            "Each session uses a separate log with three 1 MiB backups. "
+            "Review the contents before sharing."
         )
         dialog.run()
         dialog.destroy()
@@ -986,9 +986,10 @@ class MonitorModeView(Gtk.Box):
                 )
             return
         finally:
-            diagnostics.debug(
-                "GTK monitor collection duration=%.3fs",
+            diagnostics.record_duration(
+                "GTK monitor collection",
                 time.monotonic() - started,
+                slow_after=max(2.0, self.refresh_interval * 2),
             )
 
         if self.running:
@@ -1032,9 +1033,10 @@ class MonitorModeView(Gtk.Box):
             diagnostics.exception("GTK monitor render failed")
             raise
         finally:
-            diagnostics.debug(
-                "GTK monitor render duration=%.3fs",
+            diagnostics.record_duration(
+                "GTK monitor render",
                 time.monotonic() - started,
+                slow_after=1.0,
             )
 
     def _render_display(
