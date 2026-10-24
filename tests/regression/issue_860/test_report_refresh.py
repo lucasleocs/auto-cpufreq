@@ -251,6 +251,38 @@ class RefreshCoordinatorTests(unittest.TestCase):
         self.assertIn("closed display pipe", str(reported[0]))
         self.assertTrue(wait_until(lambda: not coordinator.in_progress))
 
+    def test_worker_start_failure_rolls_back_and_next_request_succeeds(self):
+        from unittest.mock import patch
+        from auto_cpufreq.modules import report_refresh
+
+        class UnstartableThread:
+            def __init__(self, **_kwargs):
+                pass
+
+            def start(self):
+                raise RuntimeError("synthetic thread creation error")
+
+        lane = report_refresh._ProcessCollectionLane()
+        results = []
+        coordinator = ReportRefreshCoordinator(lambda: "ready", results.append)
+        with patch.object(report_refresh, "_PROCESS_LANE", lane):
+            try:
+                with patch.object(report_refresh, "Thread", UnstartableThread):
+                    with self.assertRaisesRegex(
+                        RuntimeError, "synthetic thread creation error"
+                    ):
+                        coordinator.request()
+                    self.assertFalse(coordinator.in_progress)
+                    self.assertEqual(len(lane._jobs), 0)
+                self.assertTrue(coordinator.request())
+                self.assertTrue(wait_until(lambda: len(results) == 1))
+                self.assertEqual(results[0].report, "ready")
+                self.assertTrue(coordinator.acknowledge(results[0].generation))
+                self.assertFalse(coordinator.in_progress)
+            finally:
+                coordinator.close()
+                self.assertTrue(wait_until(lambda: lane._worker is None))
+
     def test_no_gui_or_policy_runtime_imports(self):
         from pathlib import Path
         from auto_cpufreq.modules import report_refresh
