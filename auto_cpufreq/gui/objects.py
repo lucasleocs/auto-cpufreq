@@ -29,8 +29,8 @@ auto_cpufreq_stats_path = ("/var/snap/auto-cpufreq/current" if IS_INSTALLED_WITH
 def open_containing_folder(parent, file_path):
     """Open the containing directory using the desktop's default URI handler.
 
-    This launches only a file manager; it does not edit the selected file,
-    require root privileges, or assume a particular desktop environment.
+    This requests the desktop's registered folder handler; it does not edit
+    the selected file or assume a particular file manager.
     """
     directory = Path(file_path).expanduser().absolute().parent
     try:
