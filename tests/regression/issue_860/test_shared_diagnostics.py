@@ -153,6 +153,31 @@ class SharedLoggingTests(unittest.TestCase):
             finally:
                 release.set()
 
+    def test_privileged_cli_ignores_inherited_user_log_directory(self):
+        from types import SimpleNamespace
+        with patch.dict(os.environ, {
+            "HOME": "/home/ordinary-user",
+            "XDG_STATE_HOME": "/home/ordinary-user/.local/state",
+        }):
+            with patch.object(module.os, "geteuid", return_value=0):
+                with patch("pwd.getpwuid", return_value=SimpleNamespace(
+                    pw_dir="/root"
+                )):
+                    self.assertEqual(
+                        module.cli_state_directory(),
+                        Path("/root/.local/state/auto-cpufreq"),
+                    )
+
+    def test_unprivileged_cli_uses_xdg_state_home(self):
+        with patch.dict(os.environ, {
+            "XDG_STATE_HOME": self.tmp.name,
+        }):
+            with patch.object(module.os, "geteuid", return_value=1000):
+                self.assertEqual(
+                    module.cli_state_directory(),
+                    Path(self.tmp.name) / "auto-cpufreq",
+                )
+
     def test_invalid_component_is_rejected(self):
         with self.assertRaises(ValueError):
             self.make("../escape")
