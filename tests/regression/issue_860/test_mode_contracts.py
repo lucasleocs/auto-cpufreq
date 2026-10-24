@@ -107,7 +107,7 @@ class ModeBoundaryTests(unittest.TestCase):
         self.assertIn("self._refresh_coordinator.request_if_idle()", urwid)
         self.assertNotIn("self._refresh_coordinator.request()", urwid)
         for file in ("auto_cpufreq/gui/app.py",
-                     "auto_cpufreq/gui/objects.py"):
+                     "auto_cpufreq/gui/monitor_view.py"):
             with self.subTest(file=file):
                 source = ast.unparse(module(file))
                 self.assertIn(
