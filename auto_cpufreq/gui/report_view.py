@@ -9,7 +9,7 @@ from gi.repository import Gtk, Pango
 
 from auto_cpufreq.modules.report_presentation import (
     present_report, interpret_turbo, interpret_battery,
-    present_platform_profile, offline_cpus_text,
+    present_platform_profile, offline_cpus_text, frequency_limit_text,
 )
 from auto_cpufreq.modules.system_info import battery_power_label
 
@@ -331,14 +331,10 @@ class SystemReportView(Gtk.Box):
             self.platform_values["provider"].set_text(profile.provider)
 
         self.max_freq_value.set_text(
-            f"{report.cpu_max_freq:.0f} MHz"
-            if report.cpu_max_freq is not None
-            else "Unavailable"
+            frequency_limit_text(report.cpu_max_freq)
         )
         self.min_freq_value.set_text(
-            f"{report.cpu_min_freq:.0f} MHz"
-            if report.cpu_min_freq is not None
-            else "Unavailable"
+            frequency_limit_text(report.cpu_min_freq)
         )
         self._refresh_core_rows(report.cores_info)
 
