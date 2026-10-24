@@ -143,3 +143,29 @@ For comparison, pre-suspend CPU averaged 1.76% (maximum 6.99%, occurring during 
 Scope limitation: this was one short suspend/resume cycle on an installed build at 35d8015afc1b, not an extended multiple-cycle stress test, and does not confirm the upstream issue fixed. The user's local CSV is not present in the GitHub branch; values here are from the user-provided summary.
 
 Next: consider several ordinary suspend/resume cycles with a fresh, timestamped process measurement after the last resume, and/or investigate the distinct real-terminal --stats hangup report. Avoid modifying sysfs, RAPL, daemon services or the production installation.
+
+
+## X11 versus Wayland and actual --stats terminal closure
+
+The hardware baseline and short suspend/resume validation were carried out on Linux Mint Cinnamon in an X11 session. This is an X11-only hardware observation, not validation of a native Wayland GTK backend.
+
+Original #860 reporter: Ubuntu 24.04 and Cinnamon 6.0.4. The report does not specify XDG_SESSION_TYPE; do not label the original issue as Wayland-specific. Cinnamon 6.0's Wayland support was experimental. Related #685 does contain a confirmed report of GUI freezing on GNOME Wayland, but also non-reproductions on both X11 and Wayland. Neither set establishes backend causation.
+
+For the currently installed Mint 22.3 Cinnamon version, upstream Linux Mint maintainers still describe Wayland support as experimental. Prefer investigating the actual reported --stats terminal-close scenario before changing the desktop session.
+
+The --stats implementation uses Urwid, not GTK, and does not call root_check() in its CLI stats branch; still, one upstream comment specifically reports sudo auto-cpufreq --stats after the terminal window is closed. The existing isolated PTY harness covers signal and hangup paths with mocked reports, but the installed CLI, sudo session, terminal emulator and production telemetry have not been tested together.
+
+Manual low-risk reproduction proposal:
+1. In terminal A, run auto-cpufreq --stats and verify Q then Ctrl+C on separate normal runs.
+2. Open a second terminal B; identify the exact --stats process PID (never the production daemon or auto-cpufreq-gtk) via ps.
+3. Launch the stats display again, keep terminal B open, and close the terminal A window rather than pressing Q.
+4. After a short delay, check whether the exact PID remains alive and whether %CPU climbs. If a process remains, record its status, parent PID and exact command line; clean up only the identified --stats process if necessary.
+5. If the nonprivileged case behaves normally and it is acceptable to test elevated display startup, reproduce exactly the comment's sudo auto-cpufreq --stats and its terminal closure, independently from the nonprivileged run.
+6. Avoid closing the only available terminal, SIGKILL against a guessed process, service restarts, or governor/Intel RAPL changes.
+
+References:
+- https://ubuntucinnamon.org/ubuntu-cinnamon-24-04-lts-noble-numbat-release-notes/
+- https://blog.linuxmint.com/?p=5046
+- https://docs.gtk.org/gtk3/running
+- https://github.com/AdnanHodzic/auto-cpufreq/issues/860#issuecomment-5648634471
+- https://github.com/AdnanHodzic/auto-cpufreq/issues/685
