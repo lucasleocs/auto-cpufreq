@@ -13,6 +13,7 @@ from threading import Thread
 import time
 
 from auto_cpufreq.config.config import config, find_config_file
+from auto_cpufreq.gui.diagnostics import diagnostics
 from auto_cpufreq.core import distro_info, get_formatted_version, get_override, get_turbo_override, sysinfo
 from auto_cpufreq.globals import GITHUB, IS_INSTALLED_WITH_AUR, IS_INSTALLED_WITH_SNAP
 from auto_cpufreq.modules.system_info import system_info
@@ -634,12 +635,58 @@ class DropDownMenu(Gtk.MenuButton):
         daemon.connect("activate", self._remove_daemon, parent)
         menu.append(daemon)
 
+        debug = Gtk.CheckMenuItem(label="Enable debug logging")
+        debug.set_active(diagnostics.enabled)
+        debug.connect("toggled", self._toggle_debug_logging, parent)
+        menu.append(debug)
+
+        log_location = Gtk.MenuItem(label="Debug log location")
+        log_location.connect("activate", self._show_debug_log_location, parent)
+        menu.append(log_location)
+
         about = Gtk.MenuItem(label="About")
         about.connect("activate", self.about_dialog, parent)
         menu.append(about)
 
         menu.show_all()
         return menu
+
+    def _toggle_debug_logging(self, item, parent):
+        if getattr(self, "_syncing_debug_logging", False):
+            return
+        try:
+            diagnostics.set_enabled(item.get_active())
+        except OSError as error:
+            self._syncing_debug_logging = True
+            try:
+                item.set_active(diagnostics.enabled)
+            finally:
+                self._syncing_debug_logging = False
+
+            dialog = Gtk.MessageDialog(
+                transient_for=parent,
+                message_type=Gtk.MessageType.ERROR,
+                buttons=Gtk.ButtonsType.OK,
+                text="Unable to change debug logging",
+            )
+            dialog.format_secondary_text(str(error))
+            dialog.run()
+            dialog.destroy()
+
+    def _show_debug_log_location(self, _item, parent):
+        dialog = Gtk.MessageDialog(
+            transient_for=parent,
+            message_type=Gtk.MessageType.INFO,
+            buttons=Gtk.ButtonsType.OK,
+            text="GUI debug log location",
+        )
+        dialog.format_secondary_text(
+            f"{diagnostics.log_path}\n"
+            "Logs are retained locally and rotated when they reach 1 MiB. "
+            "Please review them before sharing."
+        )
+        dialog.run()
+        dialog.destroy()
 
     def about_dialog(self, MenuItem, parent):
         dialog = AboutDialog(parent)
@@ -913,6 +960,7 @@ class MonitorModeView(Gtk.Box):
         return False
 
     def _refresh(self):
+        started = time.monotonic()
         try:
             report = (
                 system_info.generate_system_report()
@@ -930,12 +978,18 @@ class MonitorModeView(Gtk.Box):
                 )
 
         except Exception as error:
+            diagnostics.exception("GTK monitor collection failed")
             if self.running:
                 GLib.idle_add(
                     self._show_error,
                     str(error),
                 )
             return
+        finally:
+            diagnostics.debug(
+                "GTK monitor collection duration=%.3fs",
+                time.monotonic() - started,
+            )
 
         if self.running:
             GLib.idle_add(
@@ -1036,6 +1090,7 @@ class MonitorModeView(Gtk.Box):
         self.parent.show_all()
 
     def cleanup(self):
+        diagnostics.info("GTK monitor view closed")
         self.running = False
 
         if self.refresh_id is not None:
