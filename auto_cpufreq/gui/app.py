@@ -9,6 +9,9 @@ from io import StringIO
 from os.path import isdir
 from subprocess import PIPE, run
 from threading import Thread
+import time
+
+from auto_cpufreq.gui.diagnostics import diagnostics
 
 from auto_cpufreq.config.config import config
 from auto_cpufreq.core import check_for_update, daemon_is_running
@@ -524,6 +527,7 @@ class ToolWindow(Gtk.Window):
         self.power_apply_sources = {}
         self.destroyed = False
         self.connect("destroy", self._cleanup_refresh)
+        diagnostics.info("GTK window created")
         self.load_css()
         pixbuf = GdkPixbuf.Pixbuf.new_from_file_at_scale(
             filename=ICON_FILE,
@@ -798,6 +802,7 @@ class ToolWindow(Gtk.Window):
             return
 
         self.refresh_interval = seconds
+        diagnostics.info("GTK refresh interval set to %ds", seconds)
         self._schedule_refresh()
         self.request_refresh()
 
@@ -816,6 +821,7 @@ class ToolWindow(Gtk.Window):
 
         if self.refresh_in_progress:
             self.refresh_pending = True
+            diagnostics.debug("GTK refresh requested during active collection")
             return True
 
         return self.refresh_in_thread()
@@ -839,6 +845,7 @@ class ToolWindow(Gtk.Window):
         self.refresh_in_thread()
 
     def _cleanup_refresh(self, *_args):
+        diagnostics.info("GTK window closing")
         self.destroyed = True
         self.refresh_in_progress = False
         self.refresh_pending = False
@@ -982,15 +989,22 @@ class ToolWindow(Gtk.Window):
         return True
 
     def _refresh(self):
+        started = time.monotonic()
         try:
             report = system_info.generate_system_report()
         except Exception as error:
+            diagnostics.exception("GTK dashboard collection failed")
             if not self.destroyed:
                 GLib.idle_add(
                     self._finish_refresh_error,
                     str(error),
                 )
             return
+        finally:
+            diagnostics.debug(
+                "GTK dashboard collection duration=%.3fs",
+                time.monotonic() - started,
+            )
 
         if not self.destroyed:
             GLib.idle_add(self._apply_refresh, report)
@@ -1000,6 +1014,7 @@ class ToolWindow(Gtk.Window):
             self.refresh_in_progress = False
             return False
 
+        started = time.monotonic()
         try:
             self.report_view.apply_report(
                 report,
@@ -1010,12 +1025,17 @@ class ToolWindow(Gtk.Window):
             )
             self.refresh_error_label.hide()
         except Exception as error:
+            diagnostics.exception("GTK dashboard render failed")
             self.refresh_error_label.set_text(
                 "Unable to refresh system information: "
                 f"{error}"
             )
             self.refresh_error_label.show()
         finally:
+            diagnostics.debug(
+                "GTK dashboard render duration=%.3fs",
+                time.monotonic() - started,
+            )
             self.refresh_in_progress = False
             self._run_pending_refresh()
 
@@ -1026,6 +1046,7 @@ class ToolWindow(Gtk.Window):
             self.refresh_in_progress = False
             return False
 
+        diagnostics.warning("GTK dashboard collection error: %s", message)
         self.refresh_error_label.set_text(
             "Unable to refresh system information: "
             f"{message}"
