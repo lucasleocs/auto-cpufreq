@@ -59,16 +59,47 @@ sudo -n /usr/local/bin/auto-cpufreq --version
 sudo -n /opt/auto-cpufreq/current/venv/bin/auto-cpufreq-restore-rapl
 echo "source-install: PASS" >> "$RESULT_FILE"
 
-echo "==== REAL MANAGED DAEMON INSTALL / SYSTEMD ===="
-sudo -n /usr/local/bin/auto-cpufreq --install
+echo "==== REAL MANAGED UNIT INSTALL / SYSTEMD ===="
+if [[ -r /sys/devices/system/cpu/cpu0/cpufreq/scaling_available_governors ]] \
+   && grep -Eq '(^|[[:space:]])(performance|powersave)([[:space:]]|$)' \
+      /sys/devices/system/cpu/cpu0/cpufreq/scaling_available_governors; then
+  # This branch runs only on a VM with genuine cpufreq governor support.
+  sudo -n /usr/local/bin/auto-cpufreq --install
+  sudo systemctl is-active --quiet auto-cpufreq.service
+  echo "daemon-real-start: PASS" >> "$RESULT_FILE"
+else
+  # Ordinary GitHub-hosted VMs do not expose CPU frequency governors.
+  # Exercise the REAL Click --install callback and source service-publishing
+  # scripts, bypassing ONLY gov_check and the actual daemon start. Never
+  # silently interpret this as a successful real governor/daemon test.
+  echo "VM has no cpufreq governors: using explicitly labeled unit-only test."
+  mkdir -p "$RUNNER_TEMP/rapl-e2e-bin"
+  cat > "$RUNNER_TEMP/rapl-e2e-bin/systemctl" <<'EOS'
+#!/bin/sh
+if [ "$1" = start ] && [ "$2" = auto-cpufreq ]; then
+  echo "DISPOSABLE VM: suppressed CPU policy daemon start (no cpufreq)"
+  exit 0
+fi
+exec /usr/bin/systemctl "$@"
+EOS
+  chmod 755 "$RUNNER_TEMP/rapl-e2e-bin/systemctl"
+  sudo -n env PATH="$RUNNER_TEMP/rapl-e2e-bin:$PATH" \
+    /opt/auto-cpufreq/current/venv/bin/python - <<'PY'
+from auto_cpufreq.bin import auto_cpufreq as cli
+cli.gov_check = lambda: None  # VM-only: no CPU frequency driver
+cli.main.main(args=["--install"], prog_name="auto-cpufreq",
+              standalone_mode=False)
+PY
+  echo "daemon-unit-installed-with-start-suppressed: PASS" >> "$RESULT_FILE"
+fi
 test -f "$unit"
 test -f "$marker"
-sudo systemctl is-active --quiet auto-cpufreq.service
 sudo systemctl show auto-cpufreq.service -p ExecStopPost -p RuntimeDirectory -p NeedDaemonReload
-# Prevent prolonged normal CPU policy execution on the disposable runner VM.
+test "$(sudo systemctl show -P NeedDaemonReload auto-cpufreq.service)" = no
+# Prevent prolonged normal CPU policy execution even on supported CI VMs.
 sudo -n systemctl stop auto-cpufreq.service
 test ! -e "$JOURNAL"
-echo "daemon-install-stop: PASS" >> "$RESULT_FILE"
+echo "managed-unit-installed-and-stopped: PASS" >> "$RESULT_FILE"
 
 echo "==== STOP-TIME RECOVERY BARRIER AGAINST MALFORMED JOURNAL ===="
 sudo -n install -d -m 0700 "$RAPL_DIR"
