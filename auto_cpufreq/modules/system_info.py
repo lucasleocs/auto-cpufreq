@@ -53,6 +53,9 @@ class BatteryInfo:
     charging_stop_threshold: int | None
     battery_level: int | None
     power_watts: float | None
+    # Keep power-source inference independent of physical battery presence.
+    # Default True preserves older BatteryInfo callers and test fixtures.
+    is_present: bool = True
 
     def __repr__(self) -> str:
         if self.is_charging:
@@ -736,7 +739,8 @@ class SystemInfo:
 
         if not battery_path:
 
-            # No battery detected
+            # Preserve the historical AC assumption used by the daemon,
+            # but tell read-only frontends that no battery was detected.
             return BatteryInfo(
                 is_charging=None,
                 is_ac_plugged=is_ac_plugged,
@@ -744,6 +748,7 @@ class SystemInfo:
                 charging_stop_threshold=None,
                 battery_level=None,
                 power_watts=None,
+                is_present=False,
             )
 
         # Reading battery information
