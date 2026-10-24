@@ -12,6 +12,8 @@ on:
       - auto_cpufreq/modules/report_presentation.py
       - auto_cpufreq/modules/report_refresh.py
       - auto_cpufreq/modules/system_monitor.py
+      - auto_cpufreq/core.py
+      - auto_cpufreq/bin/auto_cpufreq.py
       - auto_cpufreq/bin/auto_cpufreq_gtk.py
       - .github/workflows/issue-860-experimental.yml
   workflow_dispatch:
