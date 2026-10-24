@@ -46,7 +46,33 @@ Measurements cover:
 
 ## Process sampler overhead baseline
 
-Pending final CI benchmark `bench_process_health.py`, which reads 100 consecutive snapshots of its own Linux process and reports median/p95 time. The script excludes asynchronous log writing and thread scheduling; actual opt-in end-to-end overhead requires a separate, isolated real-hardware comparison.
+The `bench_process_health.py` run completed on the Ubuntu 24.04 Python 3.12.15 CI runner:
+
+| Metric | Result |
+| --- | ---: |
+| Number of consecutive `/proc` snapshots | 100 |
+| Median per snapshot | 0.2043 ms |
+| P95 per snapshot | 0.2449 ms |
+| Maximum observed | 0.3116 ms |
+| Synthetic CPU duty at 5-second cadence using median | ~0.00409% of one logical CPU |
+| Process at measurement | 1 thread, 6 open file descriptors |
+
+**Interpret carefully:** the duty estimate is only the synchronous `read_snapshot()` cost divided by the five-second interval. It excludes Python thread wakeup, scheduling, log events, error formatting, file writes and the load of other applications. This is encouraging but not an end-to-end measurement of the real UI with debug enabled.
+
+Run: https://github.com/lucasleocs/auto-cpufreq/actions/runs/40053610334
+
+## Independent second render run (runner variation)
+
+Second isolated execution, same synthetic inputs and sample counts but different CI runners/scheduling:
+
+| Logical cores | GTK median / p95 (ms) | Urwid median / p95 (ms) |
+| ---: | ---: | ---: |
+| 4 | 0.2214 / 0.2414 | 0.2727 / 0.3242 |
+| 8 | 0.3969 / 0.4081 | 0.3204 / 0.7455 |
+| 16 | 0.7559 / 0.8007 | 0.3748 / 0.4015 |
+| 32 | 1.4731 / 1.5217 | 0.5403 / 0.5899 |
+
+The variability is material, but both runs imply that isolated CPU row/widget rebuilding is a small part of a normal two-second frontend refresh. It is therefore premature to add incremental widget caching just to address issue #860. Focus next on full-loop latency, sampler logs and end-to-end CPU use on a real Cinnamon machine.
 
 ## Reference and validation
 
