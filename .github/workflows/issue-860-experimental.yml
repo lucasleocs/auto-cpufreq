@@ -24,9 +24,9 @@ jobs:
       - name: Install isolated terminal UI dependency
         run: python -m pip install 'urwid>=3.0.2,<5.0.0'
       - name: Compile regression test
-        run: python -m py_compile tests/regression/issue_860/test_stats_lifecycle.py
+        run: python -m py_compile tests/regression/issue_860/test_stats_lifecycle.py tests/regression/issue_860/sample_process.py tests/regression/issue_860/test_sampler.py
       - name: Exercise terminal lifecycle
-        run: python -m unittest discover -s tests/regression/issue_860 -p 'test_stats_lifecycle.py' -v
+        run: python -m unittest discover -s tests/regression/issue_860 -p 'test_*.py' -v
 
   gtk-refresh:
     runs-on: ubuntu-24.04
