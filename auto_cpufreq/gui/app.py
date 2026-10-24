@@ -12,6 +12,7 @@ import time
 
 from auto_cpufreq.gui.diagnostics import diagnostics
 from auto_cpufreq.gui.refresh_bridge import GtkRefreshBridge
+from auto_cpufreq.gui.refresh_timer import GtkRefreshTimer
 from auto_cpufreq.modules.report_presentation import (
     present_report, interpret_turbo, interpret_battery,
 )
@@ -47,7 +48,6 @@ REFRESH_INTERVALS = (1, 2, 5)
 # The daemon normally applies overrides on its next ~2 second cycle.
 # Keep the affected state hidden until a later, fresh report is collected.
 CONTROL_APPLY_DELAY_SECONDS = 3
-STALLED_COLLECTION_SECONDS = 20
 
 
 def _new_section(title):
@@ -491,9 +491,7 @@ class ToolWindow(Gtk.Window):
         self.set_resizable(True)
         self.refresh_in_progress = False
         self.refresh_pending = False
-        self._stalled_refresh_reported = False
         self.refresh_interval = DEFAULT_REFRESH_INTERVAL
-        self.refresh_id = None
         self.pending_power_updates = set()
         self.pending_power_release = set()
         self.power_apply_sources = {}
@@ -512,6 +510,14 @@ class ToolWindow(Gtk.Window):
             thread_name="gtk-dashboard-refresh",
         )
         self._refresh_coordinator = self._refresh_bridge.coordinator
+        self._refresh_timer = GtkRefreshTimer(
+            coordinator=self._refresh_coordinator,
+            request=self.refresh_in_thread,
+            active=lambda: not self.destroyed,
+            diagnostics=diagnostics,
+            component="GTK dashboard",
+            interval=self.refresh_interval,
+        )
         self.connect("destroy", self._cleanup_refresh)
         diagnostics.info("GTK window created")
         self.load_css()
@@ -788,18 +794,18 @@ class ToolWindow(Gtk.Window):
             return
 
         self.refresh_interval = seconds
+        self._refresh_timer.set_interval(seconds)
         diagnostics.info("GTK refresh interval set to %ds", seconds)
         self._schedule_refresh()
         self.request_refresh()
 
-    def _schedule_refresh(self):
-        if self.refresh_id is not None:
-            GLib.source_remove(self.refresh_id)
+    @property
+    def refresh_id(self):
+        """Active periodic timer source, exposed for legacy UI inspection."""
+        return self._refresh_timer.source_id
 
-        self.refresh_id = GLib.timeout_add_seconds(
-            self.refresh_interval,
-            self.refresh_in_thread,
-        )
+    def _schedule_refresh(self):
+        self._refresh_timer.start()
 
     def request_refresh(self):
         if self.destroyed:
@@ -840,9 +846,7 @@ class ToolWindow(Gtk.Window):
         self.refresh_in_progress = False
         self.refresh_pending = False
 
-        if self.refresh_id is not None:
-            GLib.source_remove(self.refresh_id)
-            self.refresh_id = None
+        self._refresh_timer.stop()
 
         for source_id in self.power_apply_sources.values():
             GLib.source_remove(source_id)
@@ -1030,23 +1034,16 @@ class ToolWindow(Gtk.Window):
         self.gtk_provider.load_from_file(Gio.File.new_for_path(CSS_FILE))
 
     def refresh_in_thread(self):
+        """Explicit refresh requests may queue one successor if busy.
+
+        Periodic ticks use GtkRefreshTimer and skip occupied collections.
+        """
         if self.destroyed:
             return False
-        if self.refresh_in_progress:
-            age = self._refresh_coordinator.request_age_seconds()
-            if (
-                age is not None
-                and age >= STALLED_COLLECTION_SECONDS
-                and not self._stalled_refresh_reported
-            ):
-                self._stalled_refresh_reported = True
-                diagnostics.warning(
-                    "GTK collection/delivery pending for %.1fs; "
-                    "keeping single-flight worker", age,
-                )
+        if self._refresh_coordinator.in_progress:
             self.refresh_pending = True
+            diagnostics.debug("GTK refresh requested during active collection")
             return True
-        self._stalled_refresh_reported = False
         self.refresh_in_progress = True
         try:
             self._refresh_coordinator.request()
@@ -1068,7 +1065,6 @@ class ToolWindow(Gtk.Window):
 
     def _after_refresh_ack(self):
         self.refresh_in_progress = self._refresh_coordinator.in_progress
-        self._stalled_refresh_reported = False
 
     def _apply_refresh(self, report):
         if self.destroyed:
