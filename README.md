@@ -594,13 +594,15 @@ If the daemon is not running, the GUI allows you to either install it for persis
 
 #### GUI debug logging
 
-To investigate intermittent GTK freezes, enable **Enable debug logging** from the GUI menu. The same setting is available on the daemon-not-running screen before entering Monitor Mode. Logging is disabled by default, and the selected setting persists after the GUI is restarted.
+To investigate intermittent GTK freezes, choose **Enable debug logging** from the GTK menu. The same option is available when the daemon is not running, before entering Monitor Mode. Logging is off by default; the preference persists after restarting the GUI. The daemon and terminal `--stats` mode are unaffected.
 
-The GUI records initialization, refresh collection and rendering duration, failures, and main-loop heartbeat timing. While enabled, a lightweight watchdog can log a Python stack trace if the GTK main loop stops responding for at least 20 seconds. Debug logging applies to the GTK application, not the background daemon or the terminal `--stats` display.
+When enabled, the GUI records startup, errors, unusually slow refreshes, and minute-level summaries of collection and rendering times. A background watchdog can capture a bounded Python main-thread stack if the GTK event loop stops responding for at least 20 seconds. The diagnostic also records the GDK display backend and distinguishes system suspend time from application delays.
 
-Logs are stored in `$XDG_STATE_HOME/auto-cpufreq/gtk.log` or, if `XDG_STATE_HOME` is unset, `~/.local/state/auto-cpufreq/gtk.log`. The menu also provides **Debug log location**. Files rotate at 1 MiB and retain up to three backups (approximately 4 MiB total).
+Each enabled session writes to a separate `gtk-<timestamp>-<pid>-<id>.log` file in `$XDG_STATE_HOME/auto-cpufreq/` (normally `~/.local/state/auto-cpufreq/`). **Debug log location** in the GTK menu shows the actual path. Each session uses up to four files: one log plus three rotated backups of 1 MiB each. During a new logging session, completed older session logs are pruned, retaining the four most recent completed sessions; files of running processes are not removed. An individual session is bounded to approximately 4 MiB, while concurrent active sessions consume separate space.
 
-The GUI does not log complete system reports, configuration file contents or command outputs. Exception messages and Python stack traces can still include local filesystem paths or other environment details, so review the log before sharing it with a bug report. Disable debug logging from the same menu when the investigation is complete.
+Log records use a bounded asynchronous queue so routine updates do not wait for disk writes; if the queue fills, messages may be dropped and the amount lost is recorded. Failures to open the file prevent enabling logging; later write failures are reported by the GUI. Log files are private to the user (mode 0600). Python exception messages and stack traces may contain local paths or other environment details; **review files before sharing** them in issue reports.
+
+Disable logging using the same option when finished troubleshooting.
 
 
 ### Overriding governor
