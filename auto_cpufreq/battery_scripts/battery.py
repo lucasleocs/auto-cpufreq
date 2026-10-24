@@ -69,6 +69,9 @@ def get_battery_device():
         settings.has_section("battery")
         and settings.has_option("battery", "ideapad_laptop_conservation_mode")
     )
+    if explicitly_conservation and lsmod("ideapad_laptop"):
+        return IdeapadBatteryDevice()
+
     if not explicitly_conservation:
         battery_path = SystemInfo.get_battery_path()
         if (battery_path

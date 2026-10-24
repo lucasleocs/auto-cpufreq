@@ -145,6 +145,19 @@ class PriorityResolverTests(GenericBatteryFixture):
             self.assertIsInstance(
                 battery.get_battery_device(), battery.IdeapadBatteryDevice)
 
+    def test_explicit_conservation_with_multiple_lenovo_drivers_is_not_generic(self):
+        cfg = self.set_config(enabled=True, start=None, stop=None)
+        cfg["battery"]["ideapad_laptop_conservation_mode"] = "true"
+        with patch("auto_cpufreq.battery_scripts.battery.lsmod",
+                   side_effect=lambda name: name in ("ideapad_acpi", "ideapad_laptop")):
+            self.assertIsInstance(
+                battery.get_battery_device(), battery.IdeapadBatteryDevice)
+
+    def test_firmware_ownership_unknown_blocks_conservation_action(self):
+        with self._upower(upower(enabled=None, kinds=("Firmware managed",), end=None)):
+            self.assertEqual(resolve_charge_control(
+                str(self.bat), 100, firmware_operation=True).action, "blocked")
+
     def test_firmware_requested_when_upower_active_stays_blocked_even_if_stop_matches(self):
         (self.bat / "charge_control_end_threshold").write_text("80")
         with self._upower(upower(enabled=True, end=80)):
