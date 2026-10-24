@@ -388,25 +388,25 @@ class SystemMonitor:
                     else "CPU min frequency: Unknown"
                 ),
                 aligned_text(""),
-                aligned_text("Core    Usage   Temperature     Frequency"),
+                aligned_text("Core   Usage  Temp  Freq (MHz)"),
             ]
         )
 
         for core in report.cores_info:
             temperature = (
-                f"{core.temperature:>6.0f} °C"
+                f"{core.temperature:.0f}°C"
                 if core.temperature > 0
-                else "     —"
+                else "—"
             )
             frequency = (
-                f"{core.frequency:>6.0f} MHz"
+                f"{core.frequency:.0f}"
                 if core.frequency > 0
-                else "     —"
+                else "—"
             )
             self.left_content.append(
                 aligned_text(
-                    f"CPU{core.id:<2}    {core.usage:>4.1f}%    "
-                    f"{temperature}    {frequency}"
+                    f"CPU{core.id:<2} {core.usage:>5.1f}%  "
+                    f"{temperature:>4}  {frequency:>4}"
                 )
             )
 
