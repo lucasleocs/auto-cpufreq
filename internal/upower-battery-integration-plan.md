@@ -500,3 +500,38 @@ CI https://github.com/lucasleocs/auto-cpufreq/actions/runs/40054607440 **PASS 74
 
 Official sources underlying this sequence include the Linux power-supply sysfs ABI and TLP's vendor-specific battery thresholds guide (which documents fixed steps and driver constraints). The ordering algorithm is an engineering safeguard, **not** a universally documented kernel transaction guarantee.
 
+
+## Daemon charging policy reload, owner continuity and partial-failure protection — integrated (2026-10-24)
+
+**Experimental implementation completed:** `tmp/charge-integrated-daemon-refresh-20261024` HEAD `a6842b2a14beeae5d7e5f9ab5208d347b7ed87b1`. No changes to upstream-synced `master`, `feature/upower-read-only-battery-20261023`, or `feature/generic-kernel-charge-threshold-20261024`. No PR opened, and the user's running daemon and physical BAT1 values were not modified.
+
+The old `start_battery_daemon()` captured one `BatteryDevice` at startup and returned entirely if no battery backend existed. Changes to the `[battery]` settings could be detected by `ConfigEventHandler` but did **not** select a new driver; the initial backend could remain stale for the daemon lifetime.
+
+Now the experimental `BatteryDaemonController.tick()` provides a deterministic single-iteration entrypoint; the background daemon invokes it every 15 seconds, but substantive work runs only on a battery-policy signature change or the normal 3600-second interval. Only `[battery]` settings participate in the reload signature; modifying CPU governor options does not rewrite thresholds. The existing pyinotify config handler reloads `ConfigParser`; the controller consumes that updated snapshot. It does not reselect a backend or query UPower/TLP when `enable_thresholds` is absent/false, and it does not reset persistent firmware values to 100% when configuration is disabled.
+
+On an enabled battery-policy change or scheduled revalidation, `get_battery_device()` is called anew. Selected instances are **reused** if concrete type, battery names, selected sysfs start/stop paths, and firmware-mode path agree; otherwise the new instance receives the same shared in-memory `ChargeDriftGuard` and de-duplicated diagnostic set. This preserves conflict history through backend reselection and driver identity changes. A machine with no backend at daemon start stays eligible for a later successful selection; no early return disables monitoring.
+
+Integrated safety addition: after a low-level write operation reports failure, the owner layer re-reads the threshold pair; if it differs from the original, the shared guard suspends repeated writes for that battery and same configuration signature. This includes a partial legacy start/end transaction where restoration fails, protecting against hourly retries or conflicts with an external writer. A genuine explicit change of requested config signature is required before reconsideration, and full UPower/TLP safeguards still run on the next attempt. Failed/no-op writes that leave the original readback unchanged remain eligible for routine later retry. This is daemon-lifetime memory state, not a persistent firmware lock.
+
+### Integrated validation
+
+Final CI https://github.com/lucasleocs/auto-cpufreq/actions/runs/40055574349: **89 PASS** comprised:
+- 12 generic kernel stop-only tests
+- 21 UPower-first arbitration and backend tests
+- 11 fake D-Bus service ownership/charge capability tests
+- 8 conflicting-manager/drift tests
+- 22 legacy Start/Stop transaction and rollback tests
+- **15** new daemon/config-integration tests
+
+Those new tests cover setting a new stop percent without a restart; reusing unchanged devices and the one-hour cadence; ignoring unrelated CPU settings; preserving 80 when thresholds are disabled; no supported device at first poll and one appearing later; enabling from a disabled config; switching numeric to explicitly requested Lenovo conservation and back; TLP and UPower fail-closed at config change; drift guard surviving forced instance recreation; daemon startup even when charging policy disabled; handling a battery_device selector change; blocking retry after a partial rollback failure, then allowing a new explicitly edited config. Crucially, an integration case uses a **real temporary config file plus the project's `ConfigEventHandler.process_IN_MODIFY` and config parser**, demonstrating 80 -> 75 -> disabled while retaining effective 75 (does not reset firmware).
+
+Linux Build https://github.com/lucasleocs/auto-cpufreq/actions/runs/40055574379 **PASS** and Nix Flake https://github.com/lucasleocs/auto-cpufreq/actions/runs/40055574361 **PASS**, at the same HEAD SHA. The test workflow and tests are temporary fixtures; no actual hardware/BAT1 change and no runtime strict Snap validation occurred.
+
+### Release caveats / boundaries
+
+- The daemon's battery config is checked within about 15 seconds, not synchronously at the instant a file is saved. Underlying config reload remains the existing inotify handler. The hardware backend is re-evaluated at the next config-change poll or normal hour, not on every tick.
+- The in-memory conflict and application tracking is not persisted across daemon restarts. Repeated vendor firmware-mode toggling and third-party tools besides TLP need further review; systemd active TLP alone does not prove who last wrote a threshold.
+- The generic stop-only Samsung interface is unchanged by the Start/Stop transaction. A live UPower D-Bus race, true firmware behavior, legacy vendor-specific minimum gap constraints, and confined Snap runtime still require separate checks before promoting experimental code into the clean PR.
+- The battery setter's partial failure cannot guarantee atomic rollback. The new persistent **per-process** suspension prevents automatic worsening of a detected changed state until config change; it is not a substitute for observing actual kernel readback.
+- Do not combine temporary CI workflow and test scripts with the production PR, and do not change the first read-only UPower contribution.
+

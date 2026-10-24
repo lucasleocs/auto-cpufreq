@@ -333,3 +333,23 @@ Branch `tmp/charge-threshold-safe-transaction-20261024` @ `87cc1f5c956b66545cba6
 - TX16: setting stop to literal 100% when explicitly requested is allowed and uses a single write; it is no longer an intermediate workaround. PASS.
 - TX17: genuine hardware/firmware async behavior, vendor-specific minimum gaps and cross-file atomicity remain unverified. NOT TESTED.
 
+
+
+## Integrated daemon config reload + safety-continuity tests — CI PASS
+
+At `tmp/charge-integrated-daemon-refresh-20261024` `a6842b2a14beeae5d7e5f9ab5208d347b7ed87b1`. CI run https://github.com/lucasleocs/auto-cpufreq/actions/runs/40055574349 **89/89 PASS**, Linux Build 40055574379 and Nix Flake 40055574361 PASS. All writes confined to temporary files.
+
+- DM01: A new `stop_threshold = 75` replaces 80 on the next scheduler tick after config change, without restarting the daemon; unchanged selected backend instance reused. PASS.
+- DM02: Battery config unchanged for less than an hour => no unnecessary re-application; unrelated CPU governor option changed => no battery re-application. PASS.
+- DM03: Normal periodic one-hour revalidation of unchanged backend uses the same instance. PASS.
+- DM04: `enable_thresholds=false` makes no writes and preserves the physical readback (e.g. 80), not resetting to 100. PASS.
+- DM05: No backend available at start no longer disables daemon; once present on a later scheduled check, the backend can be selected and used. PASS.
+- DM06: Initial disabled configuration can subsequently be enabled without restarting the daemon. PASS.
+- DM07: Explicit Lenovo `ideapad_laptop_conservation_mode` switches from standard generic numeric to firmware-specific driver and back on config edits, without losing CPU daemon or requiring replacement. PASS.
+- DM08: Active TLP or UPower temporarily unavailable on changed policy stops writes despite backend reselection. PASS.
+- DM09: Known drift after our verified application remains blocked when the hardware backend instance is recreated; swapping object does not reset ownership safety. PASS.
+- DM10: Background controller thread initializes even if no active battery policy. PASS.
+- DM11: Changing the configured battery device triggers backend selection. PASS.
+- DM12: Failed Start/Stop update plus failed rollback triggers per-battery suspension; the next routine tick does not re-write a partial state. A new explicit target may re-evaluate. PASS.
+- DM13: Real temporary `.conf` file + `ConfigEventHandler.process_IN_MODIFY` reloads the configuration, applies 80 then 75, and disabling keeps 75 untouched. PASS.
+- DM14: A true modern UPower daemon, stricter sysfs/EC hardware, external managers beyond TLP, multi-battery live races and post-restart drift continuity are not tested by simulated CI. NOT VERIFIED.
