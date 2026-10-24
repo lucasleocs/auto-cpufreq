@@ -198,7 +198,9 @@ class GuiDiagnostics(SessionDiagnostics):
             # A rapid off/on UI toggle can race with the cooperative
             # watchdog stop. Allow a bounded hand-off, without starting a
             # second watchdog or blocking GTK indefinitely.
-            self._watchdog_thread.join(timeout=0.05)
+            join = getattr(self._watchdog_thread, "join", None)
+            if callable(join):
+                join(timeout=0.05)
             if self._watchdog_thread.is_alive():
                 raise OSError("Previous GTK diagnostic watchdog is still stopping")
         self._watchdog_thread = None
