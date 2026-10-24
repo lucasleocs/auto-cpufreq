@@ -106,6 +106,7 @@ class SystemMonitor:
         self._alarm_handle = None
         self._refresh_results = SimpleQueue()
         self._pipe_delivery_error = None
+        self._stalled_refresh_reported = False
         self._refresh_coordinator = ReportRefreshCoordinator(
             self._collect_report_data,
             self._dispatch_report_result,
@@ -120,6 +121,16 @@ class SystemMonitor:
         # Periodic fallback keeps the terminal responsive even if the
         # watch_pipe writer breaks after a collection has completed.
         self._refresh_ready(b"")
+        age = self._refresh_coordinator.request_age_seconds()
+        if age is None:
+            self._stalled_refresh_reported = False
+        elif age >= 20 and not self._stalled_refresh_reported:
+            self._stalled_refresh_reported = True
+            if self._diagnostics:
+                self._diagnostics.warning(
+                    "Urwid collection/delivery pending for %.1fs; "
+                    "keeping single-flight worker", age,
+                )
         self._refresh_coordinator.request()
         if self._alarm_handle is None:
             self._alarm_handle = self.loop.set_alarm_in(2, self.update)
