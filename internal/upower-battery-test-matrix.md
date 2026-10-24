@@ -309,3 +309,27 @@ Temporary head `ae34d4e11125db5a4ac4d41f9802f567ef39c08c`; CI https://github.com
 - SC15: A live UPower service name change occurring in between probe and actual write remains possible; this is a race, **not tested away**.
 - SC16: Non-TLP managers, unknown writer ownership and old multi-write vendor atomicity remain for later work. NOT VERIFIED.
 
+
+
+## Legacy start/end safe transaction — CI fixture results
+
+Branch `tmp/charge-threshold-safe-transaction-20261024` @ `87cc1f5c956b66545cba621634b6ddeffcce64ce`. CI https://github.com/lucasleocs/auto-cpufreq/actions/runs/40054607440: **22 new transaction PASS, total 74 PASS**. Linux Build and Nix Flake also PASS.
+
+- TX01: lower from 80/90 to 50/70 -> start then stop, never intermediate 100. PASS.
+- TX02: raise from 60/80 to 90/95 -> stop then start. PASS.
+- TX03: start-only or stop-only changes -> exactly one write. PASS.
+- TX04: both already match -> zero writes. PASS.
+- TX05: missing/invalid current readback or invalid target -> zero writes. PASS.
+- TX06: first write rejected -> failed, no unnecessary restoration. PASS.
+- TX07: second write rejected, start-first -> restore original start; failed outcome. PASS.
+- TX08: second write rejected, stop-first -> restore original stop; failed outcome. PASS.
+- TX09: kernel write reports success but does not change attribute (first or second) -> reject and restore modified first attr when safe. PASS.
+- TX10: restoration itself rejected -> report PARTIAL with last observed values and no false success. PASS.
+- TX11: coherent rounding on start or stop -> verified effective pair; warn about changed actual value. PASS.
+- TX12: start rounding would break future planned stop -> abort and safely restore. PASS.
+- TX13: rounded start makes no progress -> reject without second write. PASS.
+- TX14: invalid/unknown readback after a write -> report unknown partial, no blind rollback. PASS.
+- TX15: other attribute changes unexpectedly or concurrent external writer changes pair between steps -> stop, do not fight/restore over possible external owner. PASS.
+- TX16: setting stop to literal 100% when explicitly requested is allowed and uses a single write; it is no longer an intermediate workaround. PASS.
+- TX17: genuine hardware/firmware async behavior, vendor-specific minimum gaps and cross-file atomicity remain unverified. NOT TESTED.
+

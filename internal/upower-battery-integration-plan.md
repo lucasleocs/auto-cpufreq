@@ -474,3 +474,29 @@ Temporary branch `tmp/charge-priority-service-conflict-20261024` commit `ae34d4e
 
 Primary official sources: https://dbus.freedesktop.org/doc/dbus-specification.html ; https://upower.freedesktop.org/docs/Device.html ; https://linrunner.de/tlp/faq/conflicts.html .
 
+
+## Validated legacy start/end threshold transaction (2026-10-24)
+
+**Status: implemented and validated only in temporary laboratory.** Branch `tmp/charge-threshold-safe-transaction-20261024`, HEAD `87cc1f5c956b66545cba621634b6ddeffcce64ce`, two commits ahead of the prior `tmp/charge-priority-service-conflict-20261024`. The only production-code diff versus the preceding experiment is `auto_cpufreq/battery_scripts/shared.py`; temporary additions `internal/test_threshold_transaction.py` and modified `.github/workflows/upower-priority-audit.yml` **must not go into any future clean PR**.
+
+Legacy `BatteryDevice.set_battery_thresholds()` now:
+1. Checks both writable numeric threshold attributes exist and validates requested and current pairs: integer start 0..99, stop 1..100, `start < stop`. Missing, unreadable, inconsistent existing values prevent writes.
+2. Returns immediately without writing when both existing limits already match.
+3. Computes the shortest safe sequence: on lowering thresholds from 80/90 to 50/70 write start first then stop; on raising 60/80 to 90/95 write stop first then start. When changing just one bound, write just that bound. **No unconditional intermediate stop=100.**
+4. Re-reads the entire pair before and after every write. Detects write errors, silent no-op writes, pair invalidation, other attribute changing unexpectedly and races. If a driver rounds the requested value, accepts only a coherent, confirmed actual pair and logs the effective values; if rounding would invalidate a pending step, aborts.
+5. On unsuccessful transition with a valid coherent modified pair and no evidence of an external race, attempts **one bounded restoration** of the original pair, respecting the same ordering rules and demanding exact restoration readback. If restoration fails, explicitly reports `PARTIAL` and the last observed values; if readback becomes unknown or another attribute changes, does not attempt blind restoration. A second generic fallback backend is never invoked.
+6. The post-write daemon drift guard from the previous experiment remains in effect. No physical battery or installed daemon was touched.
+
+CI https://github.com/lucasleocs/auto-cpufreq/actions/runs/40054607440 **PASS 74/74 total**: 12 prior generic kernel + 21 backend-priority + 11 D-Bus service-probe + 8 competing-manager + **22 new transaction cases**. https://github.com/lucasleocs/auto-cpufreq/actions/runs/40054607464 Linux Build PASS; https://github.com/lucasleocs/auto-cpufreq/actions/runs/40054607615 Nix Flake PASS. Mock writes target exclusively temporary BAT1 files, with a fake kernel enforcing start/stop relationships and configurable error/rounding/race behaviors.
+
+### Limitations/remaining decisions
+
+- There is no cross-file atomic sysfs operation guaranteed by the Linux kernel. Best-effort recovery can itself fail; report partial status and require manual verification when necessary.
+- Conservative validation of *initial* pair rejects drivers whose disabled/default representation has equal or unknown start/stop, and some hardware imposes extra constraints (e.g. 5%-minimum gap or automatic other-bound adjustment). This safe default may reduce compatibility, but should not be "fixed" by an unverified unconditional stop=100 detour.
+- Some driver-firmware transitions are asynchronous; immediate readback may not represent settled hardware behavior. A real owner/driver test should validate this before deployment.
+- Owner/drift checks are centralized in `BatteryDevice.apply_threshold_settings()` (normal daemon path), not direct calls to low-level setters; those low-level methods are internal and should not be exposed as public privileged actions without common preflight.
+- The generic stop-only Samsung BAT1 route is not altered by this legacy pair transaction; it remains independently tested. Explicit control of 80% on physical Samsung requires separate user authorization, original-value backup and verified post-test restoration plan.
+- Remaining separate improvements: cache/reload backend when configuration switches; verify TLP conflict handling and UPower service races on real systems; consider upstream project's broader Python 3.9 type annotation behavior independently. This refactor should not be merged with the read-only UPower PR.
+
+Official sources underlying this sequence include the Linux power-supply sysfs ABI and TLP's vendor-specific battery thresholds guide (which documents fixed steps and driver constraints). The ordering algorithm is an engineering safeguard, **not** a universally documented kernel transaction guarantee.
+
