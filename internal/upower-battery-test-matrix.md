@@ -220,3 +220,20 @@ Sources: https://upower.freedesktop.org/docs/Device.html ; https://upower.freede
 - K09: Peripheral and non-power_supply paths refused; existing vendor drivers selected first. PASS.
 - K10: Linux Build and Nix Flake passed in temporary branch. Full Python 3.9 runtime not verified due pre-existing type annotation incompatibility.
 
+
+
+## Charge backend precedence audit — observed vs intended (2026-10-24)
+
+Branch `tmp/charge-priority-audit-20261024` commit `f4ad47b84f171e3574699171b68fc8a13e83069a` adds ten tests only and one temporary workflow on top of virtual-sysfs suite. Run: https://github.com/lucasleocs/auto-cpufreq/actions/runs/40050734230. 12 existing + 10 new PASS. Linux Build and Nix Flake also pass for same temporary branch.
+
+Observed (passing assertions): no UPower -> kernel; UPower explicitly unsupported -> kernel; UPower supported but disabled -> **still kernel**; UPower supported with enabled unknown -> **still kernel**; UPower active and matching target -> operation refused even when already satisfied; firmware-only active -> refuses kernel; UPower supported without any kernel end attribute -> no generic controller; vendor module chosen before generic, without cross-backend UPower conflict check; exactly one selected system battery; failed kernel write does not retry an alternative backend.
+
+**Findings to fix before second contribution:**
+- P-A: Treat unknown UPower active state as ambiguous/unsafe, not permission to write.
+- P-B: Distinguish UPower unreachable from explicitly lacking charge-control API; do not silently race an active controller after a transient outage.
+- P-C: Recognize already-satisfied matching UPower end limit + kernel readback, instead of false conflict warning.
+- P-D: Apply shared conflict/ownership preflight to existing manufacturer paths, not just GenericKernelBatteryDevice.
+- P-E: Only propose UPower as a writer for already-configured numeric/firmware presets that can be activated via the documented toggle, and never as an arbitrary-percent setter.
+- P-F: Add desired-policy tests for UPower status toggling, same/mismatched preset, firmware-only, unsupported, unknown/timeout, kernel rounding and multi-battery ambiguity. Existing tests describe present behavior and do not prove these corrections yet.
+- P-G: Confirm `enable_thresholds` config and daemon workflow do not attempt writes when disabled; no physical Samsung testing until explicit authorization.
+

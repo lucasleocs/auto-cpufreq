@@ -321,3 +321,48 @@ The user approved beginning this phase as a **second PR**, preserving read-only 
 - Temporary CI run https://github.com/lucasleocs/auto-cpufreq/actions/runs/40050271658: 12 fixture-only safety tests PASS (Python 3.12). Linux Build and Nix Flake also PASS on the temporary branch (runs 40050271568 and 40050271631). Earlier failed test runs found and corrected the unchanged-kernel-readback path. Full program imports of some *pre-existing* battery modules remain incompatible with Python 3.9 type evaluation; do not claim the new writer validated on Python 3.9 or broaden this PR solely for unrelated legacy compatibility.
 - **Still required:** optional physical BAT1 opt-in/write validation only with explicit user agreement; full daemon/Snap runtime of new writing feature untested. Separate feature branch is not yet an upstream PR or merged to `master`. Do not silently change user's `/etc/auto-cpufreq.conf`, daemon, or hardware thresholds.
 
+
+## Audited priority: UPower capability vs writable backend (2026-10-24)
+
+**Current state: UPower-first reading is implemented but UPower-first charge-limit *writing* is NOT.** Separate telemetry priority from charging policy.
+
+Read-only telemetry implementation `SystemInfo.battery_info()`: sysfs values are collected and UPower, when healthy and matching the physical battery, overrides battery status/percentage/rate. AC external-power policy and observed sysfs threshold remain separate. On UPower failure, sysfs telemetry is retained.
+
+The second charge-controller branch `feature/generic-kernel-charge-threshold-20261024` currently selects existing manufacturer drivers (`ideapad_acpi`, `ideapad_laptop`, `thinkpad_acpi`, `asus_wmi`) before its generic kernel fallback. Only the generic fallback calls `read_upower_battery()`, and that call checks whether `ChargeThresholdSupported` and `ChargeThresholdEnabled` are both true: if yes, it refuses sysfs writing; otherwise it attempts sysfs.
+
+**The official UPower D-Bus `EnableChargeThreshold(bool)` toggles the *previously configured* numeric/firmware mode, not a user-defined arbitrary percent.** `ChargeThresholdSettingsSupported` encodes start/end/firmware control types, not accepted percentage steps. Never treat UPower metadata presence as ability to apply `stop_threshold=80` by D-Bus. Privileged UPower toggling is *not* part of either current PR. Kernel `charge_control_end_threshold` is writable when exported, but drivers can clamp or round and the returned value must be checked.
+
+On Samsung `samsung-galaxybook` there is **already a firmware adapter**: its standard BAT1 `charge_control_end_threshold` kernel sysfs attribute goes through the driver into Samsung ACPI/firmware. The Samsung kernel documentation confirms stop-only, no start, 100=off, and values 50/60/70/80/90 recommended for Windows Settings interoperability. Values below 30 can disable protection on some machines. This does not warrant creating brand-specific writer code.
+
+**Actual current-behavior audit**: `tmp/charge-priority-audit-20261024` commit `f4ad47b84f171e3574699171b68fc8a13e83069a`, all ten audit tests plus twelve existing generic safety tests passed: https://github.com/lucasleocs/auto-cpufreq/actions/runs/40050734230. Linux Build https://github.com/lucasleocs/auto-cpufreq/actions/runs/40050734123 and Nix Flake https://github.com/lucasleocs/auto-cpufreq/actions/runs/40050734093 also passed. **PASS means the tests accurately captured present behavior, including the unsafe gaps below, not that the desired backend priority is implemented.** All sysfs writes were directed only to temp files.
+
+| Inputs | Current behavior | Desired policy |
+|---|---|---|
+| UPower healthy for telemetry | UPower status/%, power override sysfs | Keep |
+| UPower charge API absent/unsupported; standard kernel writable; opt-in 80 | Kernel writes 80 and checks readback | Keep |
+| UPower charge supported+enabled, configured end 80, kernel already 80 | Generic writer refuses and logs warning | Recognize already satisfied, do not write or warn |
+| UPower charge supported+enabled, configured end differs requested | Generic writer refuses | Conflict: do not override or silently call firmware; report why |
+| UPower charge supported+disabled, preset 80 | Generic writer currently directly writes sysfs | Decide ownership first; future D-Bus enable could apply matching preset, but not arbitrary percentages. Until supported, a sysfs fallback requires no conflicting active owner and explicit user opt-in |
+| UPower charge supported, enabled state **unknown** | Generic writer currently attempts sysfs | **Fail closed**: do not write without determining whether protection is active |
+| UPower unavailable due timeout vs old UPower without threshold API | Both currently lead to sysfs fallback | Distinguish unavailable/ambiguous from explicitly unsupported; avoid forcing a write when active owner status may be unknown |
+| Firmware-only UPower active | Generic writer refuses sysfs | Keep block; no numeric percentage may be presumed |
+| Existing vendor driver identified, generic kernel writable, UPower active | Existing vendor device is selected before generic, potentially skipping UPower guard | **Cross-backend ownership check** before every writer, retain vendor compatibility but do not let vendor selection silently bypass an active UPower controller |
+| UPower has threshold support, but kernel provides no writable attribute | No generic controller selected | Correct unless a separately implemented authorized D-Bus operation can satisfy exactly the requested preset; do not invent a kernel attribute |
+
+### Desired conservative priority (future implementation)
+
+1. Parse explicit `[battery] enable_thresholds=true` and valid target; without opt-in no control action.
+2. Select exactly one system battery and inspect UPower charge capability/active/unknown, configured preset and standard kernel/sysfs attributes. Distinguish `supported`, `enabled`, `known preset matches requested`, `unavailable` and `unsupported`.
+3. If existing UPower-managed state **already satisfies** the desired threshold and observed readback is consistent, report `already applied` without writes.
+4. If UPower could actually activate a *matching existing preset* through its officially documented toggle, support that only in an explicitly authorized, separately tested implementation; it does **not** support arbitrary stop percentages. Do not add a D-Bus write to the read-only PR.
+5. Otherwise use writable standard kernel thresholds only when ownership is safe, no active/unknown UPower conflict exists, and the device can accept the requested operation; read back and report effective value. Old UPower with missing API + Samsung BAT1 stop-only should normally use this route.
+6. Preserve older vendor-specific features as compatibility fallback when standard interface is not suitable; do not let a vendor module silently take precedence over an already active UPower controller. Firmware-only mode with no numeric thresholds must not be mistaken for `stop=80`.
+7. If no safe controller exists or the readback cannot validate success, fail transparently without trying a riskier backend, an alternative percentage, or automatically writing to firmware.
+
+No change was made to the clean `feature/upower-read-only-battery-20261023` or `feature/generic-kernel-charge-threshold-20261024` during this audit. Do not present second PR as priority-complete until an explicit resolver/ownership policy and simulated edge-case tests are implemented.
+
+Official references:
+- https://upower.freedesktop.org/docs/Device.html
+- https://github.com/torvalds/linux/blob/master/Documentation/ABI/testing/sysfs-class-power
+- https://dri.freedesktop.org/docs/drm/admin-guide/laptops/samsung-galaxybook.html
+
