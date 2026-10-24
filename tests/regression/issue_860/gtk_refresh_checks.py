@@ -95,6 +95,9 @@ class WindowState:
     _run_pending_refresh = APP.ToolWindow._run_pending_refresh
     _schedule_refresh = APP.ToolWindow._schedule_refresh
     _cleanup_refresh = APP.ToolWindow._cleanup_refresh
+    begin_power_state_apply = APP.ToolWindow.begin_power_state_apply
+    finish_power_state_apply = APP.ToolWindow.finish_power_state_apply
+    _release_power_state_apply = APP.ToolWindow._release_power_state_apply
 
     def __init__(self):
         self.destroyed = False
@@ -109,6 +112,7 @@ class WindowState:
         self.pending_power_updates = set()
         self.pending_power_release = set()
         self.power_apply_sources = {}
+        self.power_values = {"governor": Label(), "turbo": Label()}
         self.applied = []
         self.report_view = types.SimpleNamespace(
             apply_report=lambda report, pending: self.applied.append(report)
@@ -225,6 +229,57 @@ class GtkRefreshTests(unittest.TestCase):
             self.assertIsNone(self.window.refresh_id)
             self.assertIsNone(GLib.MainContext.default().find_source_by_id(source))
             self.assertEqual(self.window.applied, [])
+        finally:
+            release.set()
+
+    def test_power_apply_holds_old_report_until_new_snapshot(self):
+        started, release = threading.Event(), threading.Event()
+        calls = []
+
+        def collect():
+            calls.append(len(calls) + 1)
+            if len(calls) == 1:
+                started.set()
+                release.wait(timeout=3)
+            return "snapshot-%d" % len(calls)
+
+        def show_report(report, pending):
+            self.window.applied.append(report)
+            if "governor" not in pending:
+                self.window.power_values["governor"].set_text(report)
+
+        APP.system_info.generate_system_report = collect
+        self.window.report_view.apply_report = show_report
+        try:
+            self.window.refresh_in_thread()
+            self.assertTrue(started.wait(timeout=2))
+            self.assertTrue(self.window.begin_power_state_apply("governor"))
+            self.assertEqual(
+                self.window.power_values["governor"].message, "Applying…"
+            )
+            self.assertTrue(self.window.finish_power_state_apply(
+                "governor", success=True
+            ))
+            source_id = self.window.power_apply_sources["governor"]
+            # Trigger the delayed completion deterministically.
+            GLib.source_remove(source_id)
+            self.window._release_power_state_apply("governor")
+            self.assertTrue(self.window.refresh_pending)
+
+            release.set()
+            self.assertTrue(pump_until(
+                lambda: len(self.window.applied) == 2
+                and not self.window._refresh_coordinator.in_progress,
+                timeout=3,
+            ))
+            self.assertEqual(self.window.applied, [
+                "snapshot-1", "snapshot-2"
+            ])
+            self.assertEqual(
+                self.window.power_values["governor"].message, "snapshot-2"
+            )
+            self.assertFalse(self.window.pending_power_updates)
+            self.assertFalse(self.window.pending_power_release)
         finally:
             release.set()
 
