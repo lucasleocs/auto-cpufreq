@@ -12,6 +12,7 @@ from gi.repository import Gtk
 from auto_cpufreq.gui.diagnostics import diagnostics
 from auto_cpufreq.gui.refresh_bridge import GtkRefreshBridge
 from auto_cpufreq.gui.refresh_timer import GtkRefreshTimer
+from auto_cpufreq.modules.report_recommendations import RecommendationStatus
 from auto_cpufreq.modules.system_info import system_info
 
 
@@ -176,11 +177,7 @@ class MonitorModeView(Gtk.Box):
     def _collect_report(self):
         report = system_info.generate_system_report()
         recommendations = system_info.monitor_recommendations(report)
-        return (
-            report,
-            recommendations.governor.suggested,
-            recommendations.turbo.suggested,
-        )
+        return report, recommendations
 
     def _show_error(self, message):
         if not self.running:
@@ -194,17 +191,10 @@ class MonitorModeView(Gtk.Box):
 
         return False
 
-    def _update_display(
-        self,
-        report,
-        suggested_governor,
-        suggested_turbo,
-    ):
+    def _update_display(self, report, recommendations):
         started = time.monotonic()
         try:
-            return self._render_display(
-                report, suggested_governor, suggested_turbo
-            )
+            return self._render_display(report, recommendations)
         except Exception:
             diagnostics.exception("GTK monitor render failed")
             raise
@@ -218,12 +208,7 @@ class MonitorModeView(Gtk.Box):
             except Exception:
                 pass
 
-    def _render_display(
-        self,
-        report,
-        suggested_governor,
-        suggested_turbo,
-    ):
+    def _render_display(self, report, recommendations):
         if not self.running:
             return False
 
@@ -232,50 +217,35 @@ class MonitorModeView(Gtk.Box):
             "Monitor Mode - "
             f"{time.strftime('%H:%M:%S')}"
         )
-
-        # Same observed-state renderer as the normal GTK dashboard.
         self.report_view.apply_report(report)
 
-        if (
-            report.current_gov is not None
-            and suggested_governor is not None
-            and suggested_governor
-            != report.current_gov
-        ):
-            self.governor_suggestion.set_text(
-                f"Use {suggested_governor}"
-            )
+        governor = recommendations.governor
+        if governor.status == RecommendationStatus.UNAVAILABLE:
+            governor_text = "Unavailable"
+        elif governor.status == RecommendationStatus.INDETERMINATE:
+            governor_text = "Unable to determine"
+        elif governor.status == RecommendationStatus.CHANGE:
+            governor_text = f"Use {governor.suggested}"
         else:
-            self.governor_suggestion.set_text(
-                "No change suggested"
-            )
+            governor_text = "No change suggested"
+        self.governor_suggestion.set_text(governor_text)
 
-        turbo_available = (
-            report.is_turbo_on[0] is not None
-        )
-
-        if turbo_available:
+        turbo = recommendations.turbo
+        if report.is_turbo_on[0] is not None:
             self.turbo_name.show()
             self.turbo_suggestion.show()
-
-            if (
-                suggested_turbo is not None
-                and suggested_turbo
-                != report.is_turbo_on[0]
-            ):
-                self.turbo_suggestion.set_text(
-                    "Turn on"
-                    if suggested_turbo
-                    else "Turn off"
-                )
+            if turbo.status == RecommendationStatus.INDETERMINATE:
+                turbo_text = "Unable to determine"
+            elif turbo.status == RecommendationStatus.UNAVAILABLE:
+                turbo_text = "Unavailable"
+            elif turbo.status == RecommendationStatus.CHANGE:
+                turbo_text = "Turn on" if turbo.suggested else "Turn off"
             else:
-                self.turbo_suggestion.set_text(
-                    "No change suggested"
-                )
+                turbo_text = "No change suggested"
+            self.turbo_suggestion.set_text(turbo_text)
         else:
             self.turbo_name.hide()
             self.turbo_suggestion.hide()
-
         return False
 
     def on_back_clicked(self, _button):
