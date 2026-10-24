@@ -681,18 +681,25 @@ class DropDownMenu(Gtk.MenuButton):
             dialog.show_all()
 
     def _show_debug_log_location(self, _item, parent):
+        log_path = diagnostics.log_path
         dialog = Gtk.MessageDialog(
             transient_for=parent,
             message_type=Gtk.MessageType.INFO,
-            buttons=Gtk.ButtonsType.OK,
-            text="GUI debug log location",
+            buttons=Gtk.ButtonsType.CLOSE,
+            text="GTK debug log location",
         )
         dialog.format_secondary_text(
-            f"{diagnostics.log_path}\n"
-            "Each session uses a separate log with three 1 MiB backups. "
+            f"File: {log_path.name}\n"
+            f"Directory: {log_path.parent}\n\n"
+            "Each time logging is enabled, a separate file is created. "
+            "Each session supports three 1 MiB backups. "
             "Review the contents before sharing."
         )
-        dialog.run()
+        dialog.add_button("Copy full path", Gtk.ResponseType.APPLY)
+        if dialog.run() == Gtk.ResponseType.APPLY:
+            dialog.get_clipboard(Gdk.SELECTION_CLIPBOARD).set_text(
+                str(log_path), -1
+            )
         dialog.destroy()
 
     def about_dialog(self, MenuItem, parent):
