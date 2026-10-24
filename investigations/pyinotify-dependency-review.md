@@ -36,3 +36,32 @@ Official references: https://man7.org/linux/man-pages/man7/inotify.7.html ; http
 5. Only migrate if the candidate offers measurable simplicity, reproducible packaging, reliable event delivery, or better shutdown — not on the unconfirmed hypothesis that pyinotify is the source of #860.
 
 This note is an investigation, not a decision to replace the dependency.
+
+## Extended alternatives survey and safe configuration fixes (2026-10-24)
+
+The experimental branch now separates configuration **read/publish** correctness from the watcher's implementation. The changes include: local parsing before publication, previous snapshot retained on parsing/I/O failure, defaults on explicit absence, file identity/size/mtime check before publication, CLOSE_WRITE rather than mid-write MODIFY, exact filename checks (no matching backup suffixes), MOVED_TO and DELETE events, IN_Q_OVERFLOW rescan, watcher-registration failure warnings, a lazily instantiated ThreadedNotifier, and removal of the never-started Stats notifier stop. The selected-file precedence (CLI explicit > user file > /etc) is unchanged; GTK explicitly labels its own path, because the root service may select a different one. The user home is obtained via pwd instead of running a shell command.
+
+**Important residual limitations:** a directory watch lost or unavailable after startup is currently logged but not automatically recreated on every possible parent-directory reappearance; the daemon and unprivileged GUI still have distinct config-file search contexts; conservative parsing cannot validate every energy-setting semantic; a crash during system suspend/resume requires physical-host testing. The solution does not claim to prove the cause of issue #860. The test gate exercises a real pyinotify notifier in temporary directories but does not test all privileged service sequences.
+
+### Candidate comparison, expanded beyond initial shortlist
+
+| Candidate | Backend, API and dependencies | Fit for one Linux-only config | Main cost |
+| --- | --- | --- | --- |
+| `inotify-simple` 2.0.1 (Aug 2025) | Pure-Python ctypes, standard-library `select`, Linux `inotify`; BSD-2-Clause, Python >=3.6 | **First replacement prototype.** Small and dependency-light, full control over descriptor, masks and shutdown | We must implement event delivery thread, wake-up and lost-watch recovery |
+| `asyncinotify` 4.4.4 (Apr 2026) | Pure Python ctypes, pathlib events, async and synchronous access; MPL-2.0, Python >=3.6 | **Strong second candidate.** Modern, maintained, avoids Rust/C build toolchain | Adapter around synchronous daemon and threaded CLI; license and behavior review |
+| `watchfiles` 1.3.0 (Sep 2026) | Rust `notify`, automatic batching/debounce and native fallback; Python >=3.10, MIT | Good when automatic coalescing and event abstractions are useful | Platform wheels/Rust fallback, heavier dependency and conflicts with project's declared Python >=3.9 |
+| `watchdog` | Observer class with native Linux backend; Apache-2.0 | Mature higher-level alternative if more files/platforms are added | More generality/threads than needed for a single file |
+| `simple-inotify` | Thin Python ctypes Linux interface; no other dependencies | Viable low-level backup comparison | Smaller ecosystem, manually managed event loop |
+| `inotify` (0.2.12, Jul 2025) | Generator-style Linux watcher | Readable but not a leading candidate | GPL-2 licensing details warrant legal compatibility check; not the simplest interface |
+| `systemd.path` | systemd service activation via PathChanged / PathModified | Could trigger *separate* config reload services | Cannot directly reload the in-process config without adding IPC or service restart; inappropriate as drop-in |
+| File stat polling on daemon tick | Python stdlib only | Eliminates watch dependency in permanent daemon | Monitor/Live would need their own trigger; misses intermediate edits, latency/CPU tradeoffs |
+| `Gio.FileMonitor` | GLib/GIO watcher available to GTK | Fits GTK only | Can't serve headless CLI/daemon without requiring GI there |
+| `watchgod`, `inotifyx` | Renamed legacy package / old compiled extension | **Not recommended** | Superseded, or no contemporary release suitable for our goals |
+
+### Reproducibility and decision
+
+The present `poetry.lock` already pins the fork to commit `271b7aba3269116b6c3870355393f47c79bce146`, although the manifest uses an unpinned `HEAD` reference. Thus the exact checkout is reproducible with the lockfile; manifests resolved without it could drift. Do not treat a future ref update as a harmless patch.
+
+**Recommended shortlist:** start with `inotify-simple`, assess `asyncinotify` as an equally plausible alternative, and include `watchfiles` only if simpler failure recovery or significantly better behavior outweighs packaging cost. Cross-run hardware benchmarking should compare event delay, lost-event and atomic-renaming correctness, 1h idle CPU, FD/thread counts, and teardown after suspend; do not run competing daemon policies. A genuine result is required before changing `pyproject.toml` or `poetry.lock`.
+
+References: https://pypi.org/project/inotify-simple/ ; https://pypi.org/project/asyncinotify/ ; https://pypi.org/project/watchfiles/ ; https://watchfiles.helpmanual.io/ ; https://pypi.org/project/simple-inotify/ ; https://pypi.org/project/inotify/ ; https://www.freedesktop.org/software/systemd/man/latest/systemd.path.html .
