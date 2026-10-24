@@ -86,7 +86,9 @@ APP = load_app()
 
 class WindowState:
     refresh_in_thread = APP.ToolWindow.refresh_in_thread
-    _refresh = APP.ToolWindow._refresh
+    _collect_report = APP.ToolWindow._collect_report
+    _dispatch_refresh_result = APP.ToolWindow._dispatch_refresh_result
+    _deliver_refresh_result = APP.ToolWindow._deliver_refresh_result
     _apply_refresh = APP.ToolWindow._apply_refresh
     _finish_refresh_error = APP.ToolWindow._finish_refresh_error
     request_refresh = APP.ToolWindow.request_refresh
@@ -96,6 +98,10 @@ class WindowState:
 
     def __init__(self):
         self.destroyed = False
+        self._refresh_coordinator = APP.ReportRefreshCoordinator(
+            self._collect_report, self._dispatch_refresh_result,
+            thread_name="gtk-test-refresh",
+        )
         self.refresh_in_progress = False
         self.refresh_pending = False
         self.refresh_interval = 1
