@@ -232,6 +232,19 @@ class GtkRefreshTests(unittest.TestCase):
         finally:
             release.set()
 
+    def test_dashboard_shutdown_survives_broken_diagnostics(self):
+        self.window._schedule_refresh()
+        with patch.object(APP.diagnostics, "set_error_callback",
+                          side_effect=OSError("diagnostic callback broken")), \
+             patch.object(APP.diagnostics, "info",
+                          side_effect=OSError("diagnostic logger broken")):
+            self.window._cleanup_refresh()
+        self.assertTrue(self.window.destroyed)
+        self.assertTrue(self.window._refresh_coordinator.closed)
+        self.assertIsNone(self.window.refresh_id)
+        # Closing again is intentionally harmless.
+        self.window._cleanup_refresh()
+
     def test_power_apply_holds_old_report_until_new_snapshot(self):
         started, release = threading.Event(), threading.Event()
         calls = []
