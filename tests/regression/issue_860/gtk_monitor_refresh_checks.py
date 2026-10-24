@@ -2,7 +2,7 @@
 import threading
 import time
 import unittest
-from unittest.mock import patch
+from unittest.mock import patch, PropertyMock
 from types import SimpleNamespace
 
 import gi
@@ -112,37 +112,33 @@ class MonitorRefreshTests(unittest.TestCase):
             self.assertTrue(monitor._refresh_coordinator.closed)
             self.assertIsInstance(root.box, WIDGETS.DaemonNotRunningView)
 
-    def test_monitor_stall_health_timer_is_removed_on_close(self):
+    def test_monitor_uses_same_timer_for_refresh_and_stall_health(self):
         view, renderer = self.make(lambda: self.report())
-        self.assertIsNotNone(view._health_timer_id)
-        with patch.object(view._refresh_coordinator, "request_age_seconds",
-                          return_value=25), patch.object(
-            WIDGETS.diagnostics, "warning"
-        ) as warning:
-            self.assertTrue(view._health_tick())
-            self.assertTrue(view._health_tick())
+        self.assertIsNotNone(view.refresh_id)
+        with patch.object(type(view._refresh_coordinator), "in_progress",
+                          new_callable=PropertyMock, return_value=True), \
+             patch.object(view._refresh_coordinator,
+                          "request_age_seconds", return_value=25), \
+             patch.object(WIDGETS.diagnostics, "warning") as warning:
+            self.assertTrue(view._refresh_timer._tick())
+            self.assertTrue(view._refresh_timer._tick())
             warning.assert_called_once()
         view.cleanup()
-        self.assertIsNone(view._health_timer_id)
-        self.assertFalse(view._health_tick())
+        self.assertIsNone(view.refresh_id)
+        self.assertFalse(view._refresh_timer._tick())
 
-    def test_destroy_window_closes_monitor_and_cancels_timers(self):
+    def test_destroy_window_closes_monitor_and_cancels_timer(self):
         view, renderer = self.make(lambda: self.report())
         self.parent.add(view)
         self.assertTrue(pump_until(lambda: len(renderer.applied) >= 1))
         timer = view.refresh_id
-        health = view._health_timer_id
         self.assertIsNotNone(timer)
-        self.assertIsNotNone(health)
         self.parent.destroy()
         self.assertFalse(view.running)
         self.assertTrue(view._refresh_coordinator.closed)
         self.assertIsNone(view.refresh_id)
-        self.assertIsNone(view._health_timer_id)
         self.assertIsNone(GLib.MainContext.default().find_source_by_id(timer))
-        self.assertIsNone(GLib.MainContext.default().find_source_by_id(health))
-        # Both cleanup paths can be reached during navigation/destruction.
-        view.cleanup()
+        view.cleanup()  # Both cleanup paths are allowed.
 
     def test_destroy_window_during_blocked_collection_discards_result(self):
         started = threading.Event()
@@ -162,7 +158,7 @@ class MonitorRefreshTests(unittest.TestCase):
             self.parent.destroy()
             self.assertFalse(view.running)
             self.assertTrue(view._refresh_coordinator.closed)
-            self.assertIsNone(view._health_timer_id)
+            self.assertIsNone(view.refresh_id)
             release.set()
             self.assertTrue(finished.wait(timeout=2))
             pump_until(lambda: False, timeout=0.1)
@@ -178,9 +174,7 @@ class MonitorRefreshTests(unittest.TestCase):
                 lambda: not view._refresh_coordinator.in_progress,
                 timeout=2,
             ), "Diagnostics error stranded GTK Monitor delivery")
-        if view.refresh_id is not None:
-            GLib.source_remove(view.refresh_id)
-            view.refresh_id = None
+        view._refresh_timer.stop()
         view.refresh_in_thread()
         self.assertTrue(pump_until(lambda: len(renderer.applied) >= 1))
 
@@ -198,9 +192,7 @@ class MonitorRefreshTests(unittest.TestCase):
                       view.error_label.get_text())
         self.assertFalse(view._refresh_coordinator.in_progress)
         # Drive the next tick, removing the real timer so it does not leak.
-        if view.refresh_id is not None:
-            GLib.source_remove(view.refresh_id)
-            view.refresh_id = None
+        view._refresh_timer.stop()
         view.refresh_in_thread()
         self.assertTrue(pump_until(lambda: len(renderer.applied) >= 1))
         self.assertFalse(view.error_label.get_visible())
