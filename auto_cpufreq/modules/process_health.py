@@ -4,6 +4,7 @@ Measures CPU time in /proc using CLOCK_TICKS and wall elapsed time.
 100% means approximately one logical CPU, not 100% of the entire host.
 No privileged access, GUI toolkit, psutil or energy-policy dependencies.
 """
+from __future__ import annotations
 from dataclasses import dataclass
 import os
 from pathlib import Path
