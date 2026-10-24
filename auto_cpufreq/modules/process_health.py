@@ -152,7 +152,16 @@ class ProcessHealthSampler:
         self._lifecycle_lock = Lock()
         self._read_errors = 0
         self._last_read_error_log = None
-        self._fatal_errors = 0
+        self._fatal_errors = 0  # Consecutive unexpected failures
+        self._unexpected_errors_total = 0
+
+    def _interrupt_observation(self):
+        """Re-prime after missing/invalid samples, permitting a new CPU alert."""
+        if self._in_episode:
+            self.log.info("Sustained process CPU episode interrupted by sampling gap")
+        self._previous = None
+        self._above = 0
+        self._in_episode = False
 
     def _log_hot_python_thread(self, tid):
         if tid is None:
@@ -179,8 +188,9 @@ class ProcessHealthSampler:
             return None
         health = compute_health(previous, current)
         if health is None:
-            # Invalid delta or process restart. Re-prime without an alarm.
-            self._above = 0
+            # Invalid delta or process restart. Do not carry an old alert
+            # episode or compare the next sample with a broken baseline.
+            self._interrupt_observation()
             return None
 
         self._samples += 1
@@ -228,6 +238,13 @@ class ProcessHealthSampler:
             try:
                 sample = self.read()
                 self.observe(sample)
+                if self._fatal_errors:
+                    self.log.info(
+                        "Process health sampler recovered after %d "
+                        "consecutive unexpected failures",
+                        self._fatal_errors,
+                    )
+                    self._fatal_errors = 0
                 if self._read_errors:
                     self.log.info(
                         "Process health sampling recovered after %d failed reads",
@@ -248,11 +265,12 @@ class ProcessHealthSampler:
                         self._read_errors, error,
                     )
                     self._last_read_error_log = now
-                self._previous = None
+                self._interrupt_observation()
             except Exception as error:
                 # Unexpected code failures should neither silently kill the
                 # sampler nor cause an endless high-frequency traceback flood.
                 self._fatal_errors += 1
+                self._unexpected_errors_total += 1
                 if self._fatal_errors == 1:
                     self.log.warning(
                         "Process health sampler unexpected failure: %s",
@@ -264,7 +282,7 @@ class ProcessHealthSampler:
                         "failures", self._fatal_errors,
                     )
                     return
-                self._previous = None
+                self._interrupt_observation()
             if stop.wait(self.interval):
                 break
 
@@ -297,6 +315,7 @@ class ProcessHealthSampler:
             self._read_errors = 0
             self._last_read_error_log = None
             self._fatal_errors = 0
+            self._unexpected_errors_total = 0
             worker.start()
             self._stop = stop
             self._worker = worker
