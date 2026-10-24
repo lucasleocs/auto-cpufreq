@@ -122,6 +122,13 @@ def configuration_file_text(path, exists):
     return f"Configuration file (not found): {path}"
 
 
+def frequency_limit_text(value):
+    """Present CPU frequency limits consistently in GTK and terminal Stats."""
+    if value is None:
+        return "Unavailable"
+    return f"{value:.0f} MHz"
+
+
 def offline_cpus_text(cpu_ids):
     """Show disabled CPUs only when the snapshot actually reports them."""
     if not cpu_ids:
