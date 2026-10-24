@@ -61,8 +61,8 @@ collection. Avoid reintroducing a second sampling path.
 Both frontends receive the same `SystemReport` data model. Do not duplicate
 presentation rules in separate toolkit modules. `report_presentation.py`
 defines semantic text and availability, including absent batteries, unavailable
-temperature measurements, offline CPUs, config-file labels and platform-profile
-providers. `gui/report_view.py` and `modules/system_monitor.py` only decide
+temperature and frequency-limit measurements, absent governor data, offline
+CPUs, config-file labels and platform-profile providers. `gui/report_view.py` and `modules/system_monitor.py` only decide
 **where** and **how** to show each field. The legacy text formatters in
 `system_info.py` delegate platform-profile interpretation to that shared rule.
 
