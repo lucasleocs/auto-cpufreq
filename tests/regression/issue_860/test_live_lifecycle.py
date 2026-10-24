@@ -76,7 +76,8 @@ class LiveSessionTests(unittest.TestCase):
             pass
 
     def test_start_and_stop_restore_once_in_reverse_order(self):
-        session, calls = self.make_session(service_steps=[
+        calls = []
+        session, _ = self.make_session(service_steps=[
             ("a", lambda: calls.append("stop-a"), lambda: calls.append("restore-a")),
             ("b", lambda: calls.append("stop-b"), lambda: calls.append("restore-b")),
         ])
