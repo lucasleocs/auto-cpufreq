@@ -169,3 +169,20 @@ References:
 - https://docs.gtk.org/gtk3/running
 - https://github.com/AdnanHodzic/auto-cpufreq/issues/860#issuecomment-5648634471
 - https://github.com/AdnanHodzic/auto-cpufreq/issues/685
+
+
+## Physical terminal close test — unprivileged --stats
+
+User-tested on the same Linux Mint Cinnamon X11 host, installed build 35d8015afc1b.
+
+With auto-cpufreq --stats running in the terminal, the observer terminal reported:
+
+| Stage | Launcher PID | Stats Python PID | Python %CPU (ps) | State |
+| --- | ---: | ---: | ---: | --- |
+| Initial, elapsed 00:04 | 259834 | 259835 | 4.9% | S+ |
+| Later, elapsed 00:22 | 259834 | 259835 | 1.5% | S+ |
+| After terminal closure and additional five seconds | no process | no process | n/a | n/a |
+
+The user confirmed they closed the window before the last command. The ps results show that neither the Bash launcher nor the Python --stats process survived the terminal closure, so the reported CPU spin was not reproduced. Values from ps %CPU are lifetime averages, not instantaneous CPU utilization, so this is primarily process-lifecycle evidence. The observed S+ state indicates sleep in the foreground process group while the terminal is attached.
+
+The specific sudo auto-cpufreq --stats closure scenario described by the commenter has not yet been tested on this host. It should be checked separately, without touching the running daemon or any settings. If a process survives that experiment, record its exact PID, parent/session identifiers and per-thread CPU before selectively terminating only that PID.
