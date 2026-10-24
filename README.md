@@ -825,7 +825,7 @@ Additionally, **you should make sure that you have no other software running tha
 
 ### Battery config
 
-Edit the config at `/etc/auto-cpufreq.conf`
+Edit the configuration file selected by auto-cpufreq (see [configuration precedence](#4-auto-cpufreq-config-file)); for a system-wide configuration, this is typically `/etc/auto-cpufreq.conf`.
 
 Example config for battery ([already part of example config file](https://github.com/AdnanHodzic/auto-cpufreq/#example-config-file-contents))
 
