@@ -178,6 +178,27 @@ class MonitorRefreshTests(unittest.TestCase):
         view.refresh_in_thread()
         self.assertTrue(pump_until(lambda: len(renderer.applied) >= 1))
 
+    def test_periodic_monitor_recovers_after_renderer_and_error_ui_fail(self):
+        view, renderer = self.make(lambda: self.report())
+        self.assertTrue(pump_until(lambda: len(renderer.applied) >= 1))
+        before = len(renderer.applied)
+        # The collector succeeds, but both presentation paths fail in
+        # this cycle. The periodic timer must remain the source of retries.
+        with patch.object(view._refresh_bridge, "_on_report",
+                          side_effect=ValueError("synthetic renderer fault")), \
+             patch.object(view._refresh_bridge, "_on_error",
+                          side_effect=OSError("synthetic error widget fault")):
+            self.assertTrue(view._refresh_timer._tick())
+            self.assertTrue(pump_until(
+                lambda: not view._refresh_coordinator.in_progress
+            ))
+        self.assertIsNotNone(view.refresh_id)
+        self.assertTrue(view._refresh_timer._tick())
+        self.assertTrue(pump_until(
+            lambda: len(renderer.applied) == before + 1
+        ))
+        self.assertFalse(view._refresh_coordinator.in_progress)
+
     def test_refresh_recovers_after_temporary_error(self):
         attempts = []
         def collect():
