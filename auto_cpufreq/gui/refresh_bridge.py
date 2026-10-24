@@ -21,7 +21,7 @@ class GtkRefreshBridge:
     def __init__(
         self, collect, *,
         component, diagnostics, active, interval,
-        on_report, on_error, thread_name, before_ack=None, after_ack=None,
+        on_report, on_error, thread_name, before_ack=None,
     ):
         self._component = component
         self._diagnostics = diagnostics
@@ -30,7 +30,6 @@ class GtkRefreshBridge:
         self._on_report = on_report
         self._on_error = on_error
         self._before_ack = before_ack
-        self._after_ack = after_ack
         self.coordinator = ReportRefreshCoordinator(
             collect, self.dispatch, thread_name=thread_name,
             on_dispatch_error=self._dispatch_failure,
@@ -126,17 +125,5 @@ class GtkRefreshBridge:
                             self._component,
                         )
             finally:
-                try:
-                    self.coordinator.acknowledge(result.generation)
-                finally:
-                    if self._after_ack is not None:
-                        # This must not break the GTK main loop, either.
-                        try:
-                            self._after_ack()
-                        except Exception:
-                            self._safe(
-                                self._diagnostics.exception,
-                                "%s post-refresh synchronization failed",
-                                self._component,
-                            )
+                self.coordinator.acknowledge(result.generation)
         return False
