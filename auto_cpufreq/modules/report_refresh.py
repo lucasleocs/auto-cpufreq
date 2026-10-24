@@ -136,11 +136,24 @@ class ReportRefreshCoordinator:
         return max(0.0, time.monotonic() - requested_at)
 
     def request(self):
+        """Explicit request: coalesce one successor if a collection is busy."""
+        return self._request(queue_if_busy=True)
+
+    def request_if_idle(self):
+        """Periodic request: skip busy cycles without creating pending work.
+
+        The busy check and reservation share the same lock, so concurrent
+        callers cannot queue a periodic successor between those operations.
+        """
+        return self._request(queue_if_busy=False)
+
+    def _request(self, *, queue_if_busy):
         with self._lock:
             if self._closed:
                 return False
             if self._running or self._delivering:
-                self._pending = True
+                if queue_if_busy:
+                    self._pending = True
                 return False
             self._generation += 1
             generation = self._generation
