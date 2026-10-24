@@ -16,6 +16,13 @@ HEARTBEAT_SECONDS = 5
 STALL_SECONDS = 20
 
 
+def _boottime():
+    try:
+        return time.clock_gettime(time.CLOCK_BOOTTIME)
+    except (AttributeError, OSError):
+        return None
+
+
 def _xdg_path(variable, fallback):
     value = os.environ.get(variable, "")
     return Path(value) if value.startswith("/") else Path.home() / fallback
@@ -51,6 +58,7 @@ class GuiDiagnostics:
         self._glib = None
         self._heartbeat_id = None
         self._last_heartbeat = time.monotonic()
+        self._last_boottime = _boottime()
         self._main_thread_id = main_thread().ident
         self._stall_reported = False
         self._watchdog_stop = None
@@ -93,6 +101,7 @@ class GuiDiagnostics:
         if self._glib is None or self._heartbeat_id is not None:
             return
         self._last_heartbeat = time.monotonic()
+        self._last_boottime = _boottime()
         self._heartbeat_id = self._glib.timeout_add_seconds(
             HEARTBEAT_SECONDS, self._heartbeat
         )
@@ -104,6 +113,15 @@ class GuiDiagnostics:
 
         now = time.monotonic()
         gap = now - self._last_heartbeat
+        boottime = _boottime()
+        if boottime is not None and self._last_boottime is not None:
+            suspended = boottime - self._last_boottime - gap
+            if suspended > 3:
+                self.info(
+                    "System suspend/resume detected: %.1f seconds suspended",
+                    suspended,
+                )
+        self._last_boottime = boottime
         self._last_heartbeat = now
         self._stall_reported = False
         if gap > HEARTBEAT_SECONDS * 2:
