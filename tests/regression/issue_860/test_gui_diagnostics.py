@@ -253,7 +253,7 @@ class GuiDiagnosticsTests(unittest.TestCase):
         self.addCleanup(other.shutdown)
         other.set_enabled(True)
         current = other.log_path
-        with patch.object(MODULE, "RETAIN_SESSIONS", 2):
+        with patch("auto_cpufreq.modules.diagnostics.RETAIN_SESSIONS", 2):
             diagnostics.set_enabled(True)
             self.wait_for(
                 lambda: sum(p.exists() for p in old_paths) == 2
@@ -267,9 +267,8 @@ class GuiDiagnosticsTests(unittest.TestCase):
             self.assertFalse((old.parent / (old.name + ".1")).exists())
 
     def test_enable_reports_initial_log_open_failure(self):
-        with patch.object(
-            MODULE,
-            "_PrivateRotatingFileHandler",
+        with patch(
+            "auto_cpufreq.modules.diagnostics._PrivateRotatingFileHandler",
             side_effect=PermissionError("write permission denied"),
         ):
             with self.assertRaisesRegex(OSError, "write permission denied"):
