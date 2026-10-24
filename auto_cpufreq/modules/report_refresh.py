@@ -28,9 +28,9 @@ class _ProcessCollectionLane:
         self._jobs = deque()
         self._worker = None
 
-    def enqueue(self, coordinator, generation):
+    def enqueue(self, coordinator, generation, requested_at):
         with self._lock:
-            self._jobs.append((weakref.ref(coordinator), generation))
+            self._jobs.append((weakref.ref(coordinator), generation, requested_at))
             if self._worker is not None and self._worker.is_alive():
                 return
             worker = Thread(
@@ -48,8 +48,8 @@ class _ProcessCollectionLane:
     def cancel(self, coordinator):
         with self._lock:
             self._jobs = deque(
-                (ref, generation)
-                for ref, generation in self._jobs
+                (ref, generation, requested_at)
+                for ref, generation, requested_at in self._jobs
                 if ref() is not None and ref() is not coordinator
             )
 
@@ -59,10 +59,10 @@ class _ProcessCollectionLane:
                 if not self._jobs:
                     self._worker = None
                     return
-                ref, generation = self._jobs.popleft()
+                ref, generation, requested_at = self._jobs.popleft()
             coordinator = ref()
             if coordinator is not None:
-                coordinator._run(generation)
+                coordinator._run(generation, requested_at)
 
 
 _PROCESS_LANE = _ProcessCollectionLane()
@@ -74,6 +74,9 @@ class RefreshResult:
     report: Any
     error: Exception | None
     duration: float
+    queue_seconds: float = 0.0
+    requested_at: float = 0.0
+    completed_at: float = 0.0
 
     @property
     def succeeded(self):
@@ -127,9 +130,10 @@ class ReportRefreshCoordinator:
                 return False
             self._generation += 1
             generation = self._generation
+            requested_at = time.monotonic()
             self._running = True
         try:
-            _PROCESS_LANE.enqueue(self, generation)
+            _PROCESS_LANE.enqueue(self, generation, requested_at)
         except RuntimeError:
             with self._lock:
                 if generation == self._generation:
@@ -137,22 +141,27 @@ class ReportRefreshCoordinator:
             raise
         return True
 
-    def _run(self, generation):
+    def _run(self, generation, requested_at):
         with self._lock:
             if self._closed or generation != self._generation:
                 return
         started = time.monotonic()
+        queue_seconds = max(0.0, started - requested_at)
         try:
             value = self._collect()
             error = None
         except Exception as exc:
             value = None
             error = exc
+        completed_at = time.monotonic()
         result = RefreshResult(
             generation=generation,
             report=value,
             error=error,
-            duration=time.monotonic() - started,
+            duration=completed_at - started,
+            queue_seconds=queue_seconds,
+            requested_at=requested_at,
+            completed_at=completed_at,
         )
         with self._lock:
             if self._closed or generation != self._generation:
