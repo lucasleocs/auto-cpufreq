@@ -188,9 +188,15 @@ class SystemMonitor:
             return True
 
         if self._diagnostics:
+            delivery_seconds = (
+                max(0.0, time.monotonic() - result.completed_at)
+                if result.completed_at else 0.0
+            )
             self._diagnostics.info(
-                "Urwid collection duration=%.3fs generation=%d",
-                result.duration, result.generation,
+                "Urwid refresh generation=%d queue=%.3fs "
+                "collect=%.3fs delivery=%.3fs",
+                result.generation, result.queue_seconds,
+                result.duration, delivery_seconds,
             )
         self._surface_diagnostic_error()
         try:
