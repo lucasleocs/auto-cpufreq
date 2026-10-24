@@ -70,6 +70,27 @@ Relevant CI workflow: https://github.com/lucasleocs/auto-cpufreq/actions/workflo
 5. Test long idle runs, multiple suspend/resume cycles, failures to create the state directory and interrupted UI shutdown.
 6. If accepted, start a clean branch from the current upstream master and transplant only essential GUI files and README changes. Do not include investigation markdown, extra PTY harnesses, diagnostic experiments or experimental workflow in the production PR.
 
+## Hardening pass — October 23, 2026
+
+The initial synchronous rotating handler was replaced with a bounded asynchronous writer. The GUI now submits log records through a customized QueueHandler with a maximum of 256 pending records; the writer formats exceptions and writes/rotates files outside the GTK main loop. Queue overflow never waits for the disk and records a count of dropped events. A standard QueueListener is not used because its blocking stop could hang the UI if the disk is unresponsive; the writer instead processes an explicit sentinel and shutdown waits at most 300 ms.
+
+Each activation uses a unique session log named gtk-YYYYMMDD-HHMMSS-PID-RANDOM.log. This avoids rotation collisions between processes and between repeated activations. The current log and other active writers are protected from cleanup. A new session retains four older completed sessions after pruning, and each individual session rotates at 1 MiB with three backups. Currently active concurrent sessions are not deleted, so total disk usage can exceed the inactive-session bound.
+
+The logger validates file opening before enabling. Subsequent write failures are deduplicated and delivered to a nonmodal GTK warning dialog through GLib.idle_add, rather than attempting to log recursively. The option remains persistent and the GTK display is not blocked by log output under normal operation.
+
+Routine refresh durations are collected into one-minute count/mean/maximum summaries; abnormally slow collections and renders are logged immediately. Five-second heartbeat callbacks no longer produce a line when GTK is healthy. After a 20-second apparent stall, the watchdog records the main Python thread stack and the accumulated refresh summary. Suspend/resume is distinguished using CLOCK_BOOTTIME and CLOCK_MONOTONIC.
+
+Experimental checks include queue saturation under an artificially blocked writer, simulated write and open failures, simultaneous instances, repeated toggles, log permissions, per-session rotation and pruning, and retained GTK/Urwid regression coverage.
+
+Verified: 24 Python/terminal tests and 5 GTK/Xvfb tests passed in experimental CI run https://github.com/lucasleocs/auto-cpufreq/actions/runs/40050619733 . A successful CI run is not a substitute for testing the complete installed GUI on Linux Mint Cinnamon. The actual installed application and user daemon have not been modified.
+
+Remaining limitations:
+- A system crash or SIGKILL may lose pending asynchronous records.
+- A stuck filesystem can hold a daemon writer thread after the bounded GUI shutdown wait. A subsequent activation uses a different log path.
+- The watchdog is a Python-level diagnostic, not a native GTK/kernel stack profiler.
+- Errors from session-file cleanup are treated as nonfatal; a read-only or damaged filesystem may preserve older logs.
+- Real hardware/X11 and Wayland sessions require a separate end-to-end launch and overhead test.
+
 ## Sources
 
 - https://github.com/AdnanHodzic/auto-cpufreq/issues/860
