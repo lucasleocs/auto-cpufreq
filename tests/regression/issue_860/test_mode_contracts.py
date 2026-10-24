@@ -87,6 +87,24 @@ class ModeBoundaryTests(unittest.TestCase):
                 self.assertIn("self._refresh_bridge.coordinator", source)
                 self.assertNotIn("ReportRefreshCoordinator(", source)
 
+    def test_periodic_refresh_contract_is_shared_across_toolkits(self):
+        urwid = ast.unparse(
+            method(module("auto_cpufreq/modules/system_monitor.py"), "update")
+        )
+        self.assertIn("self._refresh_coordinator.request_if_idle()", urwid)
+        self.assertNotIn("self._refresh_coordinator.request()", urwid)
+        for file in ("auto_cpufreq/gui/app.py",
+                     "auto_cpufreq/gui/objects.py"):
+            with self.subTest(file=file):
+                source = ast.unparse(module(file))
+                self.assertIn(
+                    "request=self._refresh_coordinator.request_if_idle",
+                    source,
+                )
+        coordinator = ast.unparse(module("auto_cpufreq/modules/report_refresh.py"))
+        self.assertIn("def request_if_idle(self):", coordinator)
+        self.assertIn("def request(self):", coordinator)
+
     def test_report_recommendations_has_no_privileged_runtime_import(self):
         tree = module("auto_cpufreq/modules/report_recommendations.py")
         imports = [
