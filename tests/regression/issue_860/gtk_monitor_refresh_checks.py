@@ -95,6 +95,47 @@ class MonitorRefreshTests(unittest.TestCase):
     def report():
         return SimpleNamespace(current_gov="powersave", is_turbo_on=(True, None))
 
+    def test_monitor_distinguishes_unknown_unavailable_and_no_change(self):
+        view, renderer = self.make(lambda: self.report())
+        report = self.report()
+
+        def state(governor, turbo):
+            return SimpleNamespace(
+                governor=SimpleNamespace(status=governor, suggested=None),
+                turbo=SimpleNamespace(status=turbo, suggested=None),
+            )
+
+        view._render_display(
+            report, state(State.INDETERMINATE, State.INDETERMINATE)
+        )
+        self.assertEqual(
+            view.governor_suggestion.get_text(), "Unable to determine"
+        )
+        self.assertEqual(
+            view.turbo_suggestion.get_text(), "Unable to determine"
+        )
+
+        view._render_display(
+            report, state(State.UNAVAILABLE, State.NO_CHANGE)
+        )
+        self.assertEqual(view.governor_suggestion.get_text(), "Unavailable")
+        self.assertEqual(
+            view.turbo_suggestion.get_text(), "No change suggested"
+        )
+
+        view._render_display(
+            report, SimpleNamespace(
+                governor=SimpleNamespace(
+                    status=State.CHANGE, suggested="performance"
+                ),
+                turbo=SimpleNamespace(
+                    status=State.CHANGE, suggested=False
+                ),
+            )
+        )
+        self.assertEqual(view.governor_suggestion.get_text(), "Use performance")
+        self.assertEqual(view.turbo_suggestion.get_text(), "Turn off")
+
     def test_actual_daemon_absent_buttons_navigate_monitor_and_back(self):
         MONITOR_VIEW.system_info = WIDGETS.system_info = SimpleNamespace(
             generate_system_report=self.report,
