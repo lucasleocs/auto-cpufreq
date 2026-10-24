@@ -1,12 +1,11 @@
 """Configuration selection, safe snapshots, and Linux file-change watches."""
 import logging
 import os
-import pyinotify
 import pwd
 import sys
 from configparser import ConfigParser, Error as ConfigError
 
-from auto_cpufreq.config.config_event_handler import ConfigEventHandler
+from auto_cpufreq.config.file_watcher import ConfigFileWatcher
 
 
 _LOG = logging.getLogger(__name__)
@@ -45,62 +44,36 @@ def find_config_file(args_config_file) -> str:
 
 
 class _Config:
-    """Publish fully parsed configuration objects, never partial snapshots.
+    """Publish fully parsed snapshots; watch only in live CLI/daemon modes.
 
-    An intentional deletion resets to defaults, matching the previous
-    behavior. Temporary read/parse errors preserve the previous snapshot.
-    The notifier worker is created only when a CLI/daemon mode requests it.
+    A genuine removal restores defaults. Transient read/parse failures keep
+    the last valid snapshot. The observer and all its descriptors are lazy.
     """
-
-    WATCH_MASK = (
-        pyinotify.IN_CLOSE_WRITE
-        | pyinotify.IN_DELETE
-        | pyinotify.IN_MOVED_FROM
-        | pyinotify.IN_MOVED_TO
-    )
 
     def __init__(self) -> None:
         self.path: str = ""
         self._config: ConfigParser = ConfigParser()
-        self.watch_manager: pyinotify.WatchManager = pyinotify.WatchManager()
-        self.config_handler = ConfigEventHandler(self)
         self._notifier = None
-        self._watch_dir = None
-        self._watch_descriptor = None
 
     @property
-    def notifier(self):
-        """Existing .notifier.start() API with no unused polling thread."""
+    def notifier(self) -> ConfigFileWatcher:
+        """Preserve the CLI's .notifier.start()/stop() lifecycle API."""
         if self._notifier is None:
-            self._notifier = pyinotify.ThreadedNotifier(
-                self.watch_manager, self.config_handler
-            )
+            if not self.path:
+                raise RuntimeError("Select a configuration path before watching")
+            self._notifier = ConfigFileWatcher(self.path, self.update_config)
         return self._notifier
+
+    def stop_watching(self) -> None:
+        """Stop without allocating a watcher in read-only GUI/Stats modes."""
+        if self._notifier is not None:
+            self._notifier.stop()
 
     def set_path(self, path: str) -> None:
         selected = os.path.abspath(os.path.expanduser(path))
-        directory = os.path.dirname(selected)
-        if self._watch_dir != directory:
-            # set_path is normally called once, before starting the notifier.
-            if self._watch_descriptor is not None:
-                try:
-                    self.watch_manager.rm_watch(self._watch_descriptor)
-                except (OSError, ValueError) as error:
-                    _LOG.warning("Cannot release old config watch: %s", error)
-            self._watch_dir = None
-            self._watch_descriptor = None
-            watched = self.watch_manager.add_watch(
-                directory, mask=self.WATCH_MASK
-            )
-            descriptor = watched.get(directory, -1)
-            if descriptor is not None and descriptor >= 0:
-                self._watch_dir = directory
-                self._watch_descriptor = descriptor
-            else:
-                _LOG.warning(
-                    "Configuration directory is not being watched: %s",
-                    directory,
-                )
+        if self._notifier is not None:
+            # A running observer must never silently keep the old pathname.
+            self._notifier.set_path(selected)
         self.path = selected
         self.update_config()
 
