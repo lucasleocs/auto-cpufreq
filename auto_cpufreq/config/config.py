@@ -114,7 +114,25 @@ class _Config:
         replacement = ConfigParser()
         try:
             with open(self.path, "r", encoding="utf-8") as source:
+                before = os.fstat(source.fileno())
                 replacement.read_file(source)
+                after = os.fstat(source.fileno())
+            current = os.stat(self.path)
+            # Reject a file being edited in place or atomically replaced
+            # during a read: a parse without syntax errors is not enough to
+            # establish that its bytes came from one complete revision.
+            signature = lambda st: (
+                st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns,
+            )
+            if (
+                signature(before) != signature(after)
+                or signature(after) != signature(current)
+            ):
+                _LOG.warning(
+                    "Keeping previous configuration: %s changed during read",
+                    self.path,
+                )
+                return False
         except FileNotFoundError:
             # File deleted or moved away: restore default settings, which is
             # what the original IN_DELETE / IN_MOVED_FROM callbacks did.
