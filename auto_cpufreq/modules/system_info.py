@@ -20,6 +20,7 @@ from auto_cpufreq.globals import (
     IS_INSTALLED_WITH_SNAP,
     POWER_SUPPLY_DIR,
 )
+from auto_cpufreq.modules.report_presentation import present_platform_profile
 from auto_cpufreq.modules.report_recommendations import (
     evaluate_recommendations,
     governor_candidate,
@@ -865,47 +866,31 @@ def format_platform_profile_choices(
     snapshot: PlatformProfileSnapshot,
     label: str = "Available profiles",
 ) -> tuple[str, str]:
-    """Format a Platform Profile choices label and value without conflating unknown with empty."""
-    if not snapshot.choices_known:
-        return label, "Could not be determined"
-
-    count = len(snapshot.available_profiles)
-    value = (
-        ", ".join(snapshot.available_profiles)
-        if snapshot.available_profiles
-        else "None available"
-    )
-    return f"{label} ({count})", value
+    """Compatibility wrapper for the shared profile interpretation."""
+    profile = present_platform_profile(snapshot)
+    display_label = profile.available_label
+    if label != "Available profiles":
+        display_label = display_label.replace(
+            "Available profiles", label, 1
+        )
+    return display_label, profile.available
 
 
 def format_platform_profile_summary(
     snapshot: PlatformProfileSnapshot,
 ) -> list[str]:
-    """Format compact, user-facing Platform Profile diagnostics."""
-    if snapshot.interface == "none":
-        return ["Interface: Not detected"]
+    """Compact terminal presentation using the shared profile semantics."""
+    profile = present_platform_profile(snapshot)
+    if not profile.detected:
+        return [f"Interface: {profile.interface}"]
 
-    interface = {
-        "modern": "Modern",
-        "legacy": "Legacy",
-    }.get(snapshot.interface, "Unknown")
-    control = "Available" if snapshot.control_available else "Unavailable"
-    lines = [f"Interface: {interface} · Control: {control}"]
-    lines.append(f"Current profile: {snapshot.current or 'Unknown'}")
-
-    available_label, available = format_platform_profile_choices(snapshot)
-    lines.append(f"{available_label}: {available}")
-
-    provider_states = snapshot.provider_states
-    if len(provider_states) > 1:
-        providers = "; ".join(
-            f"{provider}: {profile or 'Unknown'}"
-            for provider, profile in provider_states
-        )
-        lines.append(f"Providers: {providers}")
-    elif provider_states:
-        lines.append(f"Provider: {provider_states[0][0]}")
-
+    lines = [
+        f"Interface: {profile.interface}",
+        f"Current profile: {profile.current}",
+        f"{profile.available_label}: {profile.available}",
+    ]
+    if profile.provider_visible:
+        lines.append(f"{profile.provider_label}: {profile.provider}")
     return lines
 
 
