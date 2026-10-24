@@ -77,10 +77,14 @@ class LiveSessionTests(unittest.TestCase):
 
     def test_start_and_stop_restore_once_in_reverse_order(self):
         calls = []
-        session, _ = self.make_session(service_steps=[
-            ("a", lambda: calls.append("stop-a"), lambda: calls.append("restore-a")),
-            ("b", lambda: calls.append("stop-b"), lambda: calls.append("restore-b")),
-        ])
+        session, _ = self.make_session(
+            service_steps=[
+                ("a", lambda: calls.append("stop-a"), lambda: calls.append("restore-a")),
+                ("b", lambda: calls.append("stop-b"), lambda: calls.append("restore-b")),
+            ],
+            watch_start=lambda: calls.append("watch-start"),
+            watch_stop=lambda: calls.append("watch-stop"),
+        )
         previous = sys.stdout
         session.prepare()
         session.start()
