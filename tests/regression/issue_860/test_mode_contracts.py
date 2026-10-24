@@ -70,6 +70,23 @@ class ModeBoundaryTests(unittest.TestCase):
                 self.assertNotIn("governor_suggestion(report)", text)
                 self.assertNotIn("turbo_on_suggestion(report)", text)
 
+    def test_both_gtk_views_delegate_delivery_to_single_bridge(self):
+        for filename, classname in (
+            ("auto_cpufreq/gui/app.py", "ToolWindow"),
+            ("auto_cpufreq/gui/objects.py", "MonitorModeView"),
+        ):
+            with self.subTest(view=classname):
+                tree = module(filename)
+                klass = next(
+                    node for node in tree.body
+                    if isinstance(node, ast.ClassDef)
+                    and node.name == classname
+                )
+                source = ast.unparse(klass)
+                self.assertIn("GtkRefreshBridge(", source)
+                self.assertIn("self._refresh_bridge.coordinator", source)
+                self.assertNotIn("ReportRefreshCoordinator(", source)
+
     def test_report_recommendations_has_no_privileged_runtime_import(self):
         tree = module("auto_cpufreq/modules/report_recommendations.py")
         imports = [
