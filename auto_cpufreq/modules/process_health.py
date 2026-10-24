@@ -152,6 +152,7 @@ class ProcessHealthSampler:
         self._lifecycle_lock = Lock()
         self._read_errors = 0
         self._last_read_error_log = None
+        self._fatal_errors = 0
 
     def _log_hot_python_thread(self, tid):
         if tid is None:
@@ -248,6 +249,22 @@ class ProcessHealthSampler:
                     )
                     self._last_read_error_log = now
                 self._previous = None
+            except Exception as error:
+                # Unexpected code failures should neither silently kill the
+                # sampler nor cause an endless high-frequency traceback flood.
+                self._fatal_errors += 1
+                if self._fatal_errors == 1:
+                    self.log.warning(
+                        "Process health sampler unexpected failure: %s",
+                        error,
+                    )
+                if self._fatal_errors >= 3:
+                    self.log.warning(
+                        "Process health sampler stopped after %d unexpected "
+                        "failures", self._fatal_errors,
+                    )
+                    return
+                self._previous = None
             if stop.wait(self.interval):
                 break
 
@@ -279,18 +296,19 @@ class ProcessHealthSampler:
             self._in_episode = False
             self._read_errors = 0
             self._last_read_error_log = None
+            self._fatal_errors = 0
             worker.start()
             self._stop = stop
             self._worker = worker
 
-    def stop(self):
+    def stop(self, *, wait=True):
         with self._lifecycle_lock:
             stop, worker = self._stop, self._worker
             if stop is None:
                 return True
             stop.set()
-        if worker is not None and worker.is_alive():
-            # The UI must never await a potentially blocked procfs read.
+        if wait and worker is not None and worker.is_alive():
+            # CLI exit may make a bounded wait; GTK toggling must not block.
             worker.join(timeout=0.2)
         with self._lifecycle_lock:
             if worker is not None and worker.is_alive():
