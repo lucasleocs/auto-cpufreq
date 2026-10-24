@@ -1,0 +1,45 @@
+name: UPower Snap package validation (temporary)
+
+on:
+  push:
+    branches:
+      - tmp/upower-snap-package-check-20261023
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  snap-strict:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build unmodified production Snap on an Ubuntu virtual machine
+        uses: canonical/action-build@v1
+        id: build
+      - name: Inspect package contents before any install
+        env:
+          BUILT_SNAP: ${{ steps.build.outputs.snap }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f "$BUILT_SNAP"
+          sudo apt-get install -y --no-install-recommends squashfs-tools
+          unsquashfs -cat "$BUILT_SNAP" meta/snap.yaml > /tmp/auto-cpufreq-snap-meta.yaml
+          grep -q 'confinement: strict' /tmp/auto-cpufreq-snap-meta.yaml
+          grep -q 'upower-observe' /tmp/auto-cpufreq-snap-meta.yaml
+          unsquashfs -ll "$BUILT_SNAP" | grep -E '/(dbus_next|dbus_next-[^/]*dist-info)/' | head -n 10
+      - name: Install with strict confinement (never on a user's laptop)
+        env:
+          BUILT_SNAP: ${{ steps.build.outputs.snap }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo snap install --dangerous --jailmode "$BUILT_SNAP"
+          sudo snap stop --disable auto-cpufreq.service || true
+          snap list auto-cpufreq
+          snap connections auto-cpufreq | tee /tmp/upower-snap-connections.txt
+          grep -E '^upower-observe[[:space:]]' /tmp/upower-snap-connections.txt | grep -vE '[[:space:]]-[[:space:]]'
+          timeout 15s snap run auto-cpufreq --help > /tmp/upower-snap-help.txt
+          grep -q -- '--stats' /tmp/upower-snap-help.txt
