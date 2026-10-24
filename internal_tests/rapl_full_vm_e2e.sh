@@ -1,0 +1,108 @@
+#!/usr/bin/env bash
+# Real source installation / service lifecycle in disposable GitHub runner VM.
+# WARNING: Installs APT dependencies, real /opt + /usr/local resources,
+# and temporarily starts the daemon on the DISPOSABLE VM.
+# NEVER run on a personal machine. Only this guarded CI runner.
+set -Eeuo pipefail
+
+if [[ ${GITHUB_ACTIONS:-} != true || ${CI:-} != true || ${AUTO_CPUFREQ_DISPOSABLE_VM:-} != YES ]]; then
+  echo "REFUSED: only an explicitly authorized disposable GitHub Actions VM" >&2
+  exit 90
+fi
+if [[ $(id -u) == 0 ]]; then
+  echo "Run as CI non-root user; privileged calls use sudo" >&2
+  exit 91
+fi
+if [[ $(cat /proc/1/comm) != systemd ]]; then
+  echo "REFUSED: systemd must be the runner PID1" >&2
+  exit 92
+fi
+if [[ -e /opt/auto-cpufreq || -L /opt/auto-cpufreq ||
+      -e /usr/local/bin/auto-cpufreq ||
+      -e /etc/systemd/system/auto-cpufreq.service ]]; then
+  echo "REFUSED: runner already has an auto-cpufreq installation" >&2
+  exit 93
+fi
+if [[ -f /etc/auto-cpufreq.conf ]] && grep -qi 'enable_rapl_envelopes[[:space:]]*=[[:space:]]*true' /etc/auto-cpufreq.conf; then
+  echo "REFUSED: RAPL active-write opt-in present in runner" >&2
+  exit 94
+fi
+
+REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+RAPL_DIR=/run/auto-cpufreq-rapl
+JOURNAL="$RAPL_DIR/power-state.json"
+unit=/etc/systemd/system/auto-cpufreq.service
+marker=/usr/local/bin/auto-cpufreq-remove
+RESULT_FILE="${RUNNER_TEMP:?}/rapl-vm-e2e-result.txt"
+printf 'started\n' > "$RESULT_FILE"
+
+cleanup() {
+  local rc=$?
+  if [[ $rc -ne 0 ]]; then
+    echo "E2E failed (exit $rc). Collecting ephemeral VM diagnostics..." >&2
+    sudo systemctl --no-pager --full status auto-cpufreq.service || true
+    sudo journalctl --no-pager -u auto-cpufreq.service -n 70 || true
+    sudo ls -la "$RAPL_DIR" /opt/auto-cpufreq /usr/local/bin/auto-cpufreq* || true
+  fi
+  # A disposable runner is destroyed at job completion. No unsafe shortcut:
+  # do not delete the recovery helper/release if restoration is unresolved.
+}
+trap cleanup EXIT
+
+echo "==== REAL SOURCE INSTALL ===="
+cd "$REPO"
+sudo -n bash ./auto-cpufreq-installer --install
+test -x /usr/local/bin/auto-cpufreq
+test -L /opt/auto-cpufreq/current
+test -x /opt/auto-cpufreq/current/venv/bin/auto-cpufreq-restore-rapl
+sudo -n /usr/local/bin/auto-cpufreq --version
+sudo -n /opt/auto-cpufreq/current/venv/bin/auto-cpufreq-restore-rapl
+echo "source-install: PASS" >> "$RESULT_FILE"
+
+echo "==== REAL MANAGED DAEMON INSTALL / SYSTEMD ===="
+sudo -n /usr/local/bin/auto-cpufreq --install
+test -f "$unit"
+test -f "$marker"
+sudo systemctl is-active --quiet auto-cpufreq.service
+sudo systemctl show auto-cpufreq.service -p ExecStopPost -p RuntimeDirectory -p NeedDaemonReload
+# Prevent prolonged normal CPU policy execution on the disposable runner VM.
+sudo -n systemctl stop auto-cpufreq.service
+test ! -e "$JOURNAL"
+echo "daemon-install-stop: PASS" >> "$RESULT_FILE"
+
+echo "==== STOP-TIME RECOVERY BARRIER AGAINST MALFORMED JOURNAL ===="
+sudo -n install -d -m 0700 "$RAPL_DIR"
+printf '{malformed-journal\n' | sudo -n tee "$JOURNAL" >/dev/null
+sudo -n chmod 0600 "$JOURNAL"
+set +e
+sudo -n /usr/local/bin/auto-cpufreq --remove > "$RUNNER_TEMP/rapl-blocked-remove.log" 2>&1
+blocked=$?
+set -e
+if [[ $blocked -eq 0 ]]; then
+  echo "FAIL: daemon removal succeeded despite malformed RAPL journal" >&2
+  cat "$RUNNER_TEMP/rapl-blocked-remove.log"
+  exit 95
+fi
+test -f "$unit"
+test -f "$marker"
+test -L /opt/auto-cpufreq/current
+test -f "$JOURNAL"
+echo "refusal-to-remove-unresolved-rapl: PASS" >> "$RESULT_FILE"
+
+echo "==== SUCCESSFUL REMOVAL / CLEANUP ===="
+# This record was created by this script, not by the daemon. Delete ONLY
+# that synthetic fixture, after the failed-removal assertion above.
+test "$(sudo -n cat "$JOURNAL")" = '{malformed-journal'
+sudo -n rm -- "$JOURNAL"
+sudo -n /opt/auto-cpufreq/current/venv/bin/auto-cpufreq-restore-rapl
+sudo -n /usr/local/bin/auto-cpufreq --remove
+test ! -f "$marker"
+test ! -e "$unit"
+test -L /opt/auto-cpufreq/current
+sudo -n bash ./auto-cpufreq-installer --remove
+test ! -e /opt/auto-cpufreq
+echo "successful-remove: PASS" >> "$RESULT_FILE"
+
+echo "==== E2E RESULT ===="
+cat "$RESULT_FILE"
+echo "FULL DISPOSABLE-VM SOURCE INSTALL / SERVICE / RECOVERY BARRIER: PASS"
