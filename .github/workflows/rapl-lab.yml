@@ -37,6 +37,8 @@ jobs:
             auto_cpufreq/bin/auto_cpufreq_restore_rapl.py
       - name: Verify stop, restart, SIGKILL and release-switch semantics
         run: sudo /usr/bin/python3 internal_tests/rapl_systemd_integration.py
+      - name: Exercise real source-installer transaction in isolated paths
+        run: sudo /usr/bin/python3 -m unittest discover -s internal_tests -p 'test_rapl_installer_transactions.py' -v
       - name: Prove the ephemeral unit was removed
         if: always()
         run: |
