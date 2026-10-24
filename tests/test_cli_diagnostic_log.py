@@ -26,6 +26,36 @@ class CliDiagnosticLogTests(unittest.TestCase):
                 self.assertNotEqual(result.exit_code, 0)
                 self.assertIn("requires --stats, --monitor or --live", result.output)
 
+    def test_debug_is_separate_from_interactive_modes(self):
+        for mode in ("--stats", "--monitor", "--live"):
+            with self.subTest(mode=mode):
+                for extra in ([], ["--diagnostic-log"]):
+                    result = CliRunner().invoke(
+                        cli.main, [mode, "--debug"] + extra
+                    )
+                    self.assertNotEqual(result.exit_code, 0)
+                    self.assertIn(
+                        "--debug is a separate one-shot command",
+                        result.output,
+                    )
+
+    def test_diagnostic_log_rejects_multiple_modes_and_policy_flags(self):
+        for args in (
+            ["--stats", "--monitor"],
+            ["--stats", "--live"],
+            ["--stats", "--force", "performance"],
+            ["--stats", "--turbo", "always"],
+            ["--stats", "--remove"],
+            ["--stats", "--update"],
+            ["--stats", "--install"],
+        ):
+            with self.subTest(args=args):
+                result = CliRunner().invoke(
+                    cli.main, ["--diagnostic-log"] + args
+                )
+                self.assertNotEqual(result.exit_code, 0)
+                self.assertIn("--diagnostic-log", result.output)
+
     def test_stats_passes_opt_in_flag_without_starting_daemon(self):
         for enabled in (False, True):
             with self.subTest(enabled=enabled):
