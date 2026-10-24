@@ -10,6 +10,7 @@ gi.require_version("Gtk", "3.0")
 from gi.repository import GLib, Gtk
 
 from gtk_logging_ui_checks import WIDGETS
+from auto_cpufreq.gui import monitor_view as MONITOR_VIEW
 
 
 def pump_until(predicate, timeout=4):
@@ -62,15 +63,17 @@ class MonitorRefreshTests(unittest.TestCase):
         self.addCleanup(self.parent.destroy)
         self.views = []
         self.original_info = WIDGETS.system_info
+        self.original_monitor_info = MONITOR_VIEW.system_info
         self.addCleanup(self._restore_info)
 
     def _restore_info(self):
         for view in self.views:
             view.cleanup()
         WIDGETS.system_info = self.original_info
+        MONITOR_VIEW.system_info = self.original_monitor_info
 
     def make(self, collector):
-        WIDGETS.system_info = SimpleNamespace(
+        MONITOR_VIEW.system_info = WIDGETS.system_info = SimpleNamespace(
             generate_system_report=collector,
             monitor_recommendations=lambda report: SimpleNamespace(
                 governor=SimpleNamespace(suggested="powersave"),
@@ -91,7 +94,7 @@ class MonitorRefreshTests(unittest.TestCase):
         return SimpleNamespace(current_gov="powersave", is_turbo_on=(True, None))
 
     def test_actual_daemon_absent_buttons_navigate_monitor_and_back(self):
-        WIDGETS.system_info = SimpleNamespace(
+        MONITOR_VIEW.system_info = WIDGETS.system_info = SimpleNamespace(
             generate_system_report=self.report,
             monitor_recommendations=lambda report: SimpleNamespace(
                 governor=SimpleNamespace(suggested="powersave"),
