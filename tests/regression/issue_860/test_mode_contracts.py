@@ -59,7 +59,7 @@ class ModeBoundaryTests(unittest.TestCase):
 
     def test_both_monitors_use_common_recommendation_contract(self):
         for file, function in (
-            ("auto_cpufreq/gui/objects.py", "_collect_report"),
+            ("auto_cpufreq/gui/monitor_view.py", "_collect_report"),
             ("auto_cpufreq/modules/system_monitor.py", "_collect_report_data"),
         ):
             with self.subTest(file=file):
@@ -73,7 +73,7 @@ class ModeBoundaryTests(unittest.TestCase):
     def test_both_gtk_views_delegate_delivery_to_single_bridge(self):
         for filename, classname in (
             ("auto_cpufreq/gui/app.py", "ToolWindow"),
-            ("auto_cpufreq/gui/objects.py", "MonitorModeView"),
+            ("auto_cpufreq/gui/monitor_view.py", "MonitorModeView"),
         ):
             with self.subTest(view=classname):
                 tree = module(filename)
@@ -86,6 +86,19 @@ class ModeBoundaryTests(unittest.TestCase):
                 self.assertIn("GtkRefreshBridge(", source)
                 self.assertIn("self._refresh_bridge.coordinator", source)
                 self.assertNotIn("ReportRefreshCoordinator(", source)
+
+    def test_gtk_view_modules_are_isolated_from_power_policy(self):
+        for path in ("auto_cpufreq/gui/report_view.py",
+                     "auto_cpufreq/gui/monitor_view.py"):
+            with self.subTest(path=path):
+                source = ast.unparse(module(path))
+                self.assertNotIn("pkexec", source)
+                self.assertNotIn("set_autofreq", source)
+                self.assertNotIn("power_helper", source)
+        objects = ast.unparse(module("auto_cpufreq/gui/objects.py"))
+        app = ast.unparse(module("auto_cpufreq/gui/app.py"))
+        self.assertIn("from auto_cpufreq.gui.monitor_view import MonitorModeView", objects)
+        self.assertIn("from auto_cpufreq.gui.report_view import SystemReportView", app)
 
     def test_periodic_refresh_contract_is_shared_across_toolkits(self):
         urwid = ast.unparse(
