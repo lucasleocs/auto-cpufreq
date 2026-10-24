@@ -26,9 +26,10 @@ def update_branch():
     for node in ast.walk(funcs[0]):
         if isinstance(node, ast.If) and isinstance(node.test, ast.Name):
             if node.test.id == "update" and any(
-                isinstance(expr, ast.Call)
-                and isinstance(expr.func, ast.Name)
-                and expr.func.id == "root_check"
+                isinstance(expr, ast.Expr)
+                and isinstance(expr.value, ast.Call)
+                and isinstance(expr.value.func, ast.Name)
+                and expr.value.func.id == "root_check"
                 for expr in node.body[:2]
             ):
                 matches.append(node)
