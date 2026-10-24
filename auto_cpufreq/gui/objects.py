@@ -15,6 +15,7 @@ import time
 from auto_cpufreq.config.config import config, find_config_file
 from auto_cpufreq.gui.diagnostics import diagnostics
 from auto_cpufreq.gui.refresh_bridge import GtkRefreshBridge
+from auto_cpufreq.gui.refresh_timer import GtkRefreshTimer
 from auto_cpufreq.core import distro_info, get_formatted_version, get_override, get_turbo_override, sysinfo
 from auto_cpufreq.globals import GITHUB, IS_INSTALLED_WITH_AUR, IS_INSTALLED_WITH_SNAP
 from auto_cpufreq.modules.system_info import system_info
@@ -816,12 +817,7 @@ class ConfirmDialog(Gtk.Dialog):
         self.add_buttons("Yes", Gtk.ResponseType.YES, "No", Gtk.ResponseType.NO)
         self.label = Gtk.Label(label=message)
 
-        self.box.pack_start(self.label, True, False, 0)
-
-        self.show_all()
-
-
-class MonitorModeView(Gtk.Box):
+        self.box.pack_stclass MonitorModeView(Gtk.Box):
     def __init__(
         self,
         parent,
@@ -836,9 +832,6 @@ class MonitorModeView(Gtk.Box):
         self.report_view = report_view
         self.running = True
         self.refresh_interval = refresh_interval
-        self.refresh_id = None
-        self._health_timer_id = None
-        self._stalled_refresh_reported = False
         self.connect("destroy", self._on_destroy)
         self._refresh_bridge = GtkRefreshBridge(
             self._collect_report,
@@ -851,6 +844,14 @@ class MonitorModeView(Gtk.Box):
             thread_name="gtk-monitor-refresh",
         )
         self._refresh_coordinator = self._refresh_bridge.coordinator
+        self._refresh_timer = GtkRefreshTimer(
+            coordinator=self._refresh_coordinator,
+            request=self.refresh_in_thread,
+            active=lambda: self.running,
+            diagnostics=diagnostics,
+            component="GTK monitor",
+            interval=self.refresh_interval,
+        )
 
         self.header = Gtk.Box(
             orientation=Gtk.Orientation.HORIZONTAL
@@ -963,38 +964,11 @@ class MonitorModeView(Gtk.Box):
         )
 
         self.refresh_in_thread()
-        self._health_timer_id = GLib.timeout_add_seconds(
-            2, self._health_tick,
-        )
+        self._refresh_timer.start()
 
-    def _health_tick(self):
-        if not self.running:
-            return False
-        age = self._refresh_coordinator.request_age_seconds()
-        if age is None:
-            self._stalled_refresh_reported = False
-        elif age >= 20 and not self._stalled_refresh_reported:
-            self._stalled_refresh_reported = True
-            try:
-                diagnostics.warning(
-                    "GTK Monitor collection/delivery pending for %.1fs; "
-                    "keeping shared single-flight worker", age,
-                )
-            except Exception:
-                pass  # Diagnostics must not destroy the health timer.
-        return True
-
-    def _scheduled_refresh(self):
-        # The GLib one-shot source is about to return False: forget its ID
-        # before another refresh can schedule the successor.
-        self.refresh_id = None
-        return self.refresh_in_thread()
-
-    def _schedule_next_refresh(self):
-        if self.running and self.refresh_id is None:
-            self.refresh_id = GLib.timeout_add_seconds(
-                self.refresh_interval, self._scheduled_refresh
-            )
+    @property
+    def refresh_id(self):
+        return self._refresh_timer.source_id
 
     def refresh_in_thread(self):
         if self.running:
@@ -1027,7 +1001,6 @@ class MonitorModeView(Gtk.Box):
         )
         self.error_label.show()
 
-        self._schedule_next_refresh()
         return False
 
     def _update_display(
@@ -1112,7 +1085,6 @@ class MonitorModeView(Gtk.Box):
             self.turbo_name.hide()
             self.turbo_suggestion.hide()
 
-        self._schedule_next_refresh()
         return False
 
     def on_back_clicked(self, _button):
@@ -1131,13 +1103,13 @@ class MonitorModeView(Gtk.Box):
         self.running = False
         self._refresh_coordinator.close()
 
-        refresh_id, self.refresh_id = self.refresh_id, None
-        health_id, self._health_timer_id = self._health_timer_id, None
-        for source_id in (refresh_id, health_id):
-            if source_id is not None:
-                GLib.source_remove(source_id)
+        self._refresh_timer.stop()
         try:
             diagnostics.info("GTK monitor view closed")
+        except Exception:
+            pass
+
+ view closed")
         except Exception:
             pass
 
