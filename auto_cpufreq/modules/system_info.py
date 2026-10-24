@@ -933,41 +933,24 @@ def format_system_report(
     )
 
     platform_state = report.platform_profile
-    status_text = {
-        "available": "Available",
-        "partial": "Partially available",
-        "read-only": "Read-only",
-        "unavailable": "No interface detected",
-    }.get(platform_state.status, "Unknown")
-    lines.append(f"Platform profile status: {status_text}")
+    profile = present_platform_profile(platform_state)
+
+    # Keep the established legacy labels and missing-value spelling, while
+    # using the same status, choices, and provider interpretation as GTK/Stats.
+    lines.append(f"Platform profile status: {profile.status_text}")
+    current = (
+        platform_state.current
+        if platform_state.current is not None
+        else "Not available" if platform_state.status == "unavailable"
+        else profile.current
+    )
+    lines.append(f"Platform profile: {current}")
     lines.append(
-        "Platform profile: "
-        + (
-            platform_state.current
-            if platform_state.current is not None
-            else "Not available"
-            if platform_state.status == "unavailable"
-            else "Unknown"
-        )
+        f"{profile.available_label.replace('Available profiles', 'Available platform profiles', 1)}: "
+        f"{profile.available}"
     )
-    profiles_label, profiles_text = format_platform_profile_choices(
-        platform_state,
-        label="Available platform profiles",
-    )
-    lines.append(f"{profiles_label}: {profiles_text}")
-    provider_states = platform_state.provider_states
-    if len(provider_states) > 1:
-        provider_text = "; ".join(
-            f"{provider}: {profile or 'Unknown'}"
-            for provider, profile in provider_states
-        )
-        provider_label = "Platform profile providers"
-    elif provider_states:
-        provider_text = provider_states[0][0]
-        provider_label = "Platform profile provider"
-    else:
-        provider_text = "None reported"
-        provider_label = "Platform profile provider"
+    provider_label = f"Platform profile {profile.provider_label.lower()}"
+    provider_text = profile.provider if profile.provider_visible else "None reported"
     lines.append(f"{provider_label}: {provider_text}")
 
     if include_config:
