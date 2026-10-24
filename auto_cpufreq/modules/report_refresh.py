@@ -141,6 +141,17 @@ class ReportRefreshCoordinator:
             raise
         return True
 
+    def _report_dispatch_failure(self, error):
+        # May be called by a worker or by the GUI main loop when queuing
+        # a successor fails. The error reporter itself cannot be fatal.
+        try:
+            if self._on_dispatch_error is not None:
+                self._on_dispatch_error(error)
+            else:
+                _LOG.warning("Report delivery failed: %s", error)
+        except Exception:
+            _LOG.exception("Reporting a refresh delivery error failed")
+
     def _run(self, generation, requested_at):
         with self._lock:
             if self._closed or generation != self._generation:
@@ -171,15 +182,9 @@ class ReportRefreshCoordinator:
         try:
             self._dispatch(result)
         except Exception as error:
-            # Record failures without importing GTK or Urwid here.
-            # The frontend-specific callback must never become fatal.
+            # Failed UI dispatch cannot strand the coordinator.
             try:
-                if self._on_dispatch_error is not None:
-                    self._on_dispatch_error(error)
-                else:
-                    _LOG.warning("Report delivery failed: %s", error)
-            except Exception:
-                _LOG.exception("Reporting a refresh delivery error failed")
+                self._report_dispatch_failure(error)
             finally:
                 self.acknowledge(generation)
 
@@ -203,7 +208,13 @@ class ReportRefreshCoordinator:
             again = self._pending
             self._pending = False
         if again:
-            self.request()
+            try:
+                self.request()
+            except RuntimeError as error:
+                # Worker creation can fail after the previous report has
+                # already been presented. The next periodic UI tick can
+                # safely retry; do not leak this failure into GTK/Urwid.
+                self._report_dispatch_failure(error)
         return True
 
     def close(self):
