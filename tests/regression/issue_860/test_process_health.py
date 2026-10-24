@@ -178,6 +178,8 @@ class HealthSamplerTests(unittest.TestCase):
         failures.append(snap(1.0, 0))
 
         def read():
+            if not failures:
+                return snap(time.monotonic(), 0)
             result = failures.pop(0)
             if isinstance(result, Exception):
                 raise result
@@ -189,7 +191,10 @@ class HealthSamplerTests(unittest.TestCase):
         sampler.start()
         try:
             deadline = time.monotonic() + 2
-            while failures and time.monotonic() < deadline:
+            while (
+                (failures or not logger.infos)
+                and time.monotonic() < deadline
+            ):
                 time.sleep(0.01)
         finally:
             sampler.stop()
