@@ -27,7 +27,7 @@ Prefer a development environment over replacing a running system installation. D
 | Read-only hardware telemetry and `SystemReport` | `auto_cpufreq/modules/system_info.py` |
 | Shared governor/Turbo suggestion rules | `auto_cpufreq/modules/report_recommendations.py` |
 | Read-only Monitor recommendation status and applicability | `auto_cpufreq/modules/report_recommendations.py` |
-| Interpreting available, unknown, and driver-managed values | `auto_cpufreq/modules/report_presentation.py` |
+| Shared report semantics (missing battery/sensors, platform profile, config, offline CPUs) | `auto_cpufreq/modules/report_presentation.py` |
 | Cross-interface refresh concurrency | `auto_cpufreq/modules/report_refresh.py` |
 | GTK report layout for dashboard and Monitor | `auto_cpufreq/gui/report_view.py` |
 | GTK Monitor screen | `auto_cpufreq/gui/monitor_view.py` |
@@ -55,6 +55,23 @@ New code should import `MonitorModeView` from `gui/monitor_view.py` and
 statistics widgets were removed from `gui/objects.py`: they were not used
 by any tracked application entrypoint and performed separate synchronous
 collection. Avoid reintroducing a second sampling path.
+
+## Consistent report fields across GTK and Stats
+
+Both frontends receive the same `SystemReport` data model. Do not duplicate
+presentation rules in separate toolkit modules. `report_presentation.py`
+defines semantic text and availability, including absent batteries, unavailable
+temperature measurements, offline CPUs, config-file labels and platform-profile
+providers. `gui/report_view.py` and `modules/system_monitor.py` only decide
+**where** and **how** to show each field. The legacy text formatters in
+`system_info.py` delegate platform-profile interpretation to that shared rule.
+
+When changing a report field, add a synthetic scenario to
+`tests/test_frontend_report_parity.py` and verify both frontends. Keep
+the tests independent of host cpufreq governors and hardware sensors.
+If a value is unknown, report that explicitly rather than inventing a
+default; omit optional sections only when both interfaces intentionally
+follow the same policy.
 
 ## Refresh behavior
 
