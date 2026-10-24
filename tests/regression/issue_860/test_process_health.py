@@ -124,6 +124,37 @@ class HealthSamplerTests(unittest.TestCase):
             self.assertEqual(result.fds, 1)
             self.assertEqual(result.monotonic, 8.0)
 
+    def test_high_cpu_alert_captures_bounded_python_thread_stack(self):
+        logger = FakeLog()
+        entered, release = Event(), Event()
+
+        def worker_body():
+            entered.set()
+            release.wait(timeout=2)
+
+        worker = Thread(target=worker_body, name="debug-trace-target")
+        worker.start()
+        try:
+            self.assertTrue(entered.wait(timeout=1))
+            tid = worker.native_id
+            sampler = h.ProcessHealthSampler(
+                logger, high_threshold=10, consecutive=2,
+                summary_interval=999,
+            )
+            for moment in range(3):
+                sampler.observe(snap(
+                    moment, moment * h.CLOCK_TICKS,
+                    {tid: moment * h.CLOCK_TICKS},
+                ))
+            self.assertTrue(any(
+                "High CPU Python thread stack" in line and
+                "debug-trace-target" in line
+                for line in logger.warnings
+            ))
+        finally:
+            release.set()
+            worker.join(timeout=2)
+
     def test_real_busy_python_thread_appears_in_procfs_samples(self):
         started, stop = Event(), Event()
 
