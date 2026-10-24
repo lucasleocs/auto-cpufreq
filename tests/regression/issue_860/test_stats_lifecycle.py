@@ -6,6 +6,7 @@ import select
 import signal
 import subprocess
 import sys
+import tempfile
 import termios
 import time
 import types
@@ -35,7 +36,10 @@ def run_child():
 
     from auto_cpufreq.modules.system_monitor import SystemMonitor, ViewType
 
-    monitor = SystemMonitor(type=ViewType.STATS)
+    monitor = SystemMonitor(
+        type=ViewType.STATS,
+        diagnostic_log=os.environ.get("ACF_DIAG") == "1",
+    )
     monitor.format_system_info = lambda *_args: None
     original_update = monitor.update
     ready_fd = int(os.environ["ACF_READY_FD"])
@@ -57,11 +61,15 @@ def run_child():
 
 
 class TerminalProcess:
-    def __init__(self, ignore_hup=False):
+    def __init__(self, ignore_hup=False, diagnostic=False):
+        self._logs = tempfile.TemporaryDirectory()
         self.master, slave = pty.openpty()
         self.read_fd, write_fd = os.pipe()
         env = os.environ.copy()
         env["ACF_READY_FD"] = str(write_fd)
+        env["XDG_STATE_HOME"] = self._logs.name
+        if diagnostic:
+            env["ACF_DIAG"] = "1"
         if ignore_hup:
             env["ACF_IGNORE_HUP"] = "1"
         self.proc = subprocess.Popen(
@@ -154,17 +162,33 @@ class TerminalProcess:
                 self.proc.wait(timeout=3)
         self.close_terminal()
         os.close(self.read_fd)
+        self._logs.cleanup()
 
 
 class StatsLifecycleTests(unittest.TestCase):
     @contextlib.contextmanager
-    def terminal(self, ignore_hup=False):
-        child = TerminalProcess(ignore_hup=ignore_hup)
+    def terminal(self, ignore_hup=False, diagnostic=False):
+        child = TerminalProcess(
+            ignore_hup=ignore_hup, diagnostic=diagnostic
+        )
         try:
             child.wait_ready()
             yield child
         finally:
             child.cleanup()
+
+    def test_diagnostic_logs_are_private_and_end_on_quit(self):
+        with self.terminal(diagnostic=True) as child:
+            child.send(b"q")
+            self.assertEqual(child.wait_exit(), 0, child.drain()[-2500:])
+            logs = list(
+                (Path(child._logs.name) / "auto-cpufreq").glob("stats-*.log")
+            )
+            self.assertEqual(len(logs), 1)
+            data = logs[0].read_text(encoding="utf-8")
+            self.assertIn("UI started", data)
+            self.assertIn("UI stopped", data)
+            self.assertEqual(logs[0].stat().st_mode & 0o777, 0o600)
 
     def test_quit_key(self):
         with self.terminal() as child:
