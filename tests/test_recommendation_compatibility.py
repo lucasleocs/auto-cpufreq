@@ -14,26 +14,29 @@ from auto_cpufreq.modules.report_recommendations import (
 
 class LegacySuggestionCompatibilityTests(unittest.TestCase):
     def test_governor_legacy_wrapper_uses_shared_rule(self):
-        governors = system_module.AVAILABLE_GOVERNORS_SORTED
-        self.assertTrue(governors)
-        for ac in (True, False, None):
-            with self.subTest(ac=ac):
-                snapshot = SimpleNamespace(
-                    battery_info=SimpleNamespace(is_ac_plugged=ac)
-                )
-                expected = governor_candidate(ac, governors)
-                self.assertEqual(
-                    system_module.SystemInfo.governor_suggestion(snapshot),
-                    expected,
-                )
-                with patch.object(
-                    system_module.SystemInfo, "battery_info",
-                    return_value=snapshot.battery_info,
-                ):
+        # CI runners and minimal systems need not expose cpufreq governors.
+        governors = ("performance", "powersave")
+        with patch.object(
+            system_module, "AVAILABLE_GOVERNORS_SORTED", governors
+        ):
+            for ac in (True, False, None):
+                with self.subTest(ac=ac):
+                    snapshot = SimpleNamespace(
+                        battery_info=SimpleNamespace(is_ac_plugged=ac)
+                    )
+                    expected = governor_candidate(ac, governors)
                     self.assertEqual(
-                        system_module.SystemInfo.governor_suggestion(),
+                        system_module.SystemInfo.governor_suggestion(snapshot),
                         expected,
                     )
+                    with patch.object(
+                        system_module.SystemInfo, "battery_info",
+                        return_value=snapshot.battery_info,
+                    ):
+                        self.assertEqual(
+                            system_module.SystemInfo.governor_suggestion(),
+                            expected,
+                        )
 
     def test_turbo_legacy_wrapper_preserves_thresholds(self):
         for usage in (0.0, 19.9, 20.0, 24.0, 99.0):
@@ -80,25 +83,31 @@ class LegacySuggestionCompatibilityTests(unittest.TestCase):
             )
 
     def test_current_monitor_evaluation_uses_shared_candidates(self):
-        for ac in (True, False):
-            report = SimpleNamespace(
-                battery_info=SimpleNamespace(is_ac_plugged=ac),
-                current_gov=system_module.AVAILABLE_GOVERNORS_SORTED[0],
-                is_turbo_on=(False, False),
-                cpu_usage=21.0,
-                cpu_avg_temp=50.0,
-                cores_info=[],
-            )
-            with self.subTest(ac=ac):
-                values = system_module.SystemInfo.monitor_recommendations(report)
-                self.assertEqual(
-                    values.governor.suggested,
-                    system_module.SystemInfo.governor_suggestion(report),
+        governors = ("performance", "powersave")
+        with patch.object(
+            system_module, "AVAILABLE_GOVERNORS_SORTED", governors
+        ):
+            for ac in (True, False):
+                report = SimpleNamespace(
+                    battery_info=SimpleNamespace(is_ac_plugged=ac),
+                    current_gov=governors[0],
+                    is_turbo_on=(False, False),
+                    cpu_usage=21.0,
+                    cpu_avg_temp=50.0,
+                    cores_info=[],
                 )
-                self.assertEqual(
-                    values.turbo.suggested,
-                    system_module.SystemInfo.turbo_on_suggestion(report),
-                )
+                with self.subTest(ac=ac):
+                    values = system_module.SystemInfo.monitor_recommendations(
+                        report
+                    )
+                    self.assertEqual(
+                        values.governor.suggested,
+                        system_module.SystemInfo.governor_suggestion(report),
+                    )
+                    self.assertEqual(
+                        values.turbo.suggested,
+                        system_module.SystemInfo.turbo_on_suggestion(report),
+                    )
 
 
 if __name__ == "__main__":
