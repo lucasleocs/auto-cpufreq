@@ -32,6 +32,9 @@ class ReportView(Gtk.Box):
     def apply_report(self, report):
         self.applied.append(report)
 
+    def prepend_right(self, widget):
+        self.pack_start(widget, False, False, 0)
+
 
 class MonitorRefreshTests(unittest.TestCase):
     def setUp(self):
@@ -75,8 +78,11 @@ class MonitorRefreshTests(unittest.TestCase):
         self.assertTrue(pump_until(lambda: view.error_label.get_visible()))
         self.assertIn("synthetic monitor sensor error",
                       view.error_label.get_text())
-        self.assertTrue(view._refresh_coordinator.in_progress is False)
-        # Drive the scheduled next tick without waiting for its timer.
+        self.assertFalse(view._refresh_coordinator.in_progress)
+        # Drive the next tick, removing the real timer so it does not leak.
+        if view.refresh_id is not None:
+            GLib.source_remove(view.refresh_id)
+            view.refresh_id = None
         view.refresh_in_thread()
         self.assertTrue(pump_until(lambda: len(renderer.applied) >= 1))
         self.assertFalse(view.error_label.get_visible())
