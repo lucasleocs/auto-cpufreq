@@ -143,6 +143,15 @@ Previous PASS results for verbose labels and private-bus scenarios do **not** va
 - R19: Battery wattage is labeled as **battery power**, not total CPU/system power; 0.00 W with AC is valid, per issue #974.
 - R20: No CPU governor/AC detection change; no modification to sysfs charge limits or UPower `EnableChargeThreshold()` in telemetry.
 
+## Actual GalaxyMint GTK and clean-branch verification
+
+- G01: Real compact GTK screenshot + diagnostic confirmed status Fully charged, charge 99%, AC connected, no start limit, stop 100%, battery flow 0.00 W; optional unsupported `Charge limit` field hidden. PASS.
+- G02: Fan speed appeared at 3000 RPM in the screenshot. Earlier 0 RPM was attributable to Fn+F11 low-power selection, not an established reporting defect. CLOSED; do not reintroduce into PR.
+- G03: Clean feature branch created from upstream-synced `master` @ `5a168303...` with exactly ten production/packaging/README changes. PASS.
+- G04: Internal test suites, mock private bus, test-only workflows and planning documentation excluded from clean branch. PASS.
+- G05: No PR created, no master merge, no threshold-writing feature added. PASS.
+- G06: Snap full confinement runtime and physically upgraded UPower still untested; do not label either as PASS based on mock or Nix results.
+
 ## Experimental compact implementation CI verification
 
 Temporary implementation: `tmp/upower-compact-validation-20261023` @ `35de5dad73dfd37b44c3deab07bb8785bba1d65d`.

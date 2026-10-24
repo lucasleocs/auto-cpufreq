@@ -100,6 +100,22 @@ If start hysteresis is supported (e.g. start 75/stop 80), a machine at 79% on AC
 4. **Private-bus scenario tests:** extend temporary real-D-Bus and Xvfb lab to active/disabled numeric, 100%-before-enable, firmware active/disabled, missing enabled status, contradictory kernel readback, 79%-within-hysteresis and no threshold API.
 5. No fan-speed fix: Fn+F11 switched GalaxyMint to low-power, producing 0 RPM; restored other profiles report RPM. That previous investigation is closed.
 
+## GalaxyMint final compact GTK check and production-only staging branch (2026-10-23)
+
+The user executed the compact-version preview on actual Samsung GalaxyMint:
+- `Fonte: upower`; `Status: Fully charged`; `Start: Unavailable`; `Stop: 100%`; `Charge limit: None` (diagnostic-only field, correctly **hidden** from GTK).
+- GTK Battery section showed Status Fully charged, Charge 99%, AC power Connected, Start threshold Unavailable, Stop threshold 100%, Battery power 0.00 W. No extra capability rows, no layout regression.
+- The fan displayed **3000 RPM** while using the performance profile. The prior 0 RPM observation in low-power is resolved and remains out of the UPower work.
+
+Created a clean review branch **directly from the unchanged fork/upstream master** `5a1683037a583785f802b5d039022127b9b154cd`:
+
+- Branch: `feature/upower-read-only-battery-20261023`
+- Commit: `b53750a7f5515800846d2884f7ba3f7854fccb8b`
+- Files: exactly ten production, packaging and README files: `auto_cpufreq/modules/battery_upower.py`, `system_info.py`, `system_monitor.py`, `gui/app.py`, `gui/objects.py`, `pyproject.toml`, `poetry.lock`, `nix/default.nix`, `snap/snapcraft.yaml`, `README.md`.
+- Excluded: all `internal/` plans/tests/mock services and temporary `.github/workflows/upower-*` CI fixtures. No changes or merge to `master`, and no PR opened.
+
+Temporary mock/action results remain accessible in their respective branches. The staged branch's ordinary Linux Build and Nix checks run separately. End-to-end Snap installation under confinement and real newer UPower daemon hardware behavior remain outside the tested coverage; `upower-observe` is a documented auto-connected read interface.
+
 ## Compact UPower implementation — verified in temporary CI (2026-10-23)
 
 **Temporary implementation only:** `tmp/upower-compact-validation-20261023` commit `35de5dad73dfd37b44c3deab07bb8785bba1d65d`. This revision implements the compact presentation described above; no production/final PR has been prepared or merged.
