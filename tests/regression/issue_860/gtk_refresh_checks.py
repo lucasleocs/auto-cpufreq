@@ -87,8 +87,6 @@ APP = load_app()
 class WindowState:
     refresh_in_thread = APP.ToolWindow.refresh_in_thread
     _collect_report = APP.ToolWindow._collect_report
-    _dispatch_refresh_result = APP.ToolWindow._dispatch_refresh_result
-    _deliver_refresh_result = APP.ToolWindow._deliver_refresh_result
     refresh_in_progress = APP.ToolWindow.refresh_in_progress
     _apply_refresh = APP.ToolWindow._apply_refresh
     _finish_refresh_error = APP.ToolWindow._finish_refresh_error
@@ -204,6 +202,30 @@ class GtkRefreshTests(unittest.TestCase):
             self.assertIsNotNone(
                 GLib.MainContext.default().find_source_by_id(source)
             )
+
+    def test_dashboard_busy_state_is_owned_by_coordinator(self):
+        started, release = threading.Event(), threading.Event()
+
+        def collect():
+            started.set()
+            release.wait(timeout=3)
+            return object()
+
+        APP.system_info.generate_system_report = collect
+        try:
+            self.assertFalse(self.window.refresh_in_progress)
+            self.window.refresh_in_thread()
+            self.assertTrue(started.wait(timeout=2))
+            self.assertTrue(self.window.refresh_in_progress)
+            self.assertTrue(self.window._refresh_coordinator.in_progress)
+            release.set()
+            self.assertTrue(pump_until(
+                lambda: not self.window.refresh_in_progress
+                and len(self.window.applied) == 1
+            ))
+            self.assertFalse(self.window._refresh_coordinator.in_progress)
+        finally:
+            release.set()
 
     def test_pending_requests_are_coalesced(self):
         started = threading.Event()
