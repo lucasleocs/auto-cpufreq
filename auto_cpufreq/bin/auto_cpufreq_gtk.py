@@ -21,6 +21,7 @@ def main():
                 display.get_name(),
             )
         win = ToolWindow()
+        diagnostics.set_error_callback(win.show_debug_log_error)
         win.connect("destroy", Gtk.main_quit)
         win.show_all()
         win.handle_update()
