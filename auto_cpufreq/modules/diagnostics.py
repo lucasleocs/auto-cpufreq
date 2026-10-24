@@ -183,6 +183,10 @@ class SessionDiagnostics:
         self._events = None
         self._activated_once = False
         self._health_sampler = None
+        self._retiring_session = None
+        self._error_lock = Lock()
+        self.last_error = None
+        self._error_count = 0
         self.enabled = False
 
     @property
@@ -198,8 +202,19 @@ class SessionDiagnostics:
         return self.state_dir / filename
 
     def _report_error(self, error):
-        """Override in frontend adapter. Called from the writer thread."""
-        pass
+        """Store errors without writing to the failed destination.
+
+        GUI adapters may additionally schedule an error notification on
+        their own UI context. Worker threads must not touch UI widgets.
+        """
+        message = f"Unable to write diagnostic log: {str(error)[:240]}"
+        with self._error_lock:
+            self.last_error = message
+            self._error_count += 1
+
+    def error_status(self):
+        with self._error_lock:
+            return self._error_count, self.last_error
 
     def _writer_loop(self, session):
         try:
@@ -270,6 +285,17 @@ class SessionDiagnostics:
     def _activate(self):
         if self.enabled:
             return
+        # A writer stuck in I/O may outlive the bounded shutdown wait.
+        # Do not create a second unsupervised session while it remains.
+        if (
+            self._retiring_session is not None
+            and self._retiring_session.writer.is_alive()
+        ):
+            raise OSError("Previous diagnostic writer is still stopping")
+        self._retiring_session = None
+        if self._health_sampler is not None and self._health_sampler.is_alive():
+            raise OSError("Previous process-health sampler is still stopping")
+        self._health_sampler = None
         if self._activated_once:
             self.log_path = self._new_log_path()
         self.state_dir = self.log_path.parent
@@ -307,6 +333,9 @@ class SessionDiagnostics:
         self._logger.addHandler(handler)
         self.enabled = True
         self._activated_once = True
+        with self._error_lock:
+            self.last_error = None
+            self._error_count = 0
         self.info("%s debug logging enabled; pid=%d", self.component, os.getpid())
         # Sampling is opt-in and shares this process's own session log.
         # It never touches cpufreq, daemon services or the GUI event loop.
@@ -321,7 +350,8 @@ class SessionDiagnostics:
     def _deactivate(self):
         if not self.enabled:
             return
-        sampler, self._health_sampler = self._health_sampler, None
+        # Retain sampler ownership if a procfs read outlives stop().
+        sampler = self._health_sampler
         if sampler is not None:
             sampler.stop()
         self.info("%s debug logging disabled", self.component)
@@ -332,6 +362,9 @@ class SessionDiagnostics:
         self._logger.removeHandler(session.handler)
         session.handler.close_producers()
         session.writer.join(timeout=0.3)
+        self._retiring_session = (
+            session if session.writer.is_alive() else None
+        )
         self._session = None
         self._handler = None
         self._file_handler = None
