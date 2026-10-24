@@ -96,18 +96,23 @@ class MonitorRefreshTests(unittest.TestCase):
         release = threading.Event()
         views = []
 
+        calls = []
         def slow_collect():
+            calls.append(1)
             started.set()
             release.wait(timeout=3)
             return self.report()
 
         try:
-            for _ in range(5):
+            for index in range(5):
                 view, renderer = self.make(slow_collect)
                 views.append((view, renderer))
-                self.assertTrue(started.wait(timeout=1))
-                started.clear()
+                if index == 0:
+                    self.assertTrue(started.wait(timeout=1))
                 view.cleanup()
+            # Four more views were queued then closed. None may begin a
+            # concurrent collection while the original is blocked.
+            self.assertEqual(len(calls), 1)
             release.set()
             deadline = time.monotonic() + 3
             while time.monotonic() < deadline:
