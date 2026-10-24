@@ -52,6 +52,22 @@ Not attempted by request: Python 3.9 compatibility adjustments or `pyproject.tom
 
 Still required before an upstream production PR: isolated real GTK launch and long-duration resource benchmark on Linux Mint, repeated suspend/resume, privileged CLI diagnostics inspection without changing energy policy, and building a clean PR branch from current upstream master.
 
+## Additional hardening — shared collection lane and bounded diagnostics
+
+This experimental phase implements the post-review robustness corrections without changing the daemon, `--live` energy policy, or the installed application.
+
+- **No overlapping process collectors:** `report_refresh._ProcessCollectionLane` runs one short-lived daemon collection worker per process with a weak-reference queue. Each view still owns independent generations, rendering and cancellation. Closing the GTK Monitor while its sysfs/procfs read is blocked does not start a second concurrent read on reopen; queued jobs of closed views are canceled. The worker exits when its queue empties. This is process-local, not IPC between GTK and Stats.
+- **Urwid delivery recovery:** `SystemMonitor` has a recurring two-second Urwid alarm that also drains finished reports when the `watch_pipe` write fails. Its pipe write end is nonblocking; the failure is logged once per episode, and the display shows a fallback warning rather than spinning or silently freezing.
+- **Observable coordinator errors:** `ReportRefreshCoordinator` accepts a frontend-specific dispatch-error callback, with a standard logger fallback. GTK and Urwid log unexpected delivery failures without importing either toolkit into the coordinator.
+- **Nonblocking GTK debug toggle:** the GTK menu no longer waits for joins when disabling debug. Ownership of still-running watchdog/sampler/writer is retained, and a re-enable request is rejected while workers are stopping. The final GTK process shutdown still makes bounded attempts to flush logs. Tests were adjusted to distinguish asynchronous stop signaling from eventual worker termination.
+- **Safe log record queues:** queued `LogRecord` messages and traceback/stack text are length limited, and raw args and traceback frames are detached before entering the bounded queue. This trades a small amount of synchronous string formatting for bounded references/memory retention, not disk I/O.
+- **Sampler robustness:** unexpected errors are reported and the process sampler disables itself after three consecutive unexpected faults rather than looping forever or dying silently; routine procfs errors remain throttled.
+- **Regression tests:** serialized collectors across independent views; cancellation of a queued closed view; dispatch callback failures; Urwid broken pipe; bounded logger messages without args retained; unexpected sampler faults; the actual CLI entrypoint's Click-option-to-Stats/Monitor/Live constructor wiring (static AST check, with separate PTY runtime tests). No privileged modes are executed in these tests.
+
+**Caveats:** the read-only collect function cannot forcibly cancel blocking kernel reads; the worker remains daemonized while a read is blocked, but concurrent process-wide collections remain capped. `Thread.join` at CLI shutdown remains bounded and no lossless crash logging is promised. The CLI wiring AST check is not a substitute for safely launching the real installed CLI using hardware-independent mocks. A rapid GTK debug re-enable may temporarily display a 'still stopping' error; the expected next step is to offer a deferred retry if this becomes a meaningful usability issue.
+
+**Verification:** use the latest commit's Issue 860 Runtime Regression, Linux Build and Nix Flake CI runs, not older results. An isolated real Linux Mint/X11 or Wayland session test remains required before the production PR.
+
 ## 1. Executive decision
 
 Pursue **one reusable, read-only observability stack** with separate GTK and Urwid event-loop adapters and separate privileged policy executors.
