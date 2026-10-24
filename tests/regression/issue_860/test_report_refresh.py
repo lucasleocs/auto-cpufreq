@@ -77,6 +77,120 @@ class RefreshCoordinatorTests(unittest.TestCase):
         self.assertTrue(coordinator.acknowledge(dispatched[1].generation))
         self.assertFalse(coordinator.in_progress)
 
+    def test_periodic_requests_skip_running_and_undelivered_work(self):
+        started, release = threading.Event(), threading.Event()
+        results, calls = [], []
+
+        def collect():
+            calls.append(1)
+            started.set()
+            release.wait(timeout=3)
+            return len(calls)
+
+        coordinator = ReportRefreshCoordinator(collect, results.append)
+        self.addCleanup(coordinator.close)
+        try:
+            self.assertTrue(coordinator.request_if_idle())
+            self.assertTrue(started.wait(timeout=2))
+            for _ in range(50):
+                self.assertFalse(coordinator.request_if_idle())
+            release.set()
+            self.assertTrue(wait_until(lambda: len(results) == 1))
+            # The delivery slot remains busy until acknowledged.
+            for _ in range(50):
+                self.assertFalse(coordinator.request_if_idle())
+            self.assertTrue(coordinator.acknowledge(results[0].generation))
+            self.assertFalse(coordinator.in_progress)
+            self.assertEqual(len(calls), 1)
+            # A later periodic tick starts one new collection normally.
+            self.assertTrue(coordinator.request_if_idle())
+            self.assertTrue(wait_until(lambda: len(results) == 2))
+            self.assertTrue(coordinator.acknowledge(results[1].generation))
+            self.assertEqual(len(calls), 2)
+        finally:
+            release.set()
+
+    def test_explicit_request_still_coalesces_after_periodic_skip(self):
+        started, release = threading.Event(), threading.Event()
+        dispatched, calls = [], []
+
+        def collect():
+            calls.append(1)
+            started.set()
+            release.wait(timeout=3)
+            return len(calls)
+
+        coordinator = ReportRefreshCoordinator(collect, dispatched.append)
+        self.addCleanup(coordinator.close)
+        try:
+            self.assertTrue(coordinator.request_if_idle())
+            self.assertTrue(started.wait(timeout=2))
+            self.assertFalse(coordinator.request_if_idle())
+            self.assertFalse(coordinator.request())  # Explicit successor.
+            for _ in range(30):
+                self.assertFalse(coordinator.request_if_idle())
+            release.set()
+            self.assertTrue(wait_until(lambda: len(dispatched) == 1))
+            self.assertTrue(coordinator.acknowledge(dispatched[0].generation))
+            self.assertTrue(wait_until(lambda: len(dispatched) == 2))
+            self.assertEqual(len(calls), 2)
+            self.assertTrue(coordinator.acknowledge(dispatched[1].generation))
+        finally:
+            release.set()
+
+    def test_atomic_periodic_reservation_from_competing_threads(self):
+        started, release = threading.Event(), threading.Event()
+        dispatched, calls = [], []
+        lock = threading.Lock()
+        gate = threading.Barrier(20)
+        accepted = []
+        errors = []
+
+        def collect():
+            with lock:
+                calls.append(1)
+            started.set()
+            release.wait(timeout=3)
+            return "first"
+
+        coordinator = ReportRefreshCoordinator(collect, dispatched.append)
+        self.addCleanup(coordinator.close)
+
+        def contender():
+            try:
+                gate.wait(timeout=3)
+                outcome = coordinator.request_if_idle()
+                with lock:
+                    accepted.append(outcome)
+            except Exception as error:
+                with lock:
+                    errors.append(error)
+
+        contenders = [threading.Thread(target=contender) for _ in range(20)]
+        for thread in contenders:
+            thread.start()
+        try:
+            for thread in contenders:
+                thread.join(timeout=4)
+            self.assertFalse(errors, str(errors))
+            self.assertTrue(all(not t.is_alive() for t in contenders))
+            self.assertEqual(accepted.count(True), 1)
+            self.assertEqual(accepted.count(False), 19)
+            self.assertTrue(started.wait(timeout=2))
+            release.set()
+            self.assertTrue(wait_until(lambda: len(dispatched) == 1))
+            self.assertTrue(coordinator.acknowledge(dispatched[0].generation))
+            self.assertEqual(len(calls), 1)
+            self.assertFalse(coordinator.in_progress)
+        finally:
+            release.set()
+
+    def test_closed_coordinator_rejects_periodic_and_explicit(self):
+        coordinator = ReportRefreshCoordinator(lambda: 1, lambda result: None)
+        coordinator.close()
+        self.assertFalse(coordinator.request_if_idle())
+        self.assertFalse(coordinator.request())
+
     def test_temporary_error_does_not_poison_next_refresh(self):
         calls = []
         results = []
