@@ -26,7 +26,12 @@ class _PrivateRotatingFileHandler(RotatingFileHandler):
         flags = os.O_WRONLY | os.O_APPEND | os.O_CREAT
         flags |= getattr(os, "O_NOFOLLOW", 0)
         fd = os.open(self.baseFilename, flags, 0o600)
-        return os.fdopen(fd, "a", encoding="utf-8")
+        try:
+            os.fchmod(fd, 0o600)
+            return os.fdopen(fd, "a", encoding="utf-8")
+        except BaseException:
+            os.close(fd)
+            raise
 
 
 class GuiDiagnostics:
