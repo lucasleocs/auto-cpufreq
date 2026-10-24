@@ -48,7 +48,7 @@ class ConfigContractTests(unittest.TestCase):
         home = self.root / "mockhome"
         user_file = home / ".config/auto-cpufreq/auto-cpufreq.conf"
         user_file.parent.mkdir(parents=True)
-        user_file.write_text("[battery]\\ngovernor=powersave\\n")
+        user_file.write_text("[battery]\ngovernor=powersave\n")
         with patch.dict(os.environ, {
             "USER": "test-account",
             "SUDO_USER": "",
@@ -66,7 +66,7 @@ class ConfigContractTests(unittest.TestCase):
         home = self.root / "fallback"
         user_file = home / ".config/auto-cpufreq/auto-cpufreq.conf"
         user_file.parent.mkdir(parents=True)
-        user_file.write_text("[charger]\\ngovernor=performance\\n")
+        user_file.write_text("[charger]\ngovernor=performance\n")
         with patch.dict(os.environ, {
             "USER": "not-a-real-account",
             "SUDO_USER": "",
@@ -99,7 +99,7 @@ class ConfigContractTests(unittest.TestCase):
 
     def test_file_changed_during_read_keeps_previous_snapshot(self):
         original = self.config.get_config()
-        self.config_path.write_text("[battery]\\ngovernor=performance\\n")
+        self.config_path.write_text("[battery]\ngovernor=performance\n")
         real = os.stat(self.config_path)
         switched = SimpleNamespace(
             st_dev=real.st_dev,
