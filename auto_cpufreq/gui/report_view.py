@@ -8,8 +8,8 @@ gi.require_version("Gtk", "3.0")
 from gi.repository import Gtk, Pango
 
 from auto_cpufreq.modules.report_presentation import (
-    present_report, interpret_turbo, interpret_battery,
-    present_platform_profile, offline_cpus_text, frequency_limit_text,
+    present_report, present_platform_profile, offline_cpus_text,
+    frequency_limit_text, battery_present,
 )
 from auto_cpufreq.modules.system_info import battery_power_label
 
@@ -58,19 +58,6 @@ def _set_row_visible(grid, row, visible):
             child.show()
         else:
             child.hide()
-
-
-def _battery_status(battery):
-    return interpret_battery(battery).status.text
-
-
-def _governor_status(report):
-    return present_report(report).governor.text
-
-
-def _turbo_status(report):
-    return interpret_turbo(report.is_turbo_on).text
-
 
 
 class SystemReportView(Gtk.Box):
@@ -380,7 +367,7 @@ class SystemReportView(Gtk.Box):
         self.battery_values["status"].set_text(
             presentation.battery.status.text
         )
-        if battery is None:
+        if not battery_present(battery):
             for row in range(1, 6):
                 _set_row_visible(self.battery_grid, row, False)
         else:
