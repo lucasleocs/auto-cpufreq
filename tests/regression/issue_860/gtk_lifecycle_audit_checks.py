@@ -13,6 +13,7 @@ from gi.repository import GLib, Gtk
 
 from gtk_logging_ui_checks import WIDGETS
 from auto_cpufreq.gui import monitor_view as MONITOR_VIEW
+from auto_cpufreq.modules.report_recommendations import RecommendationStatus as State
 
 
 class FakeReportView(Gtk.Box):
@@ -41,8 +42,8 @@ class GtkLifecycleAuditTests(unittest.TestCase):
         MONITOR_VIEW.system_info = WIDGETS.system_info = SimpleNamespace(
             generate_system_report=self.report,
             monitor_recommendations=lambda report: SimpleNamespace(
-                governor=SimpleNamespace(suggested="powersave"),
-                turbo=SimpleNamespace(suggested=True),
+                governor=SimpleNamespace(suggested="powersave", status=State.NO_CHANGE),
+                turbo=SimpleNamespace(suggested=True, status=State.NO_CHANGE),
             ),
         )
         context = GLib.MainContext.default()
