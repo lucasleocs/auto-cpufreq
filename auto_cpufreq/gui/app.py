@@ -1057,44 +1057,65 @@ class ToolWindow(Gtk.Window):
         ):
             return False
         try:
-            diagnostics.record_duration(
-                "GTK dashboard queue", result.queue_seconds,
-                slow_after=max(1.0, self.refresh_interval),
-            )
-            diagnostics.record_duration(
-                "GTK dashboard collection", result.duration,
-                slow_after=max(2.0, self.refresh_interval * 2),
-            )
-            if result.completed_at:
+            # Diagnostic failures must never suppress presentation or leave
+            # the coordinator waiting for an acknowledgement.
+            try:
                 diagnostics.record_duration(
-                    "GTK dashboard delivery latency",
-                    max(0.0, time.monotonic() - result.completed_at),
+                    "GTK dashboard queue", result.queue_seconds,
                     slow_after=max(1.0, self.refresh_interval),
                 )
-            if result.error is not None:
-                diagnostics.warning(
-                    "GTK dashboard collection failed: %s", result.error
+                diagnostics.record_duration(
+                    "GTK dashboard collection", result.duration,
+                    slow_after=max(2.0, self.refresh_interval * 2),
                 )
+                if result.completed_at:
+                    diagnostics.record_duration(
+                        "GTK dashboard delivery latency",
+                        max(0.0, time.monotonic() - result.completed_at),
+                        slow_after=max(1.0, self.refresh_interval),
+                    )
+            except Exception:
+                pass  # Diagnostics are best-effort; UI refresh is essential.
+
+            if result.error is not None:
+                try:
+                    diagnostics.warning(
+                        "GTK dashboard collection failed: %s", result.error
+                    )
+                except Exception:
+                    pass
                 self._finish_refresh_error(str(result.error))
             else:
                 self._apply_refresh(result.report)
         finally:
-            if result.requested_at:
-                diagnostics.record_duration(
-                    "GTK dashboard end-to-end refresh",
-                    max(0.0, time.monotonic() - result.requested_at),
-                    slow_after=max(2.0, self.refresh_interval * 2),
-                )
             try:
-                self._run_pending_refresh()
-            except Exception:
-                diagnostics.exception("GTK pending refresh scheduling failed")
+                if result.requested_at:
+                    try:
+                        diagnostics.record_duration(
+                            "GTK dashboard end-to-end refresh",
+                            max(0.0, time.monotonic() - result.requested_at),
+                            slow_after=max(2.0, self.refresh_interval * 2),
+                        )
+                    except Exception:
+                        pass
+                try:
+                    self._run_pending_refresh()
+                except Exception:
+                    try:
+                        diagnostics.exception(
+                            "GTK pending refresh scheduling failed"
+                        )
+                    except Exception:
+                        pass
             finally:
-                # Always acknowledge the completed generation, even if
-                # queuing a successor failed.
-                self._refresh_coordinator.acknowledge(result.generation)
-                self.refresh_in_progress = self._refresh_coordinator.in_progress
-                self._stalled_refresh_reported = False
+                # This must run even when diagnostics or rendering fails.
+                try:
+                    self._refresh_coordinator.acknowledge(result.generation)
+                finally:
+                    self.refresh_in_progress = (
+                        self._refresh_coordinator.in_progress
+                    )
+                    self._stalled_refresh_reported = False
         return False
 
     def _apply_refresh(self, report):
@@ -1120,11 +1141,14 @@ class ToolWindow(Gtk.Window):
             )
             self.refresh_error_label.show()
         finally:
-            diagnostics.record_duration(
-                "GTK dashboard render",
-                time.monotonic() - started,
-                slow_after=1.0,
-            )
+            try:
+                diagnostics.record_duration(
+                    "GTK dashboard render",
+                    time.monotonic() - started,
+                    slow_after=1.0,
+                )
+            except Exception:
+                pass
         return False
 
     def _finish_refresh_error(self, message):
