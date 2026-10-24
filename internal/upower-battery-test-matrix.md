@@ -286,3 +286,26 @@ These are **requirements for future tests**, not PASS statuses. Current 32/32 of
 - DOC17: Disabling auto-cpufreq threshold control after a persisted hardware value of 80% causes **no write** and does not misleadingly claim hardware returned to 100%; an explicit restore operation is separate and tested.
 - DOC18: Config changes that require switching backend (generic stop threshold ↔ Lenovo firmware conservation) do not use a stale cached backend; require controlled reload/restart or a tested new selection on config change.
 - DOC19: Vendor fallback preserves intentional dual laptop batteries but never blindly touches BAT-prefixed peripheral or arbitrary filesystem paths.
+
+
+## UPower D-Bus service discovery and competing-manager checks — tests
+
+Temporary head `ae34d4e11125db5a4ac4d41f9802f567ef39c08c`; CI https://github.com/lucasleocs/auto-cpufreq/actions/runs/40053704920: **52/52 PASS**. All writes used temporary fixture files only.
+
+- SC01: Healthy D-Bus: no `NameHasOwner` and no activatable service -> UPower absent; guarded sysfs fallback permitted. PASS.
+- SC02: No owner but service is activatable -> unavailable, no sysfs writing. PASS.
+- SC03: NameHasOwner true / valid physical BAT1 / charge fields -> ready, enabled/end capabilities. PASS.
+- SC04: Older healthy UPower without ChargeThreshold fields -> ready but explicit unsupported; guarded fallback. PASS.
+- SC05: Error from D-Bus owner query or race during EnumerateDevices -> unavailable; fail closed. PASS.
+- SC06: UPower battery identity mismatch -> unavailable, not silent selection of another device. PASS.
+- SC07: Capability probe succeeds without Percentage/EnergyRate/State telemetry fields. PASS.
+- SC08: Supported but enabled unknown -> distinguish and block. PASS.
+- SC09: TLP service positively active -> block without writing; inactive package does not block. PASS.
+- SC10: TLP service probe executable unavailable -> no positive active claim; drift guard remains in place. PASS.
+- SC11: Verified own 80 write followed by external 90 -> skip repeated reapplication; warn and suspend. PASS.
+- SC12: New configuration signature clears previous suspension; rerun preflight. PASS.
+- SC13: Driver rounds 79 to 80 -> unchanged observed value is not external drift. PASS.
+- SC14: Opt-out config disables all checks and writes. PASS.
+- SC15: A live UPower service name change occurring in between probe and actual write remains possible; this is a race, **not tested away**.
+- SC16: Non-TLP managers, unknown writer ownership and old multi-write vendor atomicity remain for later work. NOT VERIFIED.
+
