@@ -1062,7 +1062,7 @@ class ToolWindow(Gtk.Window):
 
     def _apply_refresh(self, report):
         if self.destroyed:
-                return False
+            return False
 
         started = time.monotonic()
         try:
@@ -1094,7 +1094,7 @@ class ToolWindow(Gtk.Window):
 
     def _finish_refresh_error(self, message):
         if self.destroyed:
-                return False
+            return False
 
         diagnostics.warning("GTK dashboard collection error: %s", message)
         self.refresh_error_label.set_text(
