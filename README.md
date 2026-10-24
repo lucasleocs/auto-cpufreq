@@ -362,8 +362,10 @@ sudo "$(poetry env info --path)/bin/python" -m auto_cpufreq.power_helper --gnome
 ```
 
 For the list of options, use the same interpreter with `--help`.
-`inotify-simple` 2.0.1 is a separate BSD-2-Clause-licensed dependency;
-the auto-cpufreq project remains GPL-3.0-or-later.
+`inotify-simple` 2.0.1 is an external BSD-2-Clause dependency
+installed automatically with auto-cpufreq by supported installation methods.
+The auto-cpufreq project remains GPL-3.0-or-later. Its upstream copyright
+and license terms are reproduced in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 ### 2: `--force` governor override
 
