@@ -7,6 +7,7 @@ on:
     paths:
       - tests/regression/issue_860/**
       - auto_cpufreq/gui/**
+      - auto_cpufreq/config/**
       - auto_cpufreq/modules/diagnostics.py
       - auto_cpufreq/modules/process_health.py
       - auto_cpufreq/modules/report_presentation.py
@@ -30,10 +31,12 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - name: Install isolated terminal UI dependency
-        run: python -m pip install 'urwid>=3.0.2,<5.0.0'
+      - name: Install isolated terminal UI and locked inotify fork
+        run: |
+          python -m pip install 'urwid>=3.0.2,<5.0.0' 'pyasyncore>=1.0.4'
+          python -m pip install 'git+https://github.com/shadeyg56/pyinotify-3.12@271b7aba3269116b6c3870355393f47c79bce146'
       - name: Compile regression test
-        run: python -m py_compile auto_cpufreq/modules/process_health.py auto_cpufreq/modules/diagnostics.py auto_cpufreq/modules/report_presentation.py auto_cpufreq/modules/report_refresh.py tests/regression/issue_860/test_report_presentation.py tests/regression/issue_860/test_report_refresh.py tests/regression/issue_860/test_shared_diagnostics.py tests/regression/issue_860/test_stats_lifecycle.py tests/regression/issue_860/sample_process.py tests/regression/issue_860/test_sampler.py
+        run: python -m py_compile auto_cpufreq/config/config.py auto_cpufreq/config/config_event_handler.py auto_cpufreq/modules/process_health.py auto_cpufreq/modules/diagnostics.py auto_cpufreq/modules/report_presentation.py auto_cpufreq/modules/report_refresh.py tests/regression/issue_860/test_config_reload.py tests/regression/issue_860/test_report_presentation.py tests/regression/issue_860/test_report_refresh.py tests/regression/issue_860/test_shared_diagnostics.py tests/regression/issue_860/test_stats_lifecycle.py tests/regression/issue_860/sample_process.py tests/regression/issue_860/test_sampler.py
       - name: Exercise terminal lifecycle
         run: python -m unittest discover -s tests/regression/issue_860 -p 'test_*.py' -v
       - name: Benchmark Urwid report formatting (synthetic baseline)
