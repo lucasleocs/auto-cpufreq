@@ -116,7 +116,7 @@ class FrontendPolishTests(unittest.TestCase):
         cpu_rows = [
             widget for widget in monitor.left_content
             if isinstance(widget, urwid.Text)
-            and re.match(r"^CPU\\d+\\s", widget.text)
+            and re.match(r"^CPU\d+\s", widget.text)
         ]
         self.assertEqual(len(cpu_rows), 16)
         for width in (32, 39, 49, 59):
