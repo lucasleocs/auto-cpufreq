@@ -811,14 +811,6 @@ class ToolWindow(Gtk.Window):
         self._refresh_timer.start()
 
     def request_refresh(self):
-        if self.destroyed:
-            return False
-
-        if self.refresh_in_progress:
-            self.refresh_pending = True
-            diagnostics.debug("GTK refresh requested during active collection")
-            return True
-
         return self.refresh_in_thread()
 
     def _run_pending_refresh(self):
@@ -1051,14 +1043,6 @@ class ToolWindow(Gtk.Window):
 
     def _collect_report(self):
         return system_info.generate_system_report()
-
-    def _dispatch_refresh_result(self, result):
-        # Compatibility with existing GTK callers/tests; new coordinator
-        # dispatch goes directly through the shared GLib bridge.
-        return self._refresh_bridge.dispatch(result)
-
-    def _deliver_refresh_result(self, result):
-        return self._refresh_bridge.deliver(result)
 
     def _apply_refresh(self, report):
         if self.destroyed:
