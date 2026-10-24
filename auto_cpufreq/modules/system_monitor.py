@@ -140,8 +140,9 @@ class SystemMonitor:
     def _collect_report_data(self):
         report = system_info.generate_system_report()
         if self.suggestion:
-            suggested_governor = system_info.governor_suggestion(report)
-            suggested_turbo = system_info.turbo_on_suggestion(report)
+            recommendations = system_info.monitor_recommendations(report)
+            suggested_governor = recommendations.governor.suggested
+            suggested_turbo = recommendations.turbo.suggested
         else:
             suggested_governor = None
             suggested_turbo = None
