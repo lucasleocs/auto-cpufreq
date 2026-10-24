@@ -260,3 +260,25 @@ Observed (passing assertions): no UPower -> kernel; UPower explicitly unsupporte
 - AR17: No supported writer and a failed kernel write cause no automatic fallback to another backend. PASS.
 - AR18: A genuine newer UPower daemon/firmware transaction, absence of UPower service vs timeout, conflict with TLP, existing vendor start/end partial writes and physical Samsung charge effects remain **unverified**.
 
+
+
+## Official-doc remediation acceptance criteria — researched, not yet implemented
+
+- DOC01: healthy system D-Bus + UPower name absent **and non-activatable** → classify service absent, allow an explicitly opted-in, validated kernel backend after manager conflict preflight.
+- DOC02: UPower no owner but name *activatable*, server crash/timeout/permission error → classify transient or ambiguous, no write; verify later. NameHasOwner=false alone is insufficient.
+- DOC03: UPower healthy but old API / threshold explicitly unsupported → sysfs opt-in fallback, without assuming any hidden configured threshold.
+- DOC04: UPower valid telemetry but missing/invalid threshold property → no inference from overall battery snapshot; typed capability result reflects unknown safely. Bad telemetry alone must not collapse all capability discovery to `None`.
+- DOC05: UPower enabled and kernel matches target → already satisfied, no write, no false warning.
+- DOC06: UPower enabled but configured preset conflicts → do not call UPower toggle or overwrite threshold; show conflict. UPower method cannot select an arbitrary 80%.
+- DOC07: TLP package merely installed but service inactive and no battery control configured → no false active-manager claim. Active configured charge manager → log and suspend writes rather than stop/uninstall services.
+- DOC08: After successful kernel write 80/readback 80, external app changes to 90 before next daemon poll → detect drift, suspend automatic rewrites, warn once. Explicit user configuration change requires safe reevaluation.
+- DOC09: Rounding 79→80 is displayed as actual=80; do not silently count as exact 79 or retry each hour. Exercise restart/re-read.
+- DOC10: On standard start+end old S=80 E=90 to desired 50/70 → write start first then end, verifying after each.
+- DOC11: Old S=60 E=80 to desired 90/95 → write end first then start, verifying after each.
+- DOC12: Same valid old/new pair → zero writes (the legacy method currently writes 100 anyway).
+- DOC13: Simulate second write rejection or readback mismatch → bounded safe restoration attempt, clear partial-failure result, never promise atomicity.
+- DOC14: End-only Samsung BAT1 requires no fake start threshold, no direct Samsung ACPI actions, 80% valid and 100% off, but *actual hardware changes require separate approval*.
+- DOC15: Multi-battery selected identity, manufacturer compatibility fallback, missing standard attributes, unavailable permissions and bus state racing across calls → no cross-device write or risky automatic retry.
+- DOC16: Strictly no config opt-in → no UPower arbitration/manager probe on write path, no write, no runtime policy change.
+
+These are **requirements for future tests**, not PASS statuses. Current 32/32 offline priority tests at commit `82b4d515...` validate prior behavior and do not cover DOC01-DOC16 yet.

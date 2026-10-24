@@ -384,3 +384,74 @@ Generic standard `charge_control_end_threshold` is preferred when writable. Expl
 
 Tests: 12 original generic safety cases plus 18 desired-policy priority cases PASSED at `0265271cf92cb0b17a67bb1e774edf79978e6053` (https://github.com/lucasleocs/auto-cpufreq/actions/runs/40051189084). Additional Lenovo dual-driver and unknown-firmware test added in `82b4d515...`, bringing total expected to 32; see latest CI https://github.com/lucasleocs/auto-cpufreq/actions/runs/40051320251. Linux Build and Nix Flake also passed at the earlier 30-test revision (runs 40051189152 and 40051189061); check the newest runs for final status. All writes in tests went to TemporaryDirectory fixture files, never physical hardware.
 
+
+## Official-source remediation design: service discovery, competing controllers, legacy writes (2026-10-24)
+
+**Research and architecture review only:** no firmware, local machine, daemon, clean contribution branch or experimental resolver code changed during this step. Based on official UPower D-Bus Device API, D-Bus specification, kernel power-supply sysfs ABI and Samsung Galaxy Book admin guide, and upstream TLP conflict/battery-care documentation. The proposed fixes below supersede the blanket 'missing UPower = always block' policy and avoid mislabeling UPower as a sole writer/owner.
+
+### A. Distinguish service unavailability from not installed
+
+Current `read_upower_battery()` collapses any exception, bus failure, unrecognized battery, missing properties or a timeout to `None`. In charging-control arbitration, the absence of a telemetry snapshot **is not sufficient evidence of an exclusive active owner** or of complete service absence.
+
+Plan: add a **separate typed read-only capability/probe result**, rather than changing the stable GUI/telemetry interface or making the full `_decode()` status/percentage/rate requirements necessary for charging-policy discovery.
+
+Suggested statuses:
+- `ready_no_charge_api`: matching physical battery found and UPower positively reports no charge-control support or an older API lacks the new fields. Eligible for standard-kernel controller with explicit user opt-in.
+- `ready_charge_api`: matching physical battery charge capabilities, enable state and configured numeric/firmware mode are available. Distinguish enabled, disabled, and unknown.
+- `bus_confirmed_no_service`: connected to a healthy system bus; UPower name has **no owner**, and `ListActivatableNames` does not list `org.freedesktop.UPower`. Eligible for kernel fallback only after ordinary battery/competing-writer checks. Presence of a binary/package alone is not authoritative.
+- `transient_failure`: system bus connection failed, a name is activatable but the daemon did not start, bus method timed out, invalid D-Bus payload, permission denied, matching device not established, or UPower restarted mid-query. **No new write**, retry on a later iteration.
+- `unknown_active`: charge-control capability is known, but its enable state or expected effective numerical limits cannot be trusted. **No new write**.
+
+Use `org.freedesktop.DBus.NameHasOwner` and `ListActivatableNames` (optionally `NameOwnerChanged`) before interpreting 'service absent'; do not assume NameHasOwner=false means absent because D-Bus supports activation. Keep probes short, deterministic and cached between periodic daemon checks where appropriate; the existing GUI read-only fallback must remain quick and independently reliable. Once the service is contacted, preserve the matched physical battery identification (NativePath, PowerSupply, IsPresent). D-Bus checks can race with service startup/shutdown, so always catch errors after discovery too. This scheme can safely allow Linux installations without UPower.
+
+### B. Avoid false exclusive ownership; prevent configuration wars
+
+UPower's documented `EnableChargeThreshold(bool)` turns **previously configured** charge control on or off, but has no arbitrary-percent input. Its `ChargeThresholdSettingsSupported` is a bitmask indicating start/end/firmware capabilities, not allowed percentages. On typical Linux laptops both UPower and another userspace writer access the **same kernel sysfs and EC/firmware behavior**. Therefore an UPower active flag describes *protection status*, NOT exclusive ownership. Do not build a backend 'lock' from UPower flags.
+
+Recommended policy:
+1. `enable_thresholds=false` (default) means zero writes, regardless of any detection results.
+2. Select a specific system battery, validate requested start/stop and complete readbacks, then classify UPower read-only capabilities and competing managers.
+3. If observed limits already satisfy the user request, report `already applied` without writes. If UPower also exposes consistent configured limits, report this consistency; distinguish configuration values from actual hardware state.
+4. If UPower's active configured values disagree with an explicit new request, do not silently toggle/override. Show clear conflict/ownership warning and require separately designed authorized takeover if ever necessary; the current writer remains sysfs only.
+5. With no conflicting active mode and a healthy confirmed kernel attribute, permit the standard kernel operation. Vendor backend remains a compatibility fallback if kernel-standard end attribute is absent; never automatically retry a different writer after a failed write.
+6. Detect **known competing charge manager** signals (e.g. active `tlp.service` and battery-threshold configuration, or TLP's `tlp-stat -b` where installed), and **suspend automatic battery threshold writes** rather than disabling or modifying someone else's service. Detect 'installed' vs 'active' separately; service detection is a diagnostic, not proof of ownership. In general TLP itself explicitly discourages simultaneous TLP + auto-cpufreq.
+7. Monitor readback over time. After *our* verified application, if a value changes externally while our requested value/config is unchanged, mark `external_change`, log a **single** conflict warning and **suspend** further automatic rewriting. The current generic controller's periodic retry when `_accepted_stops` changes could otherwise fight another manager hourly. Do not assume absence of active services implies exclusive control. Re-enable on an explicit new user action/config change or daemon restart only after rerunning safety checks.
+8. Preserve initial readback when the driver rounds the requested level, report actual value without claiming exact target; kernel ABI explicitly permits rounding. Define an acceptance policy for rounded values (e.g. strict requested target vs user-accepted approximation) and avoid repeated write loops. Never silently select a *new* arbitrary preset.
+9. Use run-wide/shared arbitration for all existing writers and preserve intentional Lenovo conservation mode, which is firmware Boolean mode, NOT numeric stop=80. Avoid unintended changes to unrelated CPU governor or platform_profile managers.
+
+Note for Samsung BAT1: the official samsung-galaxybook driver already bridges standard `charge_control_end_threshold` writes into the firmware, provides no start threshold, treats 100 as disabled and documents 50/60/70/80/90 as interoperable presets; no vendor-specific ACPI writer should be added. Other values below 30 may disable the function on some Samsung hardware. The documented physical EC behavior also means activating 80% after charging to 100% does **not** actively force discharge while AC is attached.
+
+### C. Replace risky legacy start+stop writes with validated ordering
+
+The current inherited `BatteryDevice.set_battery_thresholds()` **always writes stop=100, then start, then stop** with `sleep(0.1)`; it does not read back after each write. A second/third write can fail after the effective upper limit was temporarily lifted to 100. The 100% intermediate value and unconditional hourly rewrites are unnecessarily intrusive.
+
+For supported numeric start+stop batteries:
+- Read/validate current pair `S_old < E_old` and target `S_new < E_new`. If source values are unknown or the requested operation cannot be validated, fail before writing.
+- If both already match, do **nothing**.
+- Determine a safe intermediate without the unconditional 100% detour:
+  * If `S_new < E_old`, start can be written first; then write stop. Example 80/90 → 50/70: lower start first.
+  * Otherwise, if `E_new > S_old`, stop can be written first, then write start. Example 60/80 → 90/95: raise stop first.
+  * If neither safe intermediate exists, **abort without a write**; do not guess a value.
+- Verify both values after **each** write, including any hardware-specific rounding. Abort if the readback breaks constraints or is unknown. Do not claim success based only on `open().write()` returning.
+- On failure after the first write, attempt one carefully bounded **best-effort restoration of the saved old values**, only when safe based on fresh readbacks. The restore itself can fail; explicitly report `partial application` with the observed pair, not atomic success. Avoid writing `100` as a generic rollback.
+- Never set a kernel 100% stop as a temporary escape hatch without a specifically documented driver requirement and a narrow protected code path.
+- Preserve deprecated vendor attribute compatibility where required, but separate legacy behavior changes and their tests from the initial stop-only Samsung use case to avoid expanding the contribution unnecessarily.
+
+This is an engineering transaction design, not a guarantee that two independent sysfs writes can become fully atomic. The kernel documents value ranges and actual-readback/rounding, but not a universal atomic multi-field update contract. Treat driver-specific EINVAL and quirks as legitimate failure modes, not as instructions to add brand tables.
+
+### Release/testing sequence
+
+1. First, add a typed D-Bus service probe (absent vs temporarily failed vs active but unknown), with offline private-bus cases.
+2. Add a read-only ownership/conflict preflight for external battery managers and record already-satisfied behavior. Simulate an external change following our write and verify no fighting/rewrite loop.
+3. Replace unconditional stop=100 multi-write sequence with validated minimum writes and readback/partial-rollback tests in **a separate safe legacy refactor** if needed; the standalone Samsung stop-only feature should not depend on it.
+4. Add serial/headless VM tests for race conditions (UPower starts/stops between discovery and action, dual batteries, missing attributes, firmware-only, readback rounding, write success but unchanged, partial failure).
+5. Finally, only after all passing in disposable branches and user permission, test *read-only* GalaxyMint preflight followed by a separately authorized 80% physical write, confirming readback and preserving original settings.
+
+Sources (official):
+- UPower API: https://upower.freedesktop.org/docs/Device.html
+- D-Bus name ownership/activation: https://dbus.freedesktop.org/doc/dbus-specification.html
+- Linux charge thresholds ABI: https://github.com/torvalds/linux/blob/master/Documentation/ABI/testing/sysfs-class-power
+- Samsung Galaxy Book driver: https://docs.kernel.org/admin-guide/laptops/samsung-galaxybook.html
+- TLP conflicts: https://linrunner.de/tlp/faq/conflicts.html
+- TLP battery-care/EC persistence: https://linrunner.de/tlp/faq/battery.html
+
