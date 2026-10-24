@@ -12,6 +12,7 @@ gi.require_version("Gtk", "3.0")
 from gi.repository import GLib, Gtk
 
 from gtk_logging_ui_checks import WIDGETS
+from auto_cpufreq.gui import monitor_view as MONITOR_VIEW
 
 
 class FakeReportView(Gtk.Box):
@@ -36,7 +37,8 @@ class GtkLifecycleAuditTests(unittest.TestCase):
     def test_thirty_two_monitor_reopens_do_not_leak_timer_sources(self):
         parent = Gtk.Window()
         original = WIDGETS.system_info
-        WIDGETS.system_info = SimpleNamespace(
+        original_monitor = MONITOR_VIEW.system_info
+        MONITOR_VIEW.system_info = WIDGETS.system_info = SimpleNamespace(
             generate_system_report=self.report,
             monitor_recommendations=lambda report: SimpleNamespace(
                 governor=SimpleNamespace(suggested="powersave"),
@@ -83,6 +85,7 @@ class GtkLifecycleAuditTests(unittest.TestCase):
         finally:
             parent.destroy()
             WIDGETS.system_info = original
+            MONITOR_VIEW.system_info = original_monitor
 
     def test_broken_diagnostics_do_not_start_extra_polling_timer(self):
         # The GUI periodically checks health via the same refresh source.
