@@ -91,6 +91,32 @@ class UrwidConsistencyTests(unittest.TestCase):
             if monitor._alarm_handle is not None:
                 monitor.loop.remove_alarm(monitor._alarm_handle)
 
+    def test_pipe_write_failure_falls_back_to_periodic_delivery(self):
+        from unittest.mock import patch
+        monitor = self.make()
+        delivered = []
+        monitor._display_report = lambda *args: delivered.append(args)
+        monitor._refresh_pipe_fd = 123456
+        result = RefreshResult(
+            generation=19,
+            report=("available report", None, None),
+            error=None,
+            duration=0.01,
+        )
+        with patch("auto_cpufreq.modules.system_monitor.os.write",
+                   side_effect=BrokenPipeError("broken pipe")):
+            monitor._dispatch_report_result(result)
+        self.assertEqual(delivered, [])
+        self.assertIn("broken pipe", monitor._pipe_delivery_error)
+        # Simulate Urwid's periodic tick even though the watch pipe failed.
+        # Result delivery is still done on the UI thread.
+        monitor._refresh_ready(b"")
+        self.assertEqual(len(delivered), 1)
+        self.assertEqual(monitor._refresh_coordinator.acknowledged, [19])
+        self.assertIn("periodic refresh", monitor.footer_text.text)
+        if monitor._alarm_handle is not None:
+            monitor.loop.remove_alarm(monitor._alarm_handle)
+
     def test_diagnostic_io_error_is_visible_in_footer(self):
         monitor = self.make()
         diag = FakeDiagnostics()
