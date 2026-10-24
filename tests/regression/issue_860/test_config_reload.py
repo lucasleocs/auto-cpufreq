@@ -62,6 +62,22 @@ class ConfigContractTests(unittest.TestCase):
         self.assertFalse(self.config.update_config())
         self.assertIs(self.config.get_config(), original)
 
+    def test_file_changed_during_read_keeps_previous_snapshot(self):
+        original = self.config.get_config()
+        self.config_path.write_text("[battery]\\ngovernor=performance\\n")
+        real = os.stat(self.config_path)
+        switched = SimpleNamespace(
+            st_dev=real.st_dev,
+            st_ino=real.st_ino,
+            st_size=real.st_size,
+            st_mtime_ns=real.st_mtime_ns + 1,
+        )
+        with patch("auto_cpufreq.config.config.os.stat",
+                   return_value=switched):
+            self.assertFalse(self.config.update_config())
+        self.assertIs(self.config.get_config(), original)
+        self.assertEqual(self.governor(), "powersave")
+
     def test_deletion_resets_to_default_and_restoration_recovers(self):
         self.config_path.unlink()
         self.assertTrue(self.config.update_config())
