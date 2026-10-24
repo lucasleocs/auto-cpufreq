@@ -1,7 +1,6 @@
 import os
 import sys
 from queue import Empty, SimpleQueue
-from threading import Thread
 from typing import Callable
 import urwid
 import time
@@ -13,6 +12,7 @@ from .system_info import (
 )
 from auto_cpufreq.config.config import config
 from auto_cpufreq.modules.report_presentation import present_report
+from auto_cpufreq.modules.report_refresh import ReportRefreshCoordinator
 from enum import Enum
 
 
@@ -93,70 +93,73 @@ class SystemMonitor:
         self._refresh_pipe_fd: int | None = None
         self._alarm_handle = None
         self._refresh_results = SimpleQueue()
+        self._refresh_coordinator = ReportRefreshCoordinator(
+            self._collect_report_data,
+            self._dispatch_report_result,
+            thread_name="urwid-report-refresh",
+        )
 
     def update(self, loop: urwid.MainLoop, user_data: dict) -> None:
         self._alarm_handle = None
+        if self.running:
+            self._refresh_coordinator.request()
 
+    def _collect_report_data(self):
+        report = system_info.generate_system_report()
+        if self.suggestion:
+            suggested_governor = system_info.governor_suggestion(report)
+            suggested_turbo = system_info.turbo_on_suggestion(report)
+        else:
+            suggested_governor = None
+            suggested_turbo = None
+        return report, suggested_governor, suggested_turbo
+
+    def _dispatch_report_result(self, result):
+        # Called in a worker. The Urwid watch_pipe callback owns UI updates.
         if not self.running:
+            self._refresh_coordinator.acknowledge(result.generation)
             return
-
-        Thread(target=self._collect_report, daemon=True).start()
-
-    def _collect_report(self):
-        try:
-            report = system_info.generate_system_report()
-
-            if self.suggestion:
-                suggested_governor = system_info.governor_suggestion(report)
-                suggested_turbo = system_info.turbo_on_suggestion(report)
-            else:
-                suggested_governor = None
-                suggested_turbo = None
-
-            result = (
-                report,
-                suggested_governor,
-                suggested_turbo,
-                None,
-            )
-        except Exception as exc:
-            result = (None, None, None, exc)
-
-        if not self.running:
-            return
-
-        self._refresh_results.put(result)
-
         wakeup_fd = self._refresh_pipe_fd
         if wakeup_fd is None:
+            self._refresh_coordinator.acknowledge(result.generation)
             return
-
+        self._refresh_results.put(result)
         try:
             os.write(wakeup_fd, b"1")
         except OSError:
-            # The monitor may have been closed while collection
-            # was still finishing.
-            pass
+            # The terminal may have closed while collection was in flight.
+            self._refresh_coordinator.acknowledge(result.generation)
 
     def _refresh_ready(self, _data):
         try:
-            (
-                report,
-                suggested_governor,
-                suggested_turbo,
-                error,
-            ) = self._refresh_results.get_nowait()
+            result = self._refresh_results.get_nowait()
         except Empty:
             return True
 
-        if error is not None:
-            raise error
+        if not self._refresh_coordinator.is_current(result.generation):
+            return True
 
-        if report is None:
-            raise RuntimeError(
-                "System monitor refresh completed without a report"
-            )
+        try:
+            if result.error is not None or result.report is None:
+                message = str(
+                    result.error or RuntimeError("No system report returned")
+                )
+                self.title_header.set_text(
+                    f"{self.type} Mode - telemetry error: {message[:100]}"
+                )
+            else:
+                report, suggested_governor, suggested_turbo = result.report
+                self._display_report(
+                    report, suggested_governor, suggested_turbo
+                )
+        finally:
+            self._refresh_coordinator.acknowledge(result.generation)
 
+        if self.running and self._alarm_handle is None:
+            self._alarm_handle = self.loop.set_alarm_in(2, self.update)
+        return True
+
+    def _display_report(self, report, suggested_governor, suggested_turbo):
         # Capture focus only now. The user may have scrolled while
         # the worker was collecting telemetry.
         if len(self.left_content) > 0:
@@ -195,14 +198,6 @@ class SystemMonitor:
                     len(self.right_content) - 1,
                 )
             )
-
-        if self.running:
-            self._alarm_handle = self.loop.set_alarm_in(
-                2,
-                self.update,
-            )
-
-        return True
 
     def handle_input(self, key):
         if key in ("q", "Q"):
@@ -431,6 +426,7 @@ class SystemMonitor:
             sys.exit(0)
         finally:
             self.running = False
+            self._refresh_coordinator.close()
 
             callback = self.on_quit
             self.on_quit = None
