@@ -113,6 +113,12 @@ class GenericKernelBatteryDevice(BatteryDevice):
         if actual is None or not 0 <= actual <= 100:
             print(f"ERROR: {bat} stop threshold has no valid kernel readback")
             return False
+        if actual == current_stop and actual != requested:
+            print(
+                f"ERROR: {bat} requested stop {requested}%, but the "
+                f"kernel threshold is unchanged at {actual}%"
+            )
+            return False
         if current_start is not None and actual <= current_start:
             print(
                 f"WARNING: kernel accepted stop {actual}% below the existing "

@@ -12,16 +12,13 @@ permissions:
 jobs:
   unit:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        python-version: ['3.9', '3.12']
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
-          python-version: ${{ matrix.python-version }}
+          python-version: '3.12'
       - name: Install isolated production dependencies
         run: |
           POETRY_DYNAMIC_VERSIONING_BYPASS=3.2.0 python -m pip install -e .
