@@ -13,6 +13,7 @@ from .system_info import (
 from auto_cpufreq.config.config import config
 from auto_cpufreq.modules.report_presentation import (
     present_report, configuration_file_text, offline_cpus_text,
+    frequency_limit_text,
 )
 from auto_cpufreq.modules.report_refresh import ReportRefreshCoordinator
 from auto_cpufreq.modules.diagnostics import (
@@ -381,14 +382,12 @@ class SystemMonitor:
                 urwid.AttrMap(aligned_text("Current CPU Stats"), "header"),
                 aligned_text(""),
                 aligned_text(
-                    f"CPU max frequency: {report.cpu_max_freq:.0f} MHz"
-                    if report.cpu_max_freq is not None
-                    else "CPU max frequency: Unknown"
+                    "CPU max frequency: "
+                    + frequency_limit_text(report.cpu_max_freq)
                 ),
                 aligned_text(
-                    f"CPU min frequency: {report.cpu_min_freq:.0f} MHz"
-                    if report.cpu_min_freq is not None
-                    else "CPU min frequency: Unknown"
+                    "CPU min frequency: "
+                    + frequency_limit_text(report.cpu_min_freq)
                 ),
                 aligned_text(""),
                 aligned_text("Core   Usage  Temp  Freq (MHz)"),
@@ -476,7 +475,7 @@ class SystemMonitor:
             [
                 urwid.AttrMap(aligned_text("CPU Power State"), "header"),
                 aligned_text(
-                    f"Governor: {presentation.governor.value or 'Unknown'}"
+                    f"Governor: {presentation.governor.text}"
                 ),
             ]
         )
