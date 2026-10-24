@@ -110,6 +110,7 @@ class ReportRefreshCoordinator:
         self._delivering = False
         self._pending = False
         self._closed = False
+        self._requested_at = None
 
     @property
     def closed(self):
@@ -121,6 +122,19 @@ class ReportRefreshCoordinator:
         with self._lock:
             return self._running or self._delivering
 
+    def request_age_seconds(self):
+        """Age of the active collection/delivery, or None when idle.
+
+        Diagnostic-only: never start another collector to clear a stalled one.
+        """
+        with self._lock:
+            if not (self._running or self._delivering):
+                return None
+            requested_at = self._requested_at
+        if requested_at is None:
+            return None
+        return max(0.0, time.monotonic() - requested_at)
+
     def request(self):
         with self._lock:
             if self._closed:
@@ -131,6 +145,7 @@ class ReportRefreshCoordinator:
             self._generation += 1
             generation = self._generation
             requested_at = time.monotonic()
+            self._requested_at = requested_at
             self._running = True
         try:
             _PROCESS_LANE.enqueue(self, generation, requested_at)
@@ -138,6 +153,7 @@ class ReportRefreshCoordinator:
             with self._lock:
                 if generation == self._generation:
                     self._running = False
+                    self._requested_at = None
             raise
         return True
 
@@ -205,6 +221,7 @@ class ReportRefreshCoordinator:
             ):
                 return False
             self._delivering = False
+            self._requested_at = None
             again = self._pending
             self._pending = False
         if again:
@@ -224,4 +241,5 @@ class ReportRefreshCoordinator:
             self._running = False
             self._pending = False
             self._delivering = False
+            self._requested_at = None
         _PROCESS_LANE.cancel(self)
