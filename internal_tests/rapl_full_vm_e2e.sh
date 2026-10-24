@@ -86,6 +86,9 @@ EOS
   sudo -n env PATH="$RUNNER_TEMP/rapl-e2e-bin:$PATH" \
     /opt/auto-cpufreq/current/venv/bin/python - <<'PY'
 from auto_cpufreq.bin import auto_cpufreq as cli
+import sys
+# The legacy CLI checks len(sys.argv) in addition to Click's parsed args.
+sys.argv = ["auto-cpufreq", "--install"]
 cli.gov_check = lambda: None  # VM-only: no CPU frequency driver
 cli.main.main(args=["--install"], prog_name="auto-cpufreq",
               standalone_mode=False)
