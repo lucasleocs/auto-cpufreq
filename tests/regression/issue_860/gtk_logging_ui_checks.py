@@ -80,6 +80,27 @@ class DebugLoggingGuiTests(unittest.TestCase):
         diagnostics.log_path = self.old_log
         diagnostics.settings_path = self.old_settings
 
+    def test_failed_logging_toggle_never_enters_nested_dialog_loop(self):
+        # GTK.Dialog.run() blocks until user interaction and can strand CI.
+        # A transient watchdog handoff failure must leave the UI responsive.
+        menu = WIDGETS.DropDownMenu(self.parent)
+        toggle = next(
+            item for item in menu.menu.get_children()
+            if isinstance(item, Gtk.CheckMenuItem)
+        )
+        view = WIDGETS.DaemonNotRunningView(self.parent)
+        with patch.object(
+            diagnostics, "set_enabled",
+            side_effect=OSError("diagnostic worker still stopping")
+        ), patch.object(
+            Gtk.MessageDialog, "run",
+            side_effect=AssertionError("unexpected nested GTK main loop")
+        ):
+            toggle.set_active(True)
+            self.assertFalse(toggle.get_active())
+            view.debug_logging_button.set_active(True)
+            self.assertFalse(view.debug_logging_button.get_active())
+
     def test_menu_toggle_and_log_location(self):
         menu = WIDGETS.DropDownMenu(self.parent)
         items = menu.menu.get_children()
