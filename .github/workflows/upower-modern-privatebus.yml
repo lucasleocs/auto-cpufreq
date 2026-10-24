@@ -1,0 +1,29 @@
+name: Modern UPower private D-Bus lab (temporary)
+
+on:
+  push:
+    branches:
+      - tmp/upower-compact-validation-20261023
+  workflow_dispatch:
+
+jobs:
+  modern-upower-simulation:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up GTK3/Xvfb and private D-Bus runner
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends python3-venv python3-gi gir1.2-gtk-3.0 dbus-x11 xvfb xauth
+      - name: Install experimental package into an isolated virtual environment
+        run: |
+          /usr/bin/python3 -m venv --system-site-packages .venv
+          POETRY_DYNAMIC_VERSIONING_BYPASS=3.2.0 .venv/bin/python -m pip install -e .
+      - name: Compile experiment
+        run: .venv/bin/python -m py_compile internal/upower_modern_lab.py
+      - name: Test modern/old UPower scenarios over a private bus with real GTK and stats
+        run: |
+          for scenario in end-only start-end firmware legacy charging-55 reached-80 full-100 disabled firmware-disabled; do
+            echo "TEST: ${scenario}"
+            xvfb-run -a .venv/bin/python internal/upower_modern_lab.py run --scenario "$scenario" --mock-battery --gtk --check
+          done
