@@ -3,7 +3,7 @@ name: UPower and kernel backend priority audit (temporary)
 on:
   push:
     branches:
-      - tmp/charge-priority-service-conflict-20261024
+      - tmp/charge-threshold-safe-transaction-20261024
   workflow_dispatch:
 
 permissions:
@@ -28,3 +28,4 @@ jobs:
           python -m unittest discover -s internal -p 'test_priority_audit.py' -v
           python -m unittest discover -s internal -p 'test_charge_probe.py' -v
           python -m unittest discover -s internal -p 'test_charge_conflicts.py' -v
+          python -m unittest discover -s internal -p 'test_threshold_transaction.py' -v
