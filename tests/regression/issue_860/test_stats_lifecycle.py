@@ -205,6 +205,18 @@ class StatsLifecycleTests(unittest.TestCase):
             os.kill(child.proc.pid, signal.SIGHUP)
             self.assertEqual(child.wait_exit(), -signal.SIGHUP)
 
+    def test_diagnostic_logging_survives_until_terminal_hangup(self):
+        with self.terminal(diagnostic=True) as child:
+            child.close_terminal()
+            self.assertIsNotNone(
+                child.wait_exit(timeout=4),
+                "Diagnostic Stats survived closing the terminal",
+            )
+            directory = Path(child._logs.name) / "auto-cpufreq"
+            files = list(directory.glob("stats-*.log"))
+            self.assertEqual(len(files), 1)
+            self.assertEqual(files[0].stat().st_mode & 0o777, 0o600)
+
     def test_close_controlling_terminal(self):
         with self.terminal() as child:
             child.close_terminal()
