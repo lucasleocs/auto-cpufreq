@@ -12,6 +12,7 @@ from .system_info import (
     system_info,
 )
 from auto_cpufreq.config.config import config
+from auto_cpufreq.modules.report_presentation import present_report
 from enum import Enum
 
 
@@ -213,6 +214,7 @@ class SystemMonitor:
         suggested_governor: str | None = None,
         suggested_turbo: bool | None = None,
     ):
+        presentation = present_report(report)
         self.left_content.clear()
         self.right_content.clear()
 
@@ -294,7 +296,7 @@ class SystemMonitor:
             self.right_content.extend(
                 [
                     urwid.AttrMap(aligned_text("Battery Stats"), "header"),
-                    aligned_text(f"Battery status: {str(report.battery_info)}"),
+                    aligned_text(f"Battery status: {presentation.battery.status.text}"),
                     aligned_text(
                         f"Battery percentage: {(str(report.battery_info.battery_level) + '%') if report.battery_info.battery_level is not None else 'Unknown'}"
                     ),
@@ -332,7 +334,7 @@ class SystemMonitor:
             [
                 urwid.AttrMap(aligned_text("CPU Power State"), "header"),
                 aligned_text(
-                    f"Governor: {report.current_gov or 'Unknown'}"
+                    f"Governor: {presentation.governor.value or 'Unknown'}"
                 ),
             ]
         )
@@ -351,30 +353,22 @@ class SystemMonitor:
             )
 
         self.right_content.append(
-            aligned_text(f"EPP: {report.current_epp or 'Unavailable'}")
+            aligned_text(f"EPP: {presentation.epp.text}")
         )
         self.right_content.append(
-            aligned_text(f"EPB: {report.current_epb or 'Unavailable'}")
+            aligned_text(f"EPB: {presentation.epb.text}")
         )
 
         if report.current_hwp_dynamic_boost is not None:
             self.right_content.append(
                 aligned_text(
-                    f"HWP Dynamic Boost: {'On' if report.current_hwp_dynamic_boost else 'Off'}"
+                    f"HWP Dynamic Boost: {presentation.hwp_dynamic_boost.text}"
                 )
             )
 
-        if report.is_turbo_on[0] is not None:
-            turbo_status = "On" if report.is_turbo_on[0] else "Off"
-        elif report.is_turbo_on[1] is not None:
-            turbo_status = (
-                "Driver managed"
-                if report.is_turbo_on[1]
-                else "Unavailable"
-            )
-        else:
-            turbo_status = "Unavailable"
-        self.right_content.append(aligned_text(f"Turbo Boost: {turbo_status}"))
+        self.right_content.append(
+            aligned_text(f"Turbo Boost: {presentation.turbo.text}")
+        )
 
         if (
             self.suggestion
@@ -412,19 +406,12 @@ class SystemMonitor:
                 )
             )
 
-        avg_temp = report.cpu_avg_temp
-        if avg_temp is None and report.cores_info:
-            temperatures = [
-                core.temperature
-                for core in report.cores_info
-                if core.temperature > 0
-            ]
-            if temperatures:
-                avg_temp = sum(temperatures) / len(temperatures)
-
-        if avg_temp is not None:
+        if presentation.average_temperature.is_available:
             self.right_content.append(
-                aligned_text(f"Average CPU temperature: {avg_temp:.1f} °C")
+                aligned_text(
+                    "Average CPU temperature: "
+                    f"{presentation.average_temperature.text}"
+                )
             )
 
     def run(self, on_quit: Callable[[], None] | None = None):
