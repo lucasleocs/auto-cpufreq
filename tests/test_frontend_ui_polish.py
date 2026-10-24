@@ -52,9 +52,13 @@ class FrontendPolishTests(unittest.TestCase):
                 detail = dialog.format_secondary_text.call_args.args[0]
                 self.assertIn("File: gtk-session.log", detail)
                 self.assertIn("Directory: /tmp/auto-cpufreq/state", detail)
-                dialog.add_button.assert_called_once_with(
+                dialog.add_button.assert_any_call(
                     "Copy full path", Gtk.ResponseType.APPLY
                 )
+                dialog.add_button.assert_any_call(
+                    "Open folder", Gtk.ResponseType.YES
+                )
+                self.assertEqual(dialog.add_button.call_count, 2)
                 dialog.get_clipboard.assert_called_once_with(
                     Gdk.SELECTION_CLIPBOARD
                 )
@@ -62,6 +66,71 @@ class FrontendPolishTests(unittest.TestCase):
                     str(path), -1
                 )
                 dialog.destroy.assert_called_once()
+
+    def test_log_dialog_open_folder_action_uses_log_parent(self):
+        from gi.repository import Gtk
+        from auto_cpufreq.gui import objects
+
+        window = object()
+        path = Path("/tmp/logs with spaces/session.log")
+        with patch.object(objects, "diagnostics",
+                          SimpleNamespace(log_path=path)):
+            with patch.object(objects.Gtk, "MessageDialog") as dialog_class:
+                with patch.object(objects, "open_containing_folder") as opener:
+                    dialog = dialog_class.return_value
+                    dialog.run.return_value = Gtk.ResponseType.YES
+                    objects.DropDownMenu._show_debug_log_location(
+                        None, None, window
+                    )
+                    opener.assert_called_once_with(window, path)
+                    dialog.get_clipboard.assert_not_called()
+                    dialog.destroy.assert_called_once()
+
+    def test_open_containing_folder_uses_desktop_uri_handler(self):
+        from tempfile import TemporaryDirectory
+        from gi.repository import Gdk
+        from auto_cpufreq.gui import objects
+
+        with TemporaryDirectory() as tmp:
+            directory = Path(tmp) / "folder with spaces"
+            directory.mkdir()
+            file_path = directory / "example.log"
+            with patch.object(
+                objects.Gtk, "show_uri_on_window", return_value=True
+            ) as show:
+                self.assertTrue(objects.open_containing_folder(None, file_path))
+            show.assert_called_once_with(
+                None, directory.as_uri(), Gdk.CURRENT_TIME
+            )
+
+    def test_open_containing_folder_reports_missing_directory(self):
+        from tempfile import TemporaryDirectory
+        from auto_cpufreq.gui import objects
+
+        with TemporaryDirectory() as tmp:
+            file_path = Path(tmp) / "missing-directory" / "file.log"
+            with patch.object(objects.Gtk, "MessageDialog") as dialog_class:
+                with patch.object(objects.Gtk, "show_uri_on_window") as show:
+                    self.assertFalse(
+                        objects.open_containing_folder(None, file_path)
+                    )
+                show.assert_not_called()
+                dialog = dialog_class.return_value
+                self.assertIn(
+                    "Directory does not exist",
+                    dialog.format_secondary_text.call_args.args[0],
+                )
+                dialog.show_all.assert_called_once()
+                dialog.run.assert_not_called()
+
+    def test_config_folder_action_uses_selected_path(self):
+        from auto_cpufreq.gui import app
+
+        window = object()
+        with patch.object(app, "open_containing_folder") as opener:
+            with patch.object(app.config, "path", "/etc/auto-cpufreq.conf"):
+                app.ToolWindow._open_config_folder(window, None)
+        opener.assert_called_once_with(window, "/etc/auto-cpufreq.conf")
 
     def test_urwid_cpu_table_does_not_wrap_in_standard_split_pane(self):
         import urwid
