@@ -216,6 +216,13 @@ class GuiDiagnosticsTests(unittest.TestCase):
             diagnostics.info("session %d", index)
             paths.append(diagnostics.log_path)
             diagnostics.set_enabled(False)
+            self.wait_for(
+                lambda: not diagnostics._watchdog_thread.is_alive()
+                and (diagnostics._retiring_session is None
+                     or not diagnostics._retiring_session.writer.is_alive())
+                and (diagnostics._health_sampler is None
+                     or not diagnostics._health_sampler.is_alive())
+            )
         self.assertEqual(len(set(paths)), len(paths))
         for path in paths:
             self.assertTrue(path.exists())
@@ -313,7 +320,15 @@ class GuiDiagnosticsTests(unittest.TestCase):
             self.assertTrue(diagnostics._watchdog_thread.is_alive())
             diagnostics.set_enabled(False)
             self.assertFalse(diagnostics.enabled)
-            self.assertIsNone(diagnostics._watchdog_thread)
+            # GUI toggle is deliberately nonblocking; the signaled worker
+            # may still be exiting briefly after the method returns.
+            self.wait_for(lambda: not diagnostics._watchdog_thread.is_alive())
+            self.wait_for(
+                lambda: (diagnostics._retiring_session is None
+                         or not diagnostics._retiring_session.writer.is_alive())
+                and (diagnostics._health_sampler is None
+                     or not diagnostics._health_sampler.is_alive())
+            )
 
     def test_still_running_watchdog_blocks_reactivation(self):
         from types import SimpleNamespace
