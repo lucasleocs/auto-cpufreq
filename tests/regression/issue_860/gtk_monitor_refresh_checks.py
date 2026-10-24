@@ -178,13 +178,15 @@ class MonitorRefreshTests(unittest.TestCase):
         view, renderer = self.make(lambda: self.report())
         self.parent.add(view)
         self.assertTrue(pump_until(lambda: len(renderer.applied) >= 1))
-        timer = view.refresh_id
+        timer = GLib.MainContext.default().find_source_by_id(
+            view.refresh_id
+        )
         self.assertIsNotNone(timer)
         self.parent.destroy()
         self.assertFalse(view.running)
         self.assertTrue(view._refresh_coordinator.closed)
         self.assertIsNone(view.refresh_id)
-        self.assertIsNone(GLib.MainContext.default().find_source_by_id(timer))
+        self.assertTrue(timer.is_destroyed())
         view.cleanup()  # Both cleanup paths are allowed.
 
     def test_destroy_window_during_blocked_collection_discards_result(self):
