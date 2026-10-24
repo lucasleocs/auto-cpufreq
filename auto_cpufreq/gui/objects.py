@@ -4,26 +4,21 @@ gi.require_version("GdkPixbuf", "2.0")
 gi.require_version("Gtk", "3.0")
 from gi.repository import Gdk, GdkPixbuf, GLib, Gtk
 
-import sys
-from io import StringIO
 from os.path import isfile
 from pathlib import Path
 from platform import python_version
 from subprocess import getoutput, PIPE, run
 from threading import Thread
-import time
 
-from auto_cpufreq.config.config import config, find_config_file
+from auto_cpufreq.config.config import config
 from auto_cpufreq.gui.diagnostics import diagnostics
 # Keep existing import path for downstream consumers while the implementation
 # lives next to the other view-specific GTK code.
 from auto_cpufreq.gui.monitor_view import MonitorModeView
-from auto_cpufreq.core import distro_info, get_formatted_version, get_override, get_turbo_override, sysinfo
+from auto_cpufreq.core import get_formatted_version, get_override, get_turbo_override
 from auto_cpufreq.globals import GITHUB, IS_INSTALLED_WITH_AUR, IS_INSTALLED_WITH_SNAP
-from auto_cpufreq.modules.system_info import system_info
 from auto_cpufreq.power_helper import bluetoothctl_exists
 
-auto_cpufreq_stats_path = ("/var/snap/auto-cpufreq/current" if IS_INSTALLED_WITH_SNAP else "/var/run") + "/auto-cpufreq.stats"
 
 
 def open_containing_folder(parent, file_path, *, missing_hint=None):
@@ -57,12 +52,6 @@ def open_containing_folder(parent, file_path, *, missing_hint=None):
         return False
     return True
 
-
-def get_stats():
-    if not isfile(auto_cpufreq_stats_path):
-        return ""
-    with open(auto_cpufreq_stats_path, "r") as file:
-        return "".join(file.readlines()[-50:])
 
 def get_version():
     # snap package
@@ -386,278 +375,6 @@ class BluetoothBootControl(Gtk.Box):
                 self.on_btn.set_active(True)
                 if self.set_by_app: self.set_by_app = False
 
-class CurrentGovernorBox(Gtk.Box):
-    def __init__(self):
-        super().__init__(spacing=25)
-        self.static = Gtk.Label(label="Current Governor", name="bold")
-        self.governor = Gtk.Label(label=getoutput("cpufreqctl.auto-cpufreq --governor").strip().split(" ")[0], halign=Gtk.Align.END)
-
-        self.pack_start(self.static, False, False, 0)
-        self.pack_start(self.governor, False, False, 0)
-
-    def refresh(self):
-        self.governor.set_label(getoutput("cpufreqctl.auto-cpufreq --governor").strip().split(" ")[0])
-
-class BatteryInfoBox(Gtk.Box):
-    def __init__(self):
-        super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=2)
-
-        self.header = Gtk.Label(label="-" * 20 + " Battery Stats " + "-" * 20)
-        self.header.set_halign(Gtk.Align.START)
-
-        self.status_label = Gtk.Label(label="")
-        self.status_label.set_halign(Gtk.Align.START)
-
-        self.percentage_label = Gtk.Label(label="")
-        self.percentage_label.set_halign(Gtk.Align.START)
-
-        self.ac_label = Gtk.Label(label="")
-        self.ac_label.set_halign(Gtk.Align.START)
-
-        self.start_threshold_label = Gtk.Label(label="")
-        self.start_threshold_label.set_halign(Gtk.Align.START)
-
-        self.stop_threshold_label = Gtk.Label(label="")
-        self.stop_threshold_label.set_halign(Gtk.Align.START)
-
-        self.pack_start(self.header, False, False, 0)
-        self.pack_start(self.status_label, False, False, 0)
-        self.pack_start(self.percentage_label, False, False, 0)
-        self.pack_start(self.ac_label, False, False, 0)
-        self.pack_start(self.start_threshold_label, False, False, 0)
-        self.pack_start(self.stop_threshold_label, False, False, 0)
-
-        self.refresh()
-
-    def refresh(self):
-        try:
-            battery_info = system_info.battery_info()
-
-            self.status_label.set_label(f"Battery status: {str(battery_info)}")
-
-            if battery_info.battery_level is not None:
-                percentage_text = f"{battery_info.battery_level}%"
-            else:
-                percentage_text = "Unknown"
-            self.percentage_label.set_label(f"Battery percentage: {percentage_text}")
-
-            if battery_info.is_ac_plugged is not None:
-                ac_text = "Yes" if battery_info.is_ac_plugged else "No"
-            else:
-                ac_text = "Unknown"
-            self.ac_label.set_label(f"AC plugged: {ac_text}")
-
-            if battery_info.is_ac_plugged is not None:
-                start_text = str(battery_info.charging_start_threshold) if battery_info.charging_start_threshold is not None else "None"
-            else:
-                start_text = "Unknown"
-            self.start_threshold_label.set_label(f"Charging start threshold: {start_text}")
-
-            if battery_info.is_ac_plugged is not None:
-                stop_text = str(battery_info.charging_stop_threshold) if battery_info.charging_stop_threshold is not None else "None"
-            else:
-                stop_text = "Unknown"
-            self.stop_threshold_label.set_label(f"Charging stop threshold: {stop_text}")
-
-        except Exception:
-            self.status_label.set_label("Battery status: Unknown")
-            self.percentage_label.set_label("Battery percentage: Unknown")
-            self.ac_label.set_label("AC plugged: Unknown")
-            self.start_threshold_label.set_label("Charging start threshold: Unknown")
-            self.stop_threshold_label.set_label("Charging stop threshold: Unknown")
-
-class CPUFreqScalingBox(Gtk.Box):
-    def __init__(self):
-        super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=2)
-
-        self.header = Gtk.Label(label="-" * 20 + " CPU Frequency Scaling " + "-" * 20)
-        self.header.set_halign(Gtk.Align.START)
-
-        self.epp_label = Gtk.Label(label="")
-        self.epp_label.set_halign(Gtk.Align.START)
-
-        self.epb_label = Gtk.Label(label="")
-        self.epb_label.set_halign(Gtk.Align.START)
-        self.epb_label.set_no_show_all(True)
-
-        self.hwp_dynamic_boost_label = Gtk.Label(label="")
-        self.hwp_dynamic_boost_label.set_halign(Gtk.Align.START)
-        self.hwp_dynamic_boost_label.set_no_show_all(True)
-
-        self.pack_start(self.header, False, False, 0)
-        self.pack_start(self.epp_label, False, False, 0)
-        self.pack_start(self.epb_label, False, False, 0)
-        self.pack_start(self.hwp_dynamic_boost_label, False, False, 0)
-
-        self.refresh()
-
-    def refresh(self):
-        try:
-            report = system_info.generate_system_report()
-
-            if report.current_epp:
-                self.epp_label.set_label(f"Current EPP: {report.current_epp}")
-                self.epp_label.show()
-            else:
-                self.epp_label.set_label("Not setting EPP (not supported by system)")
-                self.epp_label.show()
-
-            if report.current_epb:
-                self.epb_label.set_label(f"Current EPB: {report.current_epb}")
-                self.epb_label.show()
-            else:
-                self.epb_label.hide()
-
-            if report.current_hwp_dynamic_boost is not None:
-                state = "on" if report.current_hwp_dynamic_boost else "off"
-                self.hwp_dynamic_boost_label.set_label(
-                    f"Intel HWP Dynamic Boost: {state}"
-                )
-                self.hwp_dynamic_boost_label.show()
-            else:
-                self.hwp_dynamic_boost_label.hide()
-
-        except Exception:
-            self.epp_label.set_label("Current EPP: Unknown")
-            self.epb_label.hide()
-            self.hwp_dynamic_boost_label.hide()
-
-class SystemStatisticsBox(Gtk.Box):
-    def __init__(self):
-        super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=2)
-
-        self.header = Gtk.Label(label="-" * 20 + " System Statistics " + "-" * 20)
-        self.header.set_halign(Gtk.Align.START)
-
-        self.cpu_usage_label = Gtk.Label(label="")
-        self.cpu_usage_label.set_halign(Gtk.Align.START)
-
-        self.load_label = Gtk.Label(label="")
-        self.load_label.set_halign(Gtk.Align.START)
-
-        self.temp_label = Gtk.Label(label="")
-        self.temp_label.set_halign(Gtk.Align.START)
-        self.temp_label.set_no_show_all(True)
-
-        self.load_status_label = Gtk.Label(label="")
-        self.load_status_label.set_halign(Gtk.Align.START)
-        self.load_status_label.set_no_show_all(True)
-
-        self.usage_status_label = Gtk.Label(label="")
-        self.usage_status_label.set_halign(Gtk.Align.START)
-        self.usage_status_label.set_no_show_all(True)
-
-        self.turbo_label = Gtk.Label(label="")
-        self.turbo_label.set_halign(Gtk.Align.START)
-
-        self.fan_label = Gtk.Label(label="")
-        self.fan_label.set_halign(Gtk.Align.START)
-        self.fan_label.set_no_show_all(True)
-
-        self.pack_start(self.header, False, False, 0)
-        self.pack_start(self.cpu_usage_label, False, False, 0)
-        self.pack_start(self.load_label, False, False, 0)
-        self.pack_start(self.temp_label, False, False, 0)
-        self.pack_start(self.fan_label, False, False, 0)
-        self.pack_start(self.load_status_label, False, False, 0)
-        self.pack_start(self.usage_status_label, False, False, 0)
-        self.pack_start(self.turbo_label, False, False, 0)
-
-        self.refresh()
-
-    def refresh(self):
-        try:
-            report = system_info.generate_system_report()
-
-            self.cpu_usage_label.set_label(f"Total CPU usage: {report.cpu_usage:.1f} %")
-
-            self.load_label.set_label(f"Total system load: {report.load:.2f}")
-
-            avg_temp = 0.0
-            if report.cores_info:
-                avg_temp = sum(core.temperature for core in report.cores_info) / len(report.cores_info)
-                self.temp_label.set_label(f"Average temp. of all cores: {avg_temp:.2f} °C")
-                self.temp_label.show()
-            else:
-                self.temp_label.hide()
-
-            if report.cpu_fan_speed is not None:
-                self.fan_label.set_label(f"CPU fan speed: {report.cpu_fan_speed} RPM")
-                self.fan_label.show()
-            else:
-                self.fan_label.hide()
-
-            if report.avg_load:
-                load_status = "Load optimal" if report.load < 1.0 else "Load high"
-                self.load_status_label.set_label(
-                    f"{load_status} (load average: {report.avg_load[0]:.2f}, {report.avg_load[1]:.2f}, {report.avg_load[2]:.2f})"
-                )
-                self.load_status_label.show()
-            else:
-                self.load_status_label.hide()
-
-            if report.cores_info:
-                usage_status = "Optimal" if report.cpu_usage < 70 else "High"
-                temp_status = "high" if avg_temp > 75 else "normal"
-                self.usage_status_label.set_label(
-                    f"{usage_status} total CPU usage: {report.cpu_usage:.1f}%, {temp_status} average core temp: {avg_temp:.1f}°C"
-                )
-                self.usage_status_label.show()
-            else:
-                self.usage_status_label.hide()
-
-            if report.is_turbo_on[0] is not None:
-                turbo_status = "On" if report.is_turbo_on[0] else "Off"
-            elif report.is_turbo_on[1] is not None:
-                turbo_status = f"Auto mode {'enabled' if report.is_turbo_on[1] else 'disabled'}"
-            else:
-                turbo_status = "Unknown"
-            self.turbo_label.set_label(f"Setting turbo boost: {turbo_status}")
-
-        except Exception:
-            self.cpu_usage_label.set_label("Total CPU usage: Unknown")
-            self.load_label.set_label("Total system load: Unknown")
-            self.temp_label.hide()
-            self.fan_label.hide()
-            self.load_status_label.hide()
-            self.usage_status_label.hide()
-            self.turbo_label.set_label("Setting turbo boost: Unknown")
-
-class SystemStatsLabel(Gtk.Label):
-    def __init__(self):
-        super().__init__()
-        self.refresh()
-
-    def refresh(self):
-        # Legacy widget: always restore process stdout, including on errors.
-        # Current dashboard uses SystemReport instead of this print capture.
-        old_stdout = sys.stdout
-        text = StringIO()
-        try:
-            sys.stdout = text
-            distro_info()
-            sysinfo()
-            self.set_label(text.getvalue())
-        finally:
-            sys.stdout = old_stdout
-    
-class CPUFreqStatsLabel(Gtk.Label):
-    def __init__(self):
-        super().__init__()
-        self.refresh()
-  
-    def refresh(self):
-        stats = get_stats().split("\n")
-        start = None
-        for i, line in enumerate(stats):
-            if line == ("-" * 28 + " CPU frequency scaling " + "-" * 28):
-                start = i
-                break
-        if start is not None:
-            del stats[:i]
-            del stats[-4:]
-            self.set_label("\n".join(stats))
- 
 class DropDownMenu(Gtk.MenuButton):
     def __init__(self, parent):
         super().__init__()
