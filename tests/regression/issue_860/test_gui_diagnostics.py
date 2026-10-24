@@ -5,6 +5,7 @@ from pathlib import Path
 import tempfile
 import time
 import unittest
+import logging
 from unittest.mock import patch
 
 
@@ -33,8 +34,20 @@ class MockGLib:
     def source_remove(self, source_id):
         self.removed.append(source_id)
 
+    def idle_add(self, callback, *args):
+        callback(*args)
+        return 135
+
 
 class GuiDiagnosticsTests(unittest.TestCase):
+    def wait_for(self, predicate, timeout=3):
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if predicate():
+                return
+            time.sleep(0.01)
+        self.assertTrue(predicate(), "Async logger did not complete in time")
+
     def setUp(self):
         self.root = tempfile.TemporaryDirectory()
         self.addCleanup(self.root.cleanup)
@@ -70,8 +83,8 @@ class GuiDiagnosticsTests(unittest.TestCase):
             diagnostics.log_path.stat().st_mode & 0o777, 0o600
         )
         diagnostics.debug("instrumentation sample")
-        self.assertIn(
-            "instrumentation sample", diagnostics.log_path.read_text()
+        self.wait_for(
+            lambda: "instrumentation sample" in diagnostics.log_path.read_text()
         )
 
         diagnostics.shutdown()
@@ -97,8 +110,15 @@ class GuiDiagnosticsTests(unittest.TestCase):
         message = "sample " + ("x" * 18000)
         for _ in range(240):
             diagnostics.info("%s", message)
+        self.wait_for(
+            lambda: len(list(diagnostics.log_path.parent.glob(
+                diagnostics.log_path.name + "*"
+            ))) > 1
+        )
         diagnostics.shutdown()
-        files = sorted(diagnostics.log_path.parent.glob("gtk.log*"))
+        files = sorted(diagnostics.log_path.parent.glob(
+            diagnostics.log_path.name + "*"
+        ))
         self.assertLessEqual(len(files), MODULE.LOG_BACKUPS + 1)
         self.assertGreater(len(files), 1)
         for filename in files:
@@ -117,6 +137,9 @@ class GuiDiagnosticsTests(unittest.TestCase):
         )
         diagnostics._check_stall()
         diagnostics._check_stall()
+        self.wait_for(
+            lambda: "unresponsive for at least" in diagnostics.log_path.read_text()
+        )
         content = diagnostics.log_path.read_text()
         self.assertEqual(content.count("unresponsive for at least"), 1)
         self.assertTrue(glib.callback())
@@ -133,6 +156,9 @@ class GuiDiagnosticsTests(unittest.TestCase):
         diagnostics._last_heartbeat = time.monotonic() - 5.0
         with patch.object(MODULE, "_boottime", return_value=150.0):
             self.assertTrue(glib.callback())
+        self.wait_for(
+            lambda: "System suspend/resume detected" in diagnostics.log_path.read_text()
+        )
         content = diagnostics.log_path.read_text()
         self.assertIn("System suspend/resume detected", content)
         self.assertNotIn("unresponsive for at least", content)
@@ -153,6 +179,68 @@ class GuiDiagnosticsTests(unittest.TestCase):
                     break
             self.assertTrue(found, "Watchdog did not detect blocked GTK loop")
             diagnostics.shutdown()
+
+    def test_queue_is_bounded_and_nonblocking_under_slow_disk(self):
+        diagnostics = self.diagnostics
+        with patch.object(
+            MODULE._PrivateRotatingFileHandler,
+            "emit",
+            autospec=True,
+            side_effect=lambda *args: time.sleep(0.008),
+        ):
+            diagnostics.set_enabled(True)
+            started = time.monotonic()
+            for index in range(1500):
+                diagnostics.debug("saturated queue %d", index)
+            elapsed = time.monotonic() - started
+            self.assertLess(elapsed, 1.5)
+            self.assertLessEqual(diagnostics._events.qsize(), MODULE.QUEUE_SIZE)
+            self.assertGreater(diagnostics._dropped, 0)
+            diagnostics.shutdown()
+
+    def test_repeated_toggle_uses_distinct_session_logs(self):
+        diagnostics = self.diagnostics
+        paths = []
+        for index in range(4):
+            diagnostics.set_enabled(True)
+            diagnostics.info("session %d", index)
+            paths.append(diagnostics.log_path)
+            diagnostics.set_enabled(False)
+        self.assertEqual(len(set(paths)), len(paths))
+        for path in paths:
+            self.assertTrue(path.exists())
+        self.assertFalse(diagnostics.enabled)
+
+    def test_multiple_instances_do_not_share_log_files(self):
+        second = MODULE.GuiDiagnostics()
+        self.addCleanup(second.shutdown)
+        self.assertNotEqual(self.diagnostics.log_path, second.log_path)
+        self.diagnostics.set_enabled(True)
+        second.set_enabled(True)
+        self.diagnostics.info("first-instance")
+        second.info("second-instance")
+        self.wait_for(
+            lambda: "first-instance" in self.diagnostics.log_path.read_text()
+            and "second-instance" in second.log_path.read_text()
+        )
+        self.assertNotIn("second-instance", self.diagnostics.log_path.read_text())
+        self.assertNotIn("first-instance", second.log_path.read_text())
+
+    def test_async_file_failure_is_exposed_to_ui(self):
+        diagnostics = self.diagnostics
+        ui_errors = []
+        diagnostics.attach_mainloop(MockGLib())
+        diagnostics.set_error_callback(ui_errors.append)
+        with patch.object(
+            MODULE._PrivateRotatingFileHandler,
+            "emit",
+            side_effect=OSError("simulated disk failure"),
+        ):
+            diagnostics.set_enabled(True)
+            diagnostics.info("trigger writer failure")
+            self.wait_for(lambda: bool(ui_errors))
+        self.assertIn("simulated disk failure", ui_errors[0])
+        diagnostics.shutdown()
 
     def test_enable_rolls_back_when_preference_write_fails(self):
         diagnostics = self.diagnostics
