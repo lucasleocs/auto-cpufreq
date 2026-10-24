@@ -59,6 +59,39 @@ sudo -n /usr/local/bin/auto-cpufreq --version
 sudo -n /opt/auto-cpufreq/current/venv/bin/auto-cpufreq-restore-rapl
 echo "source-install: PASS" >> "$RESULT_FILE"
 
+echo "==== REAL CLI --update WITH LOCAL GIT TAG AND REAL PIP BUILD ===="
+# The only substituted network dependency is the GitHub "latest release"
+# response, replaced by a deterministic local tag. The real Click callback,
+# new_update(), git fetch, and *actual* source installer execute.
+UPDATE_FIXTURE="$(mktemp -d "$RUNNER_TEMP/auto-cpufreq-vm-update.XXXXXXXX")"
+git clone --quiet --local "$REPO" "$UPDATE_FIXTURE/seed"
+git -C "$UPDATE_FIXTURE/seed" tag -f v3.2.1 HEAD
+git clone --quiet --bare "$UPDATE_FIXTURE/seed" "$UPDATE_FIXTURE/release.git"
+initial_release="$(readlink -f /opt/auto-cpufreq/current)"
+sudo -n env VM_TAG_REMOTE="$UPDATE_FIXTURE/release.git" \
+  /opt/auto-cpufreq/current/venv/bin/python - <<'PY'
+import builtins
+import os
+import sys
+from auto_cpufreq import core
+from auto_cpufreq.bin import auto_cpufreq as cli
+assert os.geteuid() == 0
+assert os.path.isfile(os.environ["VM_TAG_REMOTE"])
+core.GITHUB = "file://" + os.environ["VM_TAG_REMOTE"].removesuffix(".git")
+cli.check_for_update = lambda: "v3.2.1"
+builtins.input = lambda prompt="": "y"
+sys.argv = ["auto-cpufreq", "--update"]
+cli.main.main(args=["--update"], prog_name="auto-cpufreq",
+              standalone_mode=False)
+PY
+test -L /opt/auto-cpufreq/current
+updated_release="$(readlink -f /opt/auto-cpufreq/current)"
+test "$updated_release" != "$initial_release"
+test -f "$initial_release/.complete"
+test -f "$updated_release/.complete"
+sudo -n /usr/local/bin/auto-cpufreq --version | grep -E 'auto-cpufreq version: 3\\.2\\.1'
+echo "real-cli-update-local-tag: PASS" >> "$RESULT_FILE"
+
 echo "==== REAL MANAGED UNIT INSTALL / SYSTEMD ===="
 if [[ -r /sys/devices/system/cpu/cpu0/cpufreq/scaling_available_governors ]] \
    && grep -Eq '(^|[[:space:]])(performance|powersave)([[:space:]]|$)' \
