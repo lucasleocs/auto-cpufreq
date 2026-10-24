@@ -3,6 +3,7 @@
 Test the rendered *meaning*; GTK owns widgets, Urwid owns terminal layout.
 No daemon, hardware sampling, privileged calls or X server are required.
 """
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 import unittest
@@ -12,7 +13,7 @@ import urwid
 
 from auto_cpufreq.gui import report_view
 from auto_cpufreq.modules.report_presentation import (
-    configuration_file_text, offline_cpus_text,
+    configuration_file_text, offline_cpus_text, frequency_limit_text,
     present_platform_profile, present_report,
 )
 from auto_cpufreq.modules.platform_profile import (
@@ -97,6 +98,38 @@ class FrontendReportParityTests(unittest.TestCase):
                 for call in visible.call_args_list
             ]
         return view, visibility
+
+    def test_governor_unavailable_has_identical_label(self):
+        report = replace(sample_report(), current_gov=None)
+        expected = present_report(report).governor.text
+        self.assertEqual(expected, "Unavailable")
+        self.assertIn("Governor: " + expected, terminal_lines(report))
+        view, _ = self.render_gtk(report)
+        view.power_values["governor"].set_text.assert_called_with(expected)
+
+    def test_frequency_limits_are_equivalent_for_known_and_missing_values(self):
+        for maximum, minimum in (
+            (4500.0, 400.0), (None, 400.0),
+            (4500.0, None), (None, None), (0.0, 0.0),
+        ):
+            with self.subTest(maximum=maximum, minimum=minimum):
+                report = replace(
+                    sample_report(), cpu_max_freq=maximum,
+                    cpu_min_freq=minimum,
+                )
+                max_text = frequency_limit_text(maximum)
+                min_text = frequency_limit_text(minimum)
+                self.assertIn(
+                    "CPU max frequency: " + max_text,
+                    terminal_lines(report),
+                )
+                self.assertIn(
+                    "CPU min frequency: " + min_text,
+                    terminal_lines(report),
+                )
+                view, _ = self.render_gtk(report)
+                view.max_freq_value.set_text.assert_called_with(max_text)
+                view.min_freq_value.set_text.assert_called_with(min_text)
 
     def test_missing_battery_has_same_explicit_status(self):
         report = sample_report()
