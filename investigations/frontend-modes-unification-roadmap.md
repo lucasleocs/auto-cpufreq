@@ -12,21 +12,28 @@
 
 ## Implementation ledger — experimental branch, 2026-10-23
 
-This is a **partial implementation**, not completion of the roadmap. New production-code candidates below are being developed and CI-tested only in the experimental branch.
+This is a **partial implementation**, not the complete roadmap. All changes below remain in the experimental branch, not production or upstream master.
 
-| Phase | State | Files / verification |
+| Phase | Current state | Verified scope |
 | --- | --- | --- |
-| 1. Logging concurrency hardening | Implemented, automated tests added | Atomic producer shutdown, traceback detachment, async writer and serialized old-session pruning |
-| 2. Toolkit-neutral diagnostics | Implemented; GTK adapter migrated | `auto_cpufreq/modules/diagnostics.py` and `gui/diagnostics.py`; no GTK/Urwid dependency in core |
-| 3. Typed presentation semantics | Implemented and consumed by GTK + Urwid | `modules/report_presentation.py`; governor, Turbo, EPP/EPB, HWP, battery and temperature |
-| 4. Shared refresh coordinator | Implementation + unit tests only | `modules/report_refresh.py`; GTK/Urwid adapters **not migrated yet** |
-| 5–10. Frontend migrations, Stats CLI diagnostic flag, optional rendering work, production cleanup | Not implemented yet | Existing UI refresh behavior, privileged writers and daemon unchanged |
+| 1. Logging concurrency hardening | Implemented | Atomic queue shutdown, traceback detachment, async writer, serialized pruning and tests |
+| 2. Toolkit-neutral diagnostics | Implemented | Shared `modules/diagnostics.py` with GTK adapter; terminal session logger independent of GUI toolkits |
+| 3. Typed presentation semantics | Implemented and used | `modules/report_presentation.py`; GTK dashboard/Monitor and Urwid Stats/Monitor/Live |
+| 4. Shared refresh coordinator | Implemented and used | `modules/report_refresh.py`, with separate GLib and Urwid delivery adapters |
+| 5. GTK integration | Implemented, automated integration tested | Dashboard coalescing/pending-control behavior, monitor recovery and closing during collection |
+| 6. Urwid integration | Implemented, automated PTY tested | Stats/Monitor/Live *display* through `SystemMonitor`; no policy executor changes |
+| 7. Terminal diagnostic opt-in | Implemented, automated PTY and permission tests | `--diagnostic-log` only with Stats/Monitor/Live, unprivileged XDG and root's own home |
+| 8. Incremental widget rendering | Not implemented | Requires before/after benchmarks and CPU hotplug parity |
+| 9. Policy-decision explanation | Not implemented | Shadow-only, never calls policy writers |
+| 10. Production PR and hardware validation | Not started | Clean branch and manual Linux Mint X11 validation required |
 
-Key safety fact: `--live`'s existing policy worker and restoration code have not been changed. The experimental core is intentionally opt-in for logging; there is no new always-on logging daemon. GTK still owns its preferences and GLib heartbeat, while `--stats` does not yet expose a CLI diagnostic flag.
+**Safety boundary:** `--live`'s existing privileged policy worker and restoration code are unchanged. The daemon control loop and power writers are unchanged. The new CLI diagnostic flag does not affect control-policy decisions. A separate safety review is still required for the known Live shutdown race.
 
-Tests were expanded to cover simultaneous producers during log shutdown, late callbacks after view closure, coalesced refresh requests, temporary read exceptions and cross-interface display values. CI statuses should be checked for the current code commit rather than assumed from prior workflow runs.
+**Validation status:** Experimental CI reports 49 Python/terminal tests plus 7 GTK/Xvfb tests passing at commit `a1362b283265c7150c9820fec8c277a35a0cd0ce`. The test suite includes a real PTY invocation with the logger enabled. Build workflows and later commits should be checked separately; the tests do not yet replace a real GTK launch/benchmark on the user's machine.
 
-Implementation is tracked in this file; remove this working plan and experimental workflow when building the eventual clean upstream PR.
+**Remaining risks/next work:** process CPU and hot-thread sampling for #860; resource overhead under long-duration logs; real sudo command smoke test without touching power state; pyproject Python version compatibility; incremental rendering only if measurable; native GTK launch and repeated suspend cycles; test a clean, isolated production branch. No assumption that upstream #860 is fixed.
+
+This working plan and the experimental workflow must not be included in the eventual clean upstream PR.
 
 ## 1. Executive decision
 
