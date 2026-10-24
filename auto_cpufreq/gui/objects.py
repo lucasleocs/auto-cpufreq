@@ -851,7 +851,7 @@ class MonitorModeView(Gtk.Box):
         self._refresh_coordinator = self._refresh_bridge.coordinator
         self._refresh_timer = GtkRefreshTimer(
             coordinator=self._refresh_coordinator,
-            request=self.refresh_in_thread,
+            request=self._refresh_coordinator.request_if_idle,
             active=lambda: self.running,
             diagnostics=diagnostics,
             component="GTK monitor",
