@@ -117,10 +117,14 @@ if [[ $blocked -eq 0 ]]; then
   cat "$RUNNER_TEMP/rapl-blocked-remove.log"
   exit 95
 fi
-test -f "$unit"
-test -f "$marker"
-test -L /opt/auto-cpufreq/current
-test -f "$JOURNAL"
+echo "CLI --remove exited with $blocked; captured diagnostics:"
+cat "$RUNNER_TEMP/rapl-blocked-remove.log"
+if [[ ! -f "$unit" || ! -f "$marker" || ! -L /opt/auto-cpufreq/current ||
+      ! -f "$JOURNAL" ]]; then
+  echo "FAIL: incomplete RAPL recovery was followed by destructive removal:" >&2
+  sudo -n ls -la "$unit" "$marker" "$JOURNAL" /opt/auto-cpufreq/current || true
+  exit 96
+fi
 echo "refusal-to-remove-unresolved-rapl: PASS" >> "$RESULT_FILE"
 
 echo "==== SUCCESSFUL REMOVAL / CLEANUP ===="
