@@ -984,11 +984,12 @@ class MonitorModeView(Gtk.Box):
 
     def _collect_report(self):
         report = system_info.generate_system_report()
-        suggested_governor = system_info.governor_suggestion(report)
-        suggested_turbo = None
-        if report.is_turbo_on[0] is not None:
-            suggested_turbo = system_info.turbo_on_suggestion(report)
-        return report, suggested_governor, suggested_turbo
+        recommendations = system_info.monitor_recommendations(report)
+        return (
+            report,
+            recommendations.governor.suggested,
+            recommendations.turbo.suggested,
+        )
 
     def _dispatch_refresh_result(self, result):
         GLib.idle_add(self._deliver_refresh_result, result)
