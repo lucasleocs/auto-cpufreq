@@ -1039,9 +1039,19 @@ class ToolWindow(Gtk.Window):
             return False
         try:
             diagnostics.record_duration(
+                "GTK dashboard queue", result.queue_seconds,
+                slow_after=max(1.0, self.refresh_interval),
+            )
+            diagnostics.record_duration(
                 "GTK dashboard collection", result.duration,
                 slow_after=max(2.0, self.refresh_interval * 2),
             )
+            if result.completed_at:
+                diagnostics.record_duration(
+                    "GTK dashboard delivery latency",
+                    max(0.0, time.monotonic() - result.completed_at),
+                    slow_after=max(1.0, self.refresh_interval),
+                )
             if result.error is not None:
                 diagnostics.warning(
                     "GTK dashboard collection failed: %s", result.error
@@ -1050,9 +1060,15 @@ class ToolWindow(Gtk.Window):
             else:
                 self._apply_refresh(result.report)
         finally:
-            self._run_pending_refresh()
-            self._refresh_coordinator.acknowledge(result.generation)
-            self.refresh_in_progress = self._refresh_coordinator.in_progress
+            try:
+                self._run_pending_refresh()
+            except Exception:
+                diagnostics.exception("GTK pending refresh scheduling failed")
+            finally:
+                # Always acknowledge the completed generation, even if
+                # queuing a successor failed.
+                self._refresh_coordinator.acknowledge(result.generation)
+                self.refresh_in_progress = self._refresh_coordinator.in_progress
         return False
 
     def _apply_refresh(self, report):
