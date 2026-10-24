@@ -101,7 +101,7 @@ sudo systemctl show auto-cpufreq.service -p ExecStopPost -p RuntimeDirectory -p 
 test "$(sudo systemctl show -P NeedDaemonReload auto-cpufreq.service)" = no
 # Prevent prolonged normal CPU policy execution even on supported CI VMs.
 sudo -n systemctl stop auto-cpufreq.service
-test ! -e "$JOURNAL"
+sudo -n test ! -e "$JOURNAL"
 echo "managed-unit-installed-and-stopped: PASS" >> "$RESULT_FILE"
 
 echo "==== STOP-TIME RECOVERY BARRIER AGAINST MALFORMED JOURNAL ===="
@@ -119,8 +119,8 @@ if [[ $blocked -eq 0 ]]; then
 fi
 echo "CLI --remove exited with $blocked; captured diagnostics:"
 cat "$RUNNER_TEMP/rapl-blocked-remove.log"
-if [[ ! -f "$unit" || ! -f "$marker" || ! -L /opt/auto-cpufreq/current ||
-      ! -f "$JOURNAL" ]]; then
+if [[ ! -f "$unit" || ! -f "$marker" || ! -L /opt/auto-cpufreq/current ]] \
+   || ! sudo -n test -f "$JOURNAL"; then
   echo "FAIL: incomplete RAPL recovery was followed by destructive removal:" >&2
   sudo -n ls -la "$unit" "$marker" "$JOURNAL" /opt/auto-cpufreq/current || true
   exit 96
