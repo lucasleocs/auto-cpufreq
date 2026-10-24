@@ -63,8 +63,12 @@ defines semantic text and availability, including absent batteries, unavailable
 temperature and frequency-limit measurements, absent governor data, offline
 CPUs, config-file labels and platform-profile providers. `gui/report_view.py`
 and `modules/system_monitor.py` only decide **where** and **how** to show
-each field. Legacy text formatters in `system_info.py` delegate platform-profile
-interpretation to the shared presentation rule.
+each field. `format_system_report()` in `system_info.py` preserves the historical
+text labels (including `Platform profile status`, `Platform profile provider`
+and the `Not available` fallback) but obtains profile status, available choices
+and provider summaries from `present_platform_profile()` rather than
+reinterpreting raw provider devices. Keep those existing text labels stable
+unless a deliberate compatibility change is reviewed.
 
 A **missing battery** is different from an unknown AC source. Hardware
 collection in `SystemInfo.battery_info()` returns a `BatteryInfo` even when
@@ -78,7 +82,10 @@ When modifying this contract, test both actual collector branches (battery
 path absent/present) using mocked sysfs reads, and check both frontends.
 
 When changing a report field, add a synthetic scenario to
-`tests/test_frontend_report_parity.py` and verify both frontends. Keep
+`tests/test_frontend_report_parity.py` and verify both frontends. When
+changing platform-profile semantics, also check the legacy text report
+against explicit expected outputs for detected, partial, read-only and
+absent interfaces; do not only compare two functions calling the same helper. Keep
 the tests independent of host cpufreq governors and hardware sensors.
 If a value is unknown, report that explicitly rather than inventing a
 default; omit optional sections only when both interfaces intentionally
