@@ -47,6 +47,7 @@ REFRESH_INTERVALS = (1, 2, 5)
 # The daemon normally applies overrides on its next ~2 second cycle.
 # Keep the affected state hidden until a later, fresh report is collected.
 CONTROL_APPLY_DELAY_SECONDS = 3
+STALLED_COLLECTION_SECONDS = 20
 
 
 def _new_section(title):
@@ -490,6 +491,7 @@ class ToolWindow(Gtk.Window):
         self.set_resizable(True)
         self.refresh_in_progress = False
         self.refresh_pending = False
+        self._stalled_refresh_reported = False
         self.refresh_interval = DEFAULT_REFRESH_INTERVAL
         self.refresh_id = None
         self.pending_power_updates = set()
@@ -1019,8 +1021,20 @@ class ToolWindow(Gtk.Window):
         if self.destroyed:
             return False
         if self.refresh_in_progress:
+            age = self._refresh_coordinator.request_age_seconds()
+            if (
+                age is not None
+                and age >= STALLED_COLLECTION_SECONDS
+                and not self._stalled_refresh_reported
+            ):
+                self._stalled_refresh_reported = True
+                diagnostics.warning(
+                    "GTK collection/delivery pending for %.1fs; "
+                    "keeping single-flight worker", age,
+                )
             self.refresh_pending = True
             return True
+        self._stalled_refresh_reported = False
         self.refresh_in_progress = True
         try:
             self._refresh_coordinator.request()
@@ -1080,6 +1094,7 @@ class ToolWindow(Gtk.Window):
                 # queuing a successor failed.
                 self._refresh_coordinator.acknowledge(result.generation)
                 self.refresh_in_progress = self._refresh_coordinator.in_progress
+                self._stalled_refresh_reported = False
         return False
 
     def _apply_refresh(self, report):
