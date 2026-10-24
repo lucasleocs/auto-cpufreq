@@ -18,7 +18,12 @@ from auto_cpufreq.gui.report_view import SystemReportView
 from auto_cpufreq.config.config import config
 from auto_cpufreq.core import check_for_update, daemon_is_running
 from auto_cpufreq.globals import GITHUB, IS_INSTALLED_WITH_SNAP
-from auto_cpufreq.gui.objects import BluetoothBootControl, DaemonNotRunningView, DropDownMenu, MonitorModeView, RadioButtonView, CPUTurboOverride, UpdateDialog, open_containing_folder
+from auto_cpufreq.gui.desktop import open_containing_folder
+from auto_cpufreq.gui.monitor_view import MonitorModeView
+from auto_cpufreq.gui.objects import (
+    BluetoothBootControl, CPUTurboOverride, DaemonNotRunningView,
+    DropDownMenu, RadioButtonView, UpdateDialog,
+)
 from auto_cpufreq.modules.system_info import system_info
 from auto_cpufreq.power_helper import bluetoothctl_exists
 
