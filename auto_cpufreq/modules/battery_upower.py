@@ -17,7 +17,7 @@ STATES = {
     2: "Discharging",
     3: "Empty",
     4: "Fully charged",
-    5: "Pending charge",
+    5: "Not charging",
     6: "Pending discharge",
 }
 CONTROLS = ((1, "Start threshold"), (2, "End threshold"), (4, "Firmware managed"))
