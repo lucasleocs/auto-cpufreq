@@ -286,3 +286,22 @@ Gate W6: review release packaging, README, service lifecycle, `--stats` presenta
 - This tests modern **UPower properties** and app rendering; it does not install, update, or execute a real UPower 1.91.x service. Real newer-daemon physical hardware tests and strict Snap-confinement runtime remain outside this coverage.
 - The user also ran a complete GTK preview against their actual installed daemon, without privilege changes, and supplied a screenshot showing the full Controls panel plus BAT1 99%, Fully charged, AC connected, start Unavailable, stop 100%, battery power 0.00 W. The production layout was preserved.
 
+
+## GalaxyMint full GTK visual acceptance — five simulated battery states (2026-10-24)
+
+The user executed `tmp/upower-full-gtk-privatebus-20261024` at `fe404680328dfb56adaae14da02287105f9b944a` directly on the GalaxyMint, with the normal auto-cpufreq daemon still running. Provided **five screenshots plus terminal logs**, all with `Source: upower`, `Installed daemon active: True`, `Controls present: True`, and `Physical charge thresholds: never written`.
+
+| Scenario | Shown by full GTK | Visual check |
+|---|---|---|
+| `charging-55` | Charging; Charge 55%; Start Unavailable; Stop 80% (UPower); Charging power 12.50 W | PASS, clean layout, no redundant protection row |
+| `reached-80` | Pending charge; 80%; Stop 80% (UPower); Battery power 0.00 W | PASS, genuine UPower state preserved |
+| `full-100` | Fully charged; 100%; Stop 80% (UPower); Battery power 0.00 W | PASS, threshold is not the current charge or automatic discharge |
+| `start-end` | Fully charged; 99%; Start 75% (UPower); Stop 80% (UPower) | PASS, both numeric limits inline; 99% above 80% is a simulated state and can correspond to changing a limit after a fuller charge |
+| `firmware` | Fully charged; 99%; Charge limit Firmware managed (active); no start/end rows | PASS, one concise firmware line and no invented percentage |
+
+**Presentation observations:** no overflows, clipped text, missing Controls, extra protected rows, or unintended edit controls. In the firmware-only scenario, `Charge limit` appears **after** `Battery power` because it is the final GTK grid row while start/stop are hidden. A small **optional** formatting improvement before the final PR is to keep charging-limit information before Battery power consistently, without rebuilding the GTK or changing its data semantics; discuss before altering the clean PR branch. This is cosmetic, not a functional failure.
+
+All five executions emitted `Failed to retrieve unit state: Process org.freedesktop.systemd1 exited with status 1` while the private mock overrode the system-bus address in its own process. The errors were **nonfatal in the laboratory** (full GTK and daemon detection proceeded normally) and do not establish a failure of the installed systemd service or UPower. Avoid confusing the experimental message with a production error. Later improvement could isolate host `systemctl` queries from that temporary D-Bus override, strictly within the lab.
+
+This user hardware run supplements, but does not replace, CI https://github.com/lucasleocs/auto-cpufreq/actions/runs/40049136671, which already passed eight scenarios headlessly with full GTK. No actual newer daemon (UPower 1.91.x) was installed: only its D-Bus property *shape* was simulated. No system threshold was changed.
+

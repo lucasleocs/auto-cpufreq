@@ -193,3 +193,16 @@ Sources: https://upower.freedesktop.org/docs/Device.html ; https://upower.freede
 - FG05: Simulated start+end control, firmware-only enabled/disabled, numerical control disabled, old no-capability API: PASS.
 - FG06: Private D-Bus uses client-side DBUS_SYSTEM_BUS_ADDRESS override only; mock threshold is Python-only read interception and privileged GUI actions are rejected. PASS by fixture design; no actual battery threshold write.
 - FG07: Full GTK real updated daemon UPower 1.91.x and confined Snap deployment: NOT TESTED; do not conflate with mock success.
+
+## Real GalaxyMint complete GTK / modern UPower simulation screenshots
+
+- VG01: 55% charging while 80% stop active — `Charging power: 12.50 W` and correct inline stop, with no control duplication. PASS (user screenshot).
+- VG02: 80% Pending charge / 80% stop — no inferred charging, 0.00 W. PASS.
+- VG03: 100% Fully charged / new 80% stop — no simulated forced discharge or incorrect percentage substitution. PASS.
+- VG04: 99% Fully charged / 75% start and 80% stop — fields rendered correctly as independent settings; simulated non-steady-state battery percentage is not itself a regression. PASS.
+- VG05: Firmware-only active at 99% — numeric start/stop rows hidden; `Charge limit: Firmware managed (active)` visible. PASS.
+- VG06: Full Controls, real system info, real daemon recognized; private lab intercepts privileged GUI actions and never changes sysfs thresholds. PASS.
+- VG07: Nonfatal `org.freedesktop.systemd1` warnings attributable to test bus redirection; do not modify CPU or daemon production code to work around laboratory warning. RECORDED.
+- VG08: Cosmetic item — in firmware-only mode, consider displaying Charge limit *before* Battery power, matching numeric threshold order. OPTIONAL, not a blocker.
+- VG09: Actual upgraded UPower daemon and snap jail-mode runtime: NOT VERIFIED.
+
