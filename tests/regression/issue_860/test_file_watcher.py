@@ -199,14 +199,60 @@ class FileWatcherTests(unittest.TestCase):
         self.path.symlink_to(destination)
         self.wait_for("link-content")
 
-    def test_chmod_retriggers_callback(self):
+    def test_chmod_during_open_write_does_not_reload_partial_contents(self):
         self.start_clean()
-        previous = self.path.stat().st_mode
+        mode = self.path.stat().st_mode
         try:
-            self.path.chmod(previous ^ 0o100)
-            self.wait_for("initial")
+            with self.path.open("w") as stream:
+                stream.write("partial-")
+                stream.flush()
+                self.path.chmod(mode ^ 0o100)
+                time.sleep(0.22)
+                self.assertNotIn("partial-", self.events_now())
+                stream.write("complete")
+            self.wait_for("partial-complete")
         finally:
-            self.path.chmod(previous)
+            self.path.chmod(mode)
+
+    def test_symlink_target_written_outside_parent_is_observed(self):
+        external = self.root / "outside"
+        external.mkdir()
+        target = external / "settings"
+        target.write_text("one")
+        self.path.unlink()
+        self.path.symlink_to(target)
+        self.start_clean()
+        target.write_text("two")
+        self.wait_for("two")
+
+    def test_symlink_target_atomic_replacement_is_observed(self):
+        external = self.root / "outside"
+        external.mkdir()
+        target = external / "settings"
+        target.write_text("old")
+        self.path.unlink()
+        self.path.symlink_to(target)
+        self.start_clean()
+        replacement = external / "next"
+        replacement.write_text("atomic-new")
+        os.replace(replacement, target)
+        self.wait_for("atomic-new")
+
+    def test_symlink_retargeting_rearms_target_watch(self):
+        external = self.root / "outside"
+        external.mkdir()
+        old_target, fresh_target = external / "one", external / "two"
+        old_target.write_text("old")
+        fresh_target.write_text("new")
+        self.path.unlink()
+        self.path.symlink_to(old_target)
+        self.start_clean()
+        link = self.root / "new-link"
+        link.symlink_to(fresh_target)
+        os.replace(link, self.path)
+        self.wait_for("new")
+        fresh_target.write_text("newest")
+        self.wait_for("newest")
 
     def test_failed_initialization_recovers_with_visible_state(self):
         from inotify_simple import INotify as RealINotify
