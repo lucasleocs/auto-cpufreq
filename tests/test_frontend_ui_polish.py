@@ -41,29 +41,27 @@ class FrontendPolishTests(unittest.TestCase):
         from auto_cpufreq.gui import objects
 
         path = Path("/tmp/auto-cpufreq/state/gtk-session.log")
-        with (
-            patch.object(objects, "diagnostics",
-                         SimpleNamespace(log_path=path)),
-            patch.object(objects.Gtk, "MessageDialog") as dialog_class,
-        ):
-            dialog = dialog_class.return_value
-            dialog.run.return_value = Gtk.ResponseType.APPLY
-            objects.DropDownMenu._show_debug_log_location(
-                None, None, None
-            )
-            detail = dialog.format_secondary_text.call_args.args[0]
-            self.assertIn("File: gtk-session.log", detail)
-            self.assertIn("Directory: /tmp/auto-cpufreq/state", detail)
-            dialog.add_button.assert_called_once_with(
-                "Copy full path", Gtk.ResponseType.APPLY
-            )
-            dialog.get_clipboard.assert_called_once_with(
-                Gdk.SELECTION_CLIPBOARD
-            )
-            dialog.get_clipboard.return_value.set_text.assert_called_once_with(
-                str(path), -1
-            )
-            dialog.destroy.assert_called_once()
+        with patch.object(objects, "diagnostics",
+                          SimpleNamespace(log_path=path)):
+            with patch.object(objects.Gtk, "MessageDialog") as dialog_class:
+                dialog = dialog_class.return_value
+                dialog.run.return_value = Gtk.ResponseType.APPLY
+                objects.DropDownMenu._show_debug_log_location(
+                    None, None, None
+                )
+                detail = dialog.format_secondary_text.call_args.args[0]
+                self.assertIn("File: gtk-session.log", detail)
+                self.assertIn("Directory: /tmp/auto-cpufreq/state", detail)
+                dialog.add_button.assert_called_once_with(
+                    "Copy full path", Gtk.ResponseType.APPLY
+                )
+                dialog.get_clipboard.assert_called_once_with(
+                    Gdk.SELECTION_CLIPBOARD
+                )
+                dialog.get_clipboard.return_value.set_text.assert_called_once_with(
+                    str(path), -1
+                )
+                dialog.destroy.assert_called_once()
 
     def test_urwid_cpu_table_does_not_wrap_in_standard_split_pane(self):
         import urwid
@@ -101,17 +99,15 @@ class FrontendPolishTests(unittest.TestCase):
             cpu_avg_temp=50.0,
         )
 
-        with (
-            patch.object(system_monitor,
-                         "format_platform_profile_summary",
-                         return_value=[]),
-            patch.object(system_monitor.config,
-                         "has_config", return_value=False),
-        ):
-            monitor = system_monitor.SystemMonitor(
-                type=system_monitor.ViewType.STATS
-            )
-            monitor.format_system_info(report)
+        with patch.object(system_monitor,
+                          "format_platform_profile_summary",
+                          return_value=[]):
+            with patch.object(system_monitor.config,
+                              "has_config", return_value=False):
+                monitor = system_monitor.SystemMonitor(
+                    type=system_monitor.ViewType.STATS
+                )
+                monitor.format_system_info(report)
 
         cpu_rows = [
             widget for widget in monitor.left_content
