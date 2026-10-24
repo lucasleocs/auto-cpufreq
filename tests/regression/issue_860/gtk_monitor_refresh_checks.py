@@ -126,6 +126,64 @@ class MonitorRefreshTests(unittest.TestCase):
         self.assertIsNone(view._health_timer_id)
         self.assertFalse(view._health_tick())
 
+    def test_destroy_window_closes_monitor_and_cancels_timers(self):
+        view, renderer = self.make(lambda: self.report())
+        self.parent.add(view)
+        self.assertTrue(pump_until(lambda: len(renderer.applied) >= 1))
+        timer = view.refresh_id
+        health = view._health_timer_id
+        self.assertIsNotNone(timer)
+        self.assertIsNotNone(health)
+        self.parent.destroy()
+        self.assertFalse(view.running)
+        self.assertTrue(view._refresh_coordinator.closed)
+        self.assertIsNone(view.refresh_id)
+        self.assertIsNone(view._health_timer_id)
+        self.assertIsNone(GLib.MainContext.default().find_source_by_id(timer))
+        self.assertIsNone(GLib.MainContext.default().find_source_by_id(health))
+        # Both cleanup paths can be reached during navigation/destruction.
+        view.cleanup()
+
+    def test_destroy_window_during_blocked_collection_discards_result(self):
+        started = threading.Event()
+        release = threading.Event()
+        finished = threading.Event()
+
+        def collect():
+            started.set()
+            release.wait(timeout=3)
+            finished.set()
+            return self.report()
+
+        view, renderer = self.make(collect)
+        self.parent.add(view)
+        try:
+            self.assertTrue(started.wait(timeout=2))
+            self.parent.destroy()
+            self.assertFalse(view.running)
+            self.assertTrue(view._refresh_coordinator.closed)
+            self.assertIsNone(view._health_timer_id)
+            release.set()
+            self.assertTrue(finished.wait(timeout=2))
+            pump_until(lambda: False, timeout=0.1)
+            self.assertEqual(renderer.applied, [])
+        finally:
+            release.set()
+
+    def test_monitor_diagnostic_failure_does_not_strand_delivery(self):
+        with patch.object(WIDGETS.diagnostics, "record_duration",
+                          side_effect=OSError("simulated logging failure")):
+            view, renderer = self.make(lambda: self.report())
+            self.assertTrue(pump_until(
+                lambda: not view._refresh_coordinator.in_progress,
+                timeout=2,
+            ), "Diagnostics error stranded GTK Monitor delivery")
+        if view.refresh_id is not None:
+            GLib.source_remove(view.refresh_id)
+            view.refresh_id = None
+        view.refresh_in_thread()
+        self.assertTrue(pump_until(lambda: len(renderer.applied) >= 1))
+
     def test_refresh_recovers_after_temporary_error(self):
         attempts = []
         def collect():
