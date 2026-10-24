@@ -615,6 +615,22 @@ The terminal option is **off by default** and does not share the GTK preference.
 
 `--stats` observes the running daemon without requesting power-policy changes. Unlike `--stats`, the existing `--monitor` and `--live` modes have service and privilege preconditions; do not use them as casual diagnostics of a production system.
 
+
+#### Collecting a complete troubleshooting report
+
+For a snapshot of the machine **and** a short record of refresh timing, collect
+both sources close together, as two **separate commands**:
+
+1. Run `auto-cpufreq --stats --diagnostic-log` and observe the Stats screen. Press `Q` to close it, then keep the `stats-*.log` file in `~/.local/state/auto-cpufreq/` (or your `XDG_STATE_HOME` location).
+2. If a maintainer asks for the traditional hardware/system report, run `auto-cpufreq --debug` **separately** and save its terminal output. The historical `--debug` command requires root privileges and invokes `cpufreqctl()`, which can perform system setup; **do not run it on a working production installation merely to collect routine read-only monitoring data**. Review its implementation and effects before using it with `sudo`.
+3. Share the Stats log and, when explicitly collected, the Debug text with the relevant error description, auto-cpufreq version and approximate collection time. Remove private paths and other identifying information first.
+
+The commands are complementary, not simultaneous: `--stats --debug` is
+rejected, and `--diagnostic-log` is only valid with exactly one of
+`--stats`, `--monitor` and `--live`. It cannot accompany update,
+installation, removal or power overrides. Do **not** use `--live` as a
+troubleshooting alternative to Stats: Live may change CPU power settings.
+
 GTK diagnostic sessions now start only when the GTK entrypoint attaches its main loop; merely importing GTK modules will not launch diagnostic workers.
 
 If the daemon is not running, the GUI allows you to either install it for persistent automatic optimization or open Monitor Mode to preview system state and auto-cpufreq recommendations without applying changes.
