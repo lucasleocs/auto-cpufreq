@@ -4,10 +4,68 @@ An adapter decides *when* to request refresh and *how* to deliver results
 onto GTK/GLib or Urwid's event loop. This module never touches widgets,
 system policy, or privileged APIs.
 """
+from collections import deque
 from dataclasses import dataclass
+import logging
 from threading import Lock, Thread
 import time
 from typing import Any, Callable
+import weakref
+
+_LOG = logging.getLogger(__name__)
+
+
+class _ProcessCollectionLane:
+    """One short-lived daemon worker for all frontend collectors in a process.
+
+    Waiting UI instances enqueue weak references. A closed view removes its
+    queued job. This bounds active collectors to one even when the user
+    repeatedly closes/reopens Monitor while a kernel read is blocked.
+    """
+
+    def __init__(self):
+        self._lock = Lock()
+        self._jobs = deque()
+        self._worker = None
+
+    def enqueue(self, coordinator, generation):
+        with self._lock:
+            self._jobs.append((weakref.ref(coordinator), generation))
+            if self._worker is not None and self._worker.is_alive():
+                return
+            worker = Thread(
+                target=self._drain,
+                daemon=True,
+                name=coordinator._thread_name,
+            )
+            try:
+                worker.start()
+            except RuntimeError:
+                self._jobs.pop()
+                raise
+            self._worker = worker
+
+    def cancel(self, coordinator):
+        with self._lock:
+            self._jobs = deque(
+                (ref, generation)
+                for ref, generation in self._jobs
+                if ref() is not None and ref() is not coordinator
+            )
+
+    def _drain(self):
+        while True:
+            with self._lock:
+                if not self._jobs:
+                    self._worker = None
+                    return
+                ref, generation = self._jobs.popleft()
+            coordinator = ref()
+            if coordinator is not None:
+                coordinator._run(generation)
+
+
+_PROCESS_LANE = _ProcessCollectionLane()
 
 
 @dataclass(frozen=True)
@@ -37,10 +95,12 @@ class ReportRefreshCoordinator:
         collect: Callable[[], Any],
         dispatch: Callable[[RefreshResult], None],
         thread_name="report-refresh",
+        on_dispatch_error=None,
     ):
         self._collect = collect
         self._dispatch = dispatch
         self._thread_name = thread_name
+        self._on_dispatch_error = on_dispatch_error
         self._lock = Lock()
         self._generation = 0
         self._running = False
@@ -68,12 +128,8 @@ class ReportRefreshCoordinator:
             self._generation += 1
             generation = self._generation
             self._running = True
-        worker = Thread(
-            target=self._run, args=(generation,),
-            daemon=True, name=self._thread_name,
-        )
         try:
-            worker.start()
+            _PROCESS_LANE.enqueue(self, generation)
         except RuntimeError:
             with self._lock:
                 if generation == self._generation:
@@ -82,6 +138,9 @@ class ReportRefreshCoordinator:
         return True
 
     def _run(self, generation):
+        with self._lock:
+            if self._closed or generation != self._generation:
+                return
         started = time.monotonic()
         try:
             value = self._collect()
@@ -102,10 +161,18 @@ class ReportRefreshCoordinator:
             self._delivering = True
         try:
             self._dispatch(result)
-        except Exception:
-            # A disconnected display/closed watch pipe cannot strand the
-            # coordinator in a permanently "delivery in progress" state.
-            self.acknowledge(generation)
+        except Exception as error:
+            # Record failures without importing GTK or Urwid here.
+            # The frontend-specific callback must never become fatal.
+            try:
+                if self._on_dispatch_error is not None:
+                    self._on_dispatch_error(error)
+                else:
+                    _LOG.warning("Report delivery failed: %s", error)
+            except Exception:
+                _LOG.exception("Reporting a refresh delivery error failed")
+            finally:
+                self.acknowledge(generation)
 
     def is_current(self, generation):
         with self._lock:
@@ -137,3 +204,4 @@ class ReportRefreshCoordinator:
             self._running = False
             self._pending = False
             self._delivering = False
+        _PROCESS_LANE.cancel(self)
