@@ -133,7 +133,9 @@ class SystemMonitor:
                     "Urwid collection/delivery pending for %.1fs; "
                     "keeping single-flight worker", age,
                 )
-        self._refresh_coordinator.request()
+        # Periodic UI ticks never queue a successor behind a busy read.
+        # Explicit requests still use request() for coalescing.
+        self._refresh_coordinator.request_if_idle()
         if self._alarm_handle is None:
             self._alarm_handle = self.loop.set_alarm_in(2, self.update)
 
