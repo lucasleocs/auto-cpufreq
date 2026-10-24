@@ -65,8 +65,8 @@ Example of `auto-cpufreq --stats` CLI output (v3.2.0)
   - [live](#live)
   - [GUI](#gui)
     - [GTK debug logging](#gtk-debug-logging)
-    - [Optional terminal diagnostics](#optional-terminal-diagnostics)
-    - [Collecting a complete troubleshooting report](#collecting-a-complete-troubleshooting-report)
+  - [Optional terminal diagnostics](#optional-terminal-diagnostics)
+  - [Collecting a complete troubleshooting report](#collecting-a-complete-troubleshooting-report)
   - [overriding governor](#overriding-governor)
   - [overriding turbo mode](#overriding-turbo-mode)
   - [Install - auto-cpufreq daemon](#install---auto-cpufreq-daemon)
@@ -606,7 +606,9 @@ When enabled, logging records errors and slow or stalled refreshes. It summarize
 
 This optional GTK logging does not alter the daemon's power policy. The CLI's existing `--debug` mode remains separate from persistent diagnostic logging.
 
-#### Optional terminal diagnostics
+GTK diagnostic sessions now start only when the GTK entrypoint attaches its main loop; merely importing GTK modules will not launch diagnostic workers.
+
+### Optional terminal diagnostics
 
 To record an independent diagnostic session for a terminal screen, add `--diagnostic-log` to `--stats`, `--monitor` or `--live`:
 
@@ -619,7 +621,7 @@ The terminal option is **off by default** and does not share the GTK preference.
 `--stats` observes the running daemon without requesting power-policy changes. Unlike `--stats`, the existing `--monitor` and `--live` modes have service and privilege preconditions; do not use them as casual diagnostics of a production system.
 
 
-#### Collecting a complete troubleshooting report
+### Collecting a complete troubleshooting report
 
 For a snapshot of the machine **and** a short record of refresh timing, collect
 both sources close together, as two **separate commands**:
@@ -634,7 +636,6 @@ rejected, and `--diagnostic-log` is only valid with exactly one of
 installation, removal or power overrides. Do **not** use `--live` as a
 troubleshooting alternative to Stats: Live may change CPU power settings.
 
-GTK diagnostic sessions now start only when the GTK entrypoint attaches its main loop; merely importing GTK modules will not launch diagnostic workers.
 
 If the daemon is not running, the GUI allows you to either install it for persistent automatic optimization or open Monitor Mode to preview system state and auto-cpufreq recommendations without applying changes.
 
