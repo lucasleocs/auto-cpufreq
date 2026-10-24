@@ -42,7 +42,7 @@ class FrontendPolishTests(unittest.TestCase):
 
         path = Path("/tmp/auto-cpufreq/state/gtk-session.log")
         with patch.object(objects, "diagnostics",
-                          SimpleNamespace(log_path=path)):
+                          SimpleNamespace(log_path=path, enabled=False)):
             with patch.object(objects.Gtk, "MessageDialog") as dialog_class:
                 dialog = dialog_class.return_value
                 dialog.run.return_value = Gtk.ResponseType.APPLY
@@ -74,7 +74,7 @@ class FrontendPolishTests(unittest.TestCase):
         window = object()
         path = Path("/tmp/logs with spaces/session.log")
         with patch.object(objects, "diagnostics",
-                          SimpleNamespace(log_path=path)):
+                          SimpleNamespace(log_path=path, enabled=False)):
             with patch.object(objects.Gtk, "MessageDialog") as dialog_class:
                 with patch.object(objects, "open_containing_folder") as opener:
                     dialog = dialog_class.return_value
@@ -82,9 +82,92 @@ class FrontendPolishTests(unittest.TestCase):
                     objects.DropDownMenu._show_debug_log_location(
                         None, None, window
                     )
-                    opener.assert_called_once_with(window, path)
+                    opener.assert_called_once_with(
+                        window, path,
+                        missing_hint=(
+                            "Enable debug logging first to create "
+                            "the log directory."
+                        ),
+                    )
                     dialog.get_clipboard.assert_not_called()
                     dialog.destroy.assert_called_once()
+
+    def test_log_dialog_explains_uncreated_session(self):
+        from tempfile import TemporaryDirectory
+        from gi.repository import Gtk
+        from auto_cpufreq.gui import objects
+
+        with TemporaryDirectory() as tmp:
+            path = Path(tmp) / "not-created" / "future.log"
+            with patch.object(objects, "diagnostics",
+                              SimpleNamespace(log_path=path, enabled=False)):
+                with patch.object(
+                    objects.Gtk, "MessageDialog"
+                ) as dialog_class:
+                    dialog_class.return_value.run.return_value = (
+                        Gtk.ResponseType.CLOSE
+                    )
+                    objects.DropDownMenu._show_debug_log_location(
+                        None, None, None
+                    )
+                    detail = dialog_class.return_value.format_secondary_text
+                    text = detail.call_args.args[0]
+                    self.assertIn("Directory: ", text)
+                    self.assertIn("No log file yet.", text)
+                    self.assertIn("Enable debug logging", text)
+                    self.assertFalse(path.parent.exists())
+
+    def test_log_dialog_identifies_active_and_finished_sessions(self):
+        from tempfile import TemporaryDirectory
+        from gi.repository import Gtk
+        from auto_cpufreq.gui import objects
+
+        with TemporaryDirectory() as tmp:
+            path = Path(tmp) / "session.log"
+            path.write_text("diagnostics")
+            for enabled, status in (
+                (True, "Debug logging is enabled."),
+                (False, "Showing the last session path."),
+            ):
+                with self.subTest(enabled=enabled):
+                    with patch.object(
+                        objects, "diagnostics",
+                        SimpleNamespace(log_path=path, enabled=enabled)
+                    ):
+                        with patch.object(
+                            objects.Gtk, "MessageDialog"
+                        ) as dialog_class:
+                            dialog_class.return_value.run.return_value = (
+                                Gtk.ResponseType.CLOSE
+                            )
+                            objects.DropDownMenu._show_debug_log_location(
+                                None, None, None
+                            )
+                            text = (
+                                dialog_class.return_value
+                                .format_secondary_text.call_args.args[0]
+                            )
+                            self.assertIn(status, text)
+
+    def test_log_folder_missing_hint_explains_how_to_create_it(self):
+        from tempfile import TemporaryDirectory
+        from auto_cpufreq.gui import objects
+
+        with TemporaryDirectory() as tmp:
+            log_path = Path(tmp) / "not-created" / "session.log"
+            with patch.object(objects.Gtk, "MessageDialog") as dialog_class:
+                with patch.object(objects.Gtk, "show_uri_on_window") as show:
+                    self.assertFalse(objects.open_containing_folder(
+                        None, log_path,
+                        missing_hint="Enable debug logging first.",
+                    ))
+                show.assert_not_called()
+                text = (
+                    dialog_class.return_value
+                    .format_secondary_text.call_args.args[0]
+                )
+                self.assertIn(str(log_path.parent), text)
+                self.assertIn("Enable debug logging first.", text)
 
     def test_open_containing_folder_uses_desktop_uri_handler(self):
         from tempfile import TemporaryDirectory
