@@ -496,6 +496,9 @@ class ToolWindow(Gtk.Window):
             self._collect_report,
             self._dispatch_refresh_result,
             thread_name="gtk-dashboard-refresh",
+            on_dispatch_error=lambda error: diagnostics.warning(
+                "GTK dashboard report delivery failed: %s", error
+            ),
         )
         self.connect("destroy", self._cleanup_refresh)
         diagnostics.info("GTK window created")
