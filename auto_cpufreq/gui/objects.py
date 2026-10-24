@@ -676,8 +676,9 @@ class DropDownMenu(Gtk.MenuButton):
                 text="Unable to change debug logging",
             )
             dialog.format_secondary_text(str(error))
-            dialog.run()
-            dialog.destroy()
+            dialog.set_destroy_with_parent(True)
+            dialog.connect("response", lambda widget, _response: widget.destroy())
+            dialog.show_all()
 
     def _show_debug_log_location(self, _item, parent):
         dialog = Gtk.MessageDialog(
