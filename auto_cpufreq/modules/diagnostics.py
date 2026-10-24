@@ -297,14 +297,18 @@ class SessionDiagnostics:
             return
         # A writer stuck in I/O may outlive the bounded shutdown wait.
         # Do not create a second unsupervised session while it remains.
-        if (
-            self._retiring_session is not None
-            and self._retiring_session.writer.is_alive()
-        ):
-            raise OSError("Previous diagnostic writer is still stopping")
+        retiring = self._retiring_session
+        if retiring is not None and retiring.writer.is_alive():
+            # Off/on in rapid succession must not race normal cooperative
+            # writer shutdown. Bound the hand-off on the calling thread.
+            retiring.writer.join(timeout=0.05)
+            if retiring.writer.is_alive():
+                raise OSError("Previous diagnostic writer is still stopping")
         self._retiring_session = None
         if self._health_sampler is not None and self._health_sampler.is_alive():
-            raise OSError("Previous process-health sampler is still stopping")
+            # A stopped sampler may still be exiting its Event.wait loop.
+            if not self._health_sampler.stop(wait=True):
+                raise OSError("Previous process-health sampler is still stopping")
         self._health_sampler = None
         if self._activated_once:
             self.log_path = self._new_log_path()
