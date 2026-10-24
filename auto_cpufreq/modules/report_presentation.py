@@ -60,16 +60,28 @@ class PlatformProfilePresentation:
     provider: str
     provider_visible: bool
     detected: bool
+    status_text: str = "Unknown"
 
 
 def present_platform_profile(snapshot):
-    """Interpret the platform-profile snapshot without sampling hardware."""
+    """Interpret platform profile and provider states without I/O.
+
+    Preserve the historical status categories for the legacy text report.
+    GTK and Stats intentionally show the more compact interface/control state.
+    """
+    status_text = {
+        "available": "Available",
+        "partial": "Partially available",
+        "read-only": "Read-only",
+        "unavailable": "No interface detected",
+    }.get(snapshot.status, "Unknown")
+
     if snapshot.interface == "none":
         return PlatformProfilePresentation(
             interface="Not detected", current="Unknown",
             available_label="Available profiles", available="Could not be determined",
             provider_label="Provider", provider="", provider_visible=False,
-            detected=False,
+            detected=False, status_text=status_text,
         )
 
     interface = {
@@ -110,7 +122,7 @@ def present_platform_profile(snapshot):
         provider_label=provider_label,
         provider=provider_text,
         provider_visible=bool(providers),
-        detected=True,
+        detected=True, status_text=status_text,
     )
 
 
