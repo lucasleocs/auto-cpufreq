@@ -68,7 +68,7 @@ def battery_status_label(battery: BatteryInfo | None) -> str:
         "not charging": "Not charging",
         "full": "Full",
         "fully charged": "Fully charged",
-        "pending charge": "Pending charge",
+        "pending charge": "Not charging",
         "pending discharge": "Pending discharge",
         "empty": "Empty",
         "unknown": "Unknown",
