@@ -978,9 +978,19 @@ class MonitorModeView(Gtk.Box):
         ):
             return False
         diagnostics.record_duration(
+            "GTK monitor queue", result.queue_seconds,
+            slow_after=max(1.0, self.refresh_interval),
+        )
+        diagnostics.record_duration(
             "GTK monitor collection", result.duration,
             slow_after=max(2.0, self.refresh_interval * 2),
         )
+        if result.completed_at:
+            diagnostics.record_duration(
+                "GTK monitor delivery latency",
+                max(0.0, time.monotonic() - result.completed_at),
+                slow_after=max(1.0, self.refresh_interval),
+            )
         try:
             if result.error is not None:
                 diagnostics.warning(
