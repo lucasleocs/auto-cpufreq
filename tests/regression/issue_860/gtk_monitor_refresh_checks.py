@@ -104,6 +104,20 @@ class MonitorRefreshTests(unittest.TestCase):
             self.assertTrue(monitor._refresh_coordinator.closed)
             self.assertIsInstance(root.box, WIDGETS.DaemonNotRunningView)
 
+    def test_monitor_stall_health_timer_is_removed_on_close(self):
+        view, renderer = self.make(lambda: self.report())
+        self.assertIsNotNone(view._health_timer_id)
+        with patch.object(view._refresh_coordinator, "request_age_seconds",
+                          return_value=25), patch.object(
+            WIDGETS.diagnostics, "warning"
+        ) as warning:
+            self.assertTrue(view._health_tick())
+            self.assertTrue(view._health_tick())
+            warning.assert_called_once()
+        view.cleanup()
+        self.assertIsNone(view._health_timer_id)
+        self.assertFalse(view._health_tick())
+
     def test_refresh_recovers_after_temporary_error(self):
         attempts = []
         def collect():
