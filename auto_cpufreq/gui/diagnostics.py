@@ -218,7 +218,7 @@ class GuiDiagnostics(SessionDiagnostics):
         self._watchdog_stop = stop
         self._watchdog_thread = worker
 
-    def _deactivate(self):
+    def _deactivate(self, *, wait=False):
         if not self.enabled:
             return
         self._flush_summary(force=True)
@@ -226,7 +226,7 @@ class GuiDiagnostics(SessionDiagnostics):
             self._watchdog_stop.set()
             self._watchdog_stop = None
         worker = self._watchdog_thread
-        if worker is not None and worker.is_alive():
+        if wait and worker is not None and worker.is_alive():
             worker.join(timeout=0.2)
         # Retain the reference while a slow watchdog is still alive.
         if worker is not None and not worker.is_alive():
@@ -234,7 +234,7 @@ class GuiDiagnostics(SessionDiagnostics):
         if self._heartbeat_id is not None and self._glib is not None:
             self._glib.source_remove(self._heartbeat_id)
             self._heartbeat_id = None
-        super()._deactivate()
+        super()._deactivate(wait=wait)
 
     def set_enabled(self, enabled):
         enabled = bool(enabled)
@@ -253,7 +253,8 @@ class GuiDiagnostics(SessionDiagnostics):
 
     def shutdown(self):
         self.info("GUI session ended")
-        self._deactivate()
+        # Only at process exit do we make bounded attempts to flush logs.
+        self._deactivate(wait=True)
 
 
 diagnostics = GuiDiagnostics()
