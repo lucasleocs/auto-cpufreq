@@ -120,24 +120,35 @@ class SystemMonitor:
         self._alarm_handle = None
         if not self.running:
             return
-        # Periodic fallback keeps the terminal responsive even if the
-        # watch_pipe writer breaks after a collection has completed.
-        self._refresh_ready(b"")
-        age = self._refresh_coordinator.request_age_seconds()
-        if age is None:
-            self._stalled_refresh_reported = False
-        elif age >= 20 and not self._stalled_refresh_reported:
-            self._stalled_refresh_reported = True
+        try:
+            # A periodic tick also provides fallback delivery when the
+            # worker's watch_pipe notification could not be written.
+            self._refresh_ready(b"")
+            age = self._refresh_coordinator.request_age_seconds()
+            if age is None:
+                self._stalled_refresh_reported = False
+            elif age >= 20 and not self._stalled_refresh_reported:
+                self._stalled_refresh_reported = True
+                if self._diagnostics:
+                    self._diagnostics.warning(
+                        "Urwid collection/delivery pending for %.1fs; "
+                        "keeping single-flight worker", age,
+                    )
+            # The coordinator atomically skips busy periodic cycles.
+            self._refresh_coordinator.request_if_idle()
+        except Exception as error:
+            # An optional diagnostic backend or transient worker-start
+            # failure must not permanently stop the terminal refresh loop.
             if self._diagnostics:
-                self._diagnostics.warning(
-                    "Urwid collection/delivery pending for %.1fs; "
-                    "keeping single-flight worker", age,
-                )
-        # Periodic UI ticks never queue a successor behind a busy read.
-        # Explicit requests still use request() for coalescing.
-        self._refresh_coordinator.request_if_idle()
-        if self._alarm_handle is None:
-            self._alarm_handle = self.loop.set_alarm_in(2, self.update)
+                try:
+                    self._diagnostics.warning(
+                        "Urwid periodic refresh failed: %s", error
+                    )
+                except Exception:
+                    pass
+        finally:
+            if self.running and self._alarm_handle is None:
+                self._alarm_handle = self.loop.set_alarm_in(2, self.update)
 
     def _collect_report_data(self):
         report = system_info.generate_system_report()
