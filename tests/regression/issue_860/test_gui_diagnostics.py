@@ -305,6 +305,26 @@ class GuiDiagnosticsTests(unittest.TestCase):
         self.assertIn("simulated disk failure", ui_errors[0])
         diagnostics.shutdown()
 
+    def test_watchdog_stops_between_repeated_debug_toggles(self):
+        diagnostics = self.diagnostics
+        diagnostics.attach_mainloop(MockGLib())
+        for _ in range(3):
+            diagnostics.set_enabled(True)
+            self.assertTrue(diagnostics._watchdog_thread.is_alive())
+            diagnostics.set_enabled(False)
+            self.assertFalse(diagnostics.enabled)
+            self.assertIsNone(diagnostics._watchdog_thread)
+
+    def test_still_running_watchdog_blocks_reactivation(self):
+        from types import SimpleNamespace
+        diagnostics = self.diagnostics
+        diagnostics._watchdog_thread = SimpleNamespace(
+            is_alive=lambda: True
+        )
+        with self.assertRaisesRegex(OSError, "watchdog is still stopping"):
+            diagnostics.set_enabled(True)
+        self.assertFalse(diagnostics.enabled)
+
     def test_enable_rolls_back_when_preference_write_fails(self):
         diagnostics = self.diagnostics
         with patch.object(
