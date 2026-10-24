@@ -46,6 +46,17 @@ class RecommendationContractTests(unittest.TestCase):
             with self.subTest(usage=usage, temp=temp):
                 self.assertIs(turbo_candidate(usage, temp), expected)
 
+    def test_turbo_threshold_ignores_former_inert_temperature_branch(self):
+        # Temperature was accepted by the old helper but had no effect
+        # on its returned boolean for valid numeric readings.
+        for usage in (0.0, 19.9, 20.0, 25.0, 99.9):
+            for temperature in (-20.0, 0.0, 70.0, 100.0, None):
+                with self.subTest(usage=usage, temperature=temperature):
+                    self.assertIs(
+                        turbo_candidate(usage, temperature),
+                        usage >= 20.0,
+                    )
+
     def test_change_and_no_change_are_distinct(self):
         result = evaluate_recommendations(snapshot(), GOVERNORS)
         self.assertEqual(result.governor.status, State.CHANGE)
