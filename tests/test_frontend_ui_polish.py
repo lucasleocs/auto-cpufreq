@@ -267,6 +267,7 @@ class FrontendPolishTests(unittest.TestCase):
                 ) for i in range(16)
             ],
             cpu_fan_speed=None,
+            offline_cpus=(),
             battery_info=None,
             platform_profile=SimpleNamespace(),
             current_gov="powersave",
