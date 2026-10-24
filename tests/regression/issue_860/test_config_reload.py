@@ -159,6 +159,47 @@ class ConfigContractTests(unittest.TestCase):
         self.assertIsNone(self.config._notifier)
 
 
+    def test_symlink_target_reloads_config_after_direct_and_atomic_writes(self):
+        target_dir = self.root / "external"
+        target_dir.mkdir()
+        target = target_dir / "actual.conf"
+        target.write_text("[battery]\ngovernor=powersave\n")
+        link = self.root / "linked.conf"
+        link.symlink_to(target)
+        self.config.set_path(str(link))
+        self.config.notifier.start()
+        target.write_text("[battery]\ngovernor=performance\n")
+        deadline = time.monotonic() + 3
+        while time.monotonic() < deadline and self.governor() != "performance":
+            time.sleep(0.02)
+        self.assertEqual(self.governor(), "performance")
+        staged = target_dir / "staged.conf"
+        staged.write_text("[battery]\ngovernor=powersave\n")
+        os.replace(staged, target)
+        deadline = time.monotonic() + 3
+        while time.monotonic() < deadline and self.governor() != "powersave":
+            time.sleep(0.02)
+        self.assertEqual(self.governor(), "powersave")
+
+    def test_chmod_during_open_write_does_not_publish_partial_config(self):
+        self.config.notifier.start()
+        original_mode = self.config_path.stat().st_mode
+        try:
+            with self.config_path.open("w") as handle:
+                handle.write("[battery]\ngovernor=performance\n")
+                handle.flush()
+                self.config_path.chmod(original_mode ^ 0o100)
+                time.sleep(0.25)
+                self.assertEqual(self.governor(), "powersave")
+                handle.write("other_option=complete\n")
+            deadline = time.monotonic() + 2
+            while time.monotonic() < deadline and self.governor() != "performance":
+                time.sleep(0.02)
+            self.assertEqual(self.governor(), "performance")
+        finally:
+            self.config_path.chmod(original_mode)
+
+
     def test_concurrent_atomic_reloads_publish_only_complete_snapshots(self):
         errors = []
         first = self.root / "next-0"
