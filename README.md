@@ -50,6 +50,7 @@ Example of `auto-cpufreq --stats` CLI output (v3.2.0)
   - [Debian repositories (.deb package)](#debian-repositories-deb-package)
   - [Snap Store](#snap-store)
   - [AUR package (Arch based distributions)](#aur-package-arch-based-distributions)
+  - [Gentoo Linux (GURU Repository)](#gentoo-linux-guru-repository)
   - [NixOS](#nixos)
   - [For developers](#installation-development-mode-only)
 - [Post-installation](#post-installation)
@@ -80,7 +81,7 @@ Example of `auto-cpufreq --stats` CLI output (v3.2.0)
 - [Battery charging thresholds](#battery-charging-thresholds)
   - [Supported Devices](#supported-devices)
   - [Battery config](#battery-config)
-  - [Ignoring power supplies](#Ignoring-power-supplies)
+  - [Ignoring power supplies](#ignoring-power-supplies)
 - [Troubleshooting](#troubleshooting)
   - [AUR](#aur)
 - [Discussion](#discussion)
@@ -165,7 +166,7 @@ When replacing an existing source installation, remove its auto-cpufreq daemon f
 
 ### Debian repositories (.deb package)
 
-auto-cpufreq has been added to [official Debian repositories](https://packages.debian.org/search?keywords=auto-cpufreq&searchon=names&suite=all&section=all), and will soon make its way to other derivatives like [Ubuntu](https://packages.ubuntu.com/search?keywords=auto-cpufreq&searchon=names&suite=all&section=all), Mint and et cetera. 
+auto-cpufreq is available in [some official Debian suites](https://packages.debian.org/search?keywords=auto-cpufreq&searchon=names&suite=all). Before using APT, check whether your Debian release provides the package; availability on Ubuntu, Linux Mint, and other derivatives may differ.
 
 ```
 sudo apt install auto-cpufreq
@@ -197,7 +198,7 @@ The AUR [Release Package](https://aur.archlinux.org/packages/auto-cpufreq) is cu
 
 **Notices**
 
-- The [Git Package](https://aur.archlinux.org/packages/auto-cpufreq-git) is seperately maintained and was last updated on version 1.9.6. 
+- The [Git Package](https://aur.archlinux.org/packages/auto-cpufreq-git) is separately maintained and may differ from the stable release package.
 - The build process links to `/usr/share/` instead of `/usr/local/share/`
 - The daemon installer provided does not work, instead start the daemon with 
 
@@ -292,7 +293,7 @@ Then you can enable the program in your `configuration.nix` file:
 <summary>Nixpkgs</summary>
 <br>
 
-There is a nixpkg available, but it is more prone to being outdated, whereas the flake pulls from the latest commit. You can install it in your `configuration.nix` and enable the system service:
+A package is also available through nixpkgs. Its version follows the selected nixpkgs revision; a flake input is pinned by the consuming project's `flake.lock` and can be updated independently. To use the nixpkgs package, add it to your `configuration.nix` and enable its system service:
 ```nix
 # configuration.nix
 
@@ -330,7 +331,7 @@ services.auto-cpufreq.enable = true;
   pip3 install -e .
   auto-cpufreq
   ```
-- Regularly run `poetry update` if you get any inconsistent lock file issues.
+- If `poetry install` reports a lockfile mismatch, check that `pyproject.toml` and `poetry.lock` are from the same revision. Regenerate the lockfile only when intentionally changing dependencies; avoid using `poetry update` as a routine workaround.
 
 ## Post-installation
 
@@ -526,8 +527,8 @@ auto-cpufreq can be used through the following CLI modes and the GTK interface:
 - [update](#update---auto-cpufreq-update)
   - Update auto-cpufreq to the latest release
 
-- [install_performance](#1-power_helperpy-script)
-  - Install daemon in "performance" mode
+- [pp](#platform-profiles)
+  - Display detected Platform Profile interfaces and available profiles
 
 - [stats](#stats)
   - View live stats of CPU optimizations made by daemon
@@ -649,7 +650,7 @@ Please note that any set override will persist even after reboot.
 
 ### Install - auto-cpufreq daemon
 
-Necessary changes are made to the system over time and this process will continue across reboots. The daemon is deployed and started as a systemd service. Changes are made automatically and live stats are generated for monitoring purposes.
+Necessary changes are made automatically over time and continue across reboots. The daemon is installed and started using the supported init system (such as systemd, OpenRC, dinit, runit, or s6). Live stats are generated for monitoring.
 
 **Install the daemon using CLI ([after installing auto-cpufreq](#installing-auto-cpufreq)):**
 
@@ -663,9 +664,9 @@ The daemon can also be installed from the GTK interface. See [GUI](#gui).
 
 **auto-cpufreq daemon service**
 
-Installing the auto-cpufreq daemon also enables the associated service (equivalent to `systemctl enable auto-cpufreq`), causing it to start on boot, and immediately starts it (equivalent to `systemctl start auto-cpufreq`).
+The daemon installer enables and starts the service through the detected init system. On systemd, this is equivalent to enabling `auto-cpufreq` at boot and starting it immediately.
 
-Since the daemon is running as a systemd service, its status can be seen by running:
+On systemd-based systems, check the service status with:
 
 `systemctl status auto-cpufreq`
 
@@ -849,11 +850,11 @@ See more here on the kernel doc pages: [docs.kernel.org](https://docs.kernel.org
 
 ### A few notes about these battery config options
 
-When you remove/uninstall the auto-cpufreq daemon, the last applied settings for battery thresholds will still apply. You might need to manually set these yourself to whatever default they were before. E.g. (as sudo):
+Removing the auto-cpufreq daemon may leave the last battery charge thresholds in effect. Reset values and sysfs paths vary by hardware; consult your device's documentation before changing them. For devices where 0 and 100 are the supported reset values and these files are writable, an example is:
 
 ```shell
-echo 0 > /sys/class/power_supply/BAT0/charge_start_threshold
-echo 100 > /sys/class/power_supply/BAT0/charge_stop_threshold
+printf '0\n' | sudo tee /sys/class/power_supply/BAT0/charge_start_threshold
+printf '100\n' | sudo tee /sys/class/power_supply/BAT0/charge_stop_threshold
 ```
 
 ### Ideapad conservation mode
@@ -903,9 +904,9 @@ peripheral = power_supply_name
 - suboptimal CPU performance
 - turbo mode not available
 
-**A:** If you're using the `intel_pstate/amd-pstate` CPU management driver, consider changing it to `acpi-cpufreq`.
+**A:** If you're using the `intel_pstate` or `amd-pstate` CPU management driver, an alternative driver may be worth investigating for some hardware. Switching to `acpi-cpufreq` is an advanced, hardware-dependent troubleshooting step, not a general fix; check whether your kernel and hardware support it before changing boot parameters.
 
-This can be done by editing the `GRUB_CMDLINE_LINUX_DEFAULT` params in `/etc/default/grub`. For instance:
+The following commands are bootloader- and distribution-specific examples. Back up the current boot configuration and consult your distribution's documentation before applying changes. For GRUB systems, the kernel command line can be edited in `/etc/default/grub`, for example:
 
 ```shell
     sudo nano /etc/default/grub
@@ -958,7 +959,7 @@ For AMD users:
 quiet splash initcall_blacklist=amd_pstate_init amd_pstate.enable=0
 ```
 
-Once you have made the necessary changes to the `cmdline` file, you can update it by running `sudo reinstall-kernels`.
+After editing the `cmdline` file, use your distribution's documented procedure to regenerate the boot entries or unified kernel images. `sudo reinstall-kernels` is available on some distributions, but it is not a universal systemd-boot command.
 
 **Q:** If auto-cpufreq-gtk doesn't launch with exit code 1 (Workaround)
 
