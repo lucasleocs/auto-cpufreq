@@ -12,6 +12,7 @@ from threading import Thread
 import time
 
 from auto_cpufreq.gui.diagnostics import diagnostics
+from auto_cpufreq.modules.report_refresh import ReportRefreshCoordinator
 from auto_cpufreq.modules.report_presentation import (
     present_report, interpret_turbo, interpret_battery,
 )
@@ -491,6 +492,11 @@ class ToolWindow(Gtk.Window):
         self.pending_power_release = set()
         self.power_apply_sources = {}
         self.destroyed = False
+        self._refresh_coordinator = ReportRefreshCoordinator(
+            self._collect_report,
+            self._dispatch_refresh_result,
+            thread_name="gtk-dashboard-refresh",
+        )
         self.connect("destroy", self._cleanup_refresh)
         diagnostics.info("GTK window created")
         self.load_css()
@@ -807,12 +813,13 @@ class ToolWindow(Gtk.Window):
             self.pending_power_updates.discard(key)
         self.pending_power_release.clear()
 
-        self.refresh_in_thread()
+        self._refresh_coordinator.request()
 
     def _cleanup_refresh(self, *_args):
         diagnostics.set_error_callback(None)
         diagnostics.info("GTK window closing")
         self.destroyed = True
+        self._refresh_coordinator.close()
         self.refresh_in_progress = False
         self.refresh_pending = False
 
@@ -961,33 +968,46 @@ class ToolWindow(Gtk.Window):
         if self.destroyed:
             return False
         if self.refresh_in_progress:
+            self.refresh_pending = True
             return True
-
         self.refresh_in_progress = True
-        Thread(target=self._refresh, daemon=True).start()
+        try:
+            self._refresh_coordinator.request()
+        except RuntimeError:
+            self.refresh_in_progress = False
+            raise
         return True
 
-    def _refresh(self):
-        started = time.monotonic()
+    def _collect_report(self):
+        return system_info.generate_system_report()
+
+    def _dispatch_refresh_result(self, result):
+        # Worker thread: the actual UI update is exclusively on GLib.
+        GLib.idle_add(self._deliver_refresh_result, result)
+
+    def _deliver_refresh_result(self, result):
+        if (
+            self.destroyed
+            or not self._refresh_coordinator.is_current(result.generation)
+        ):
+            return False
         try:
-            report = system_info.generate_system_report()
-        except Exception as error:
-            diagnostics.exception("GTK dashboard collection failed")
-            if not self.destroyed:
-                GLib.idle_add(
-                    self._finish_refresh_error,
-                    str(error),
-                )
-            return
-        finally:
             diagnostics.record_duration(
-                "GTK dashboard collection",
-                time.monotonic() - started,
+                "GTK dashboard collection", result.duration,
                 slow_after=max(2.0, self.refresh_interval * 2),
             )
-
-        if not self.destroyed:
-            GLib.idle_add(self._apply_refresh, report)
+            if result.error is not None:
+                diagnostics.warning(
+                    "GTK dashboard collection failed: %s", result.error
+                )
+                self._finish_refresh_error(str(result.error))
+            else:
+                self._apply_refresh(result.report)
+        finally:
+            self._run_pending_refresh()
+            self._refresh_coordinator.acknowledge(result.generation)
+            self.refresh_in_progress = self._refresh_coordinator.in_progress
+        return False
 
     def _apply_refresh(self, report):
         if self.destroyed:
@@ -1017,9 +1037,6 @@ class ToolWindow(Gtk.Window):
                 time.monotonic() - started,
                 slow_after=1.0,
             )
-            self.refresh_in_progress = False
-            self._run_pending_refresh()
-
         return False
 
     def _finish_refresh_error(self, message):
@@ -1033,6 +1050,4 @@ class ToolWindow(Gtk.Window):
             f"{message}"
         )
         self.refresh_error_label.show()
-        self.refresh_in_progress = False
-        self._run_pending_refresh()
         return False
