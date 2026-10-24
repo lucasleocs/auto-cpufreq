@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 import os
-import time
 from typing import Any
 
 from auto_cpufreq.config.config import config
@@ -140,29 +139,138 @@ class BatteryDevice:
         """
         return None
 
+    @staticmethod
+    def _valid_threshold_pair(values: tuple[int | None, int | None]) -> bool:
+        start, stop = values
+        return (
+            type(start) is int and type(stop) is int
+            and 0 <= start <= 99 and 1 <= stop <= 100
+            and start < stop
+        )
+
+    @staticmethod
+    def _threshold_steps(current: tuple[int, int],
+                         target: tuple[int, int]) -> tuple[str, ...] | None:
+        """Plan the minimum writes while maintaining start < stop."""
+        old_start, old_stop = current
+        start, stop = target
+        change_start = start != old_start
+        change_stop = stop != old_stop
+        if not change_start and not change_stop:
+            return ()
+        if not change_start:
+            return ("stop",) if stop > old_start else None
+        if not change_stop:
+            return ("start",) if start < old_stop else None
+        if start < old_stop:
+            return ("start", "stop")
+        if stop > old_start:
+            return ("stop", "start")
+        return None
+
+    def _transition_threshold_pair(
+        self, bat: str, current: tuple[int, int], target: tuple[int, int],
+        *, restoring: bool = False,
+    ) -> tuple[bool, tuple[int | None, int | None], bool]:
+        """Apply a validated two-value plan; report unexpected external changes.
+
+        The last boolean indicates an unplanned concurrent change, in which
+        case automatically restoring old settings may fight another controller.
+        """
+        steps = self._threshold_steps(current, target)
+        if steps is None:
+            return False, current, False
+
+        last = current
+        for field in steps:
+            fresh = self.get_current_threshold(bat)
+            if fresh != last:
+                print(f"ERROR: battery {bat} thresholds changed during update: {fresh}")
+                return False, fresh, True
+
+            index = 0 if field == "start" else 1
+            path = self.start_paths[bat] if field == "start" else self.stop_paths[bat]
+            desired = target[index]
+            wrote = self._write_value_to_file(path, desired)
+            observed = self.get_current_threshold(bat)
+
+            if not self._valid_threshold_pair(observed):
+                print(f"ERROR: battery {bat} has invalid threshold readback: {observed}")
+                return False, observed, False
+            if observed[1 - index] != last[1 - index]:
+                print(f"ERROR: battery {bat} other threshold changed unexpectedly: {observed}")
+                return False, observed, True
+            if not wrote or observed[index] == last[index]:
+                print(f"ERROR: battery {bat} {field} write not confirmed: {observed}")
+                return False, observed, False
+            if restoring and observed[index] != desired:
+                print(f"ERROR: battery {bat} restore rounded unexpectedly: {observed}")
+                return False, observed, False
+
+            # A driver may round an individual attribute. Only proceed if the
+            # next requested write can still keep the pair valid.
+            if field == "start" and "stop" in steps and target[1] <= observed[0]:
+                print(f"ERROR: rounded start would conflict with requested stop: {observed}")
+                return False, observed, False
+            if field == "stop" and "start" in steps and target[0] >= observed[1]:
+                print(f"ERROR: rounded stop would conflict with requested start: {observed}")
+                return False, observed, False
+            last = observed
+        return True, last, False
+
     def set_battery_thresholds(self, bat, start: int, stop: int) -> bool:
-        """
-        Set battery thresholds for given battery
-        Return true/false depending on if command is executed and fails (or succeeds)
-        """
+        """Apply charge start/stop without an unconditional 100% detour.
 
+        Kernel sysfs does not promise atomic writes across two attributes.
+        After a partial failure, make at most one safe restoration attempt.
+        """
         if bat not in self.start_paths or bat not in self.stop_paths:
-            print(f"WARNING: battery {bat} has no threshold attributes")
+            print(f"WARNING: battery {bat} has no writable start/stop attributes")
             return False
 
-        # First set stop to 100 to avoid potential 'invalid argument'
-        # errors when start >= stop
-        if not self._write_value_to_file(self.stop_paths[bat], 100):
+        target = (start, stop)
+        old = self.get_current_threshold(bat)
+        if not self._valid_threshold_pair(target):
+            print(f"ERROR: invalid requested thresholds for {bat}: {target}")
+            return False
+        if not self._valid_threshold_pair(old):
+            print(f"ERROR: cannot safely modify unknown thresholds for {bat}: {old}")
+            return False
+        if old == target:
+            return True
+
+        ok, observed, concurrent = self._transition_threshold_pair(bat, old, target)
+        if ok:
+            if observed != target:
+                print(
+                    f"WARNING: battery {bat} requested thresholds {target} "
+                    f"were adjusted by the kernel to {observed}"
+                )
+            return True
+
+        if concurrent:
+            print(f"ERROR: battery {bat} thresholds changed unexpectedly; "
+                  "not restoring over another possible controller")
+            return False
+        if not self._valid_threshold_pair(observed):
+            print(f"ERROR: battery {bat} partial state is unknown: {observed}; "
+                  "automatic restoration is unsafe")
+            return False
+        if observed == old:
             return False
 
-        time.sleep(0.1)
-
-        if not self._write_value_to_file(self.start_paths[bat], start):
-            return False
-        if not self._write_value_to_file(self.stop_paths[bat], stop):
-            return False
-
-        return True
+        # One bounded attempt to recover the original pair, only if the
+        # driver still provides a coherent and observable intermediate pair.
+        restored, final, changed = self._transition_threshold_pair(
+            bat, observed, old, restoring=True,
+        )
+        if restored and final == old:
+            print(f"WARNING: battery {bat} threshold update failed; "
+                  f"original values {old} were restored")
+        else:
+            print(f"ERROR: battery {bat} threshold update PARTIAL; "
+                  f"observed {final}, original {old}. Manual verification required")
+        return False
 
     def _write_value_to_file(self, path: str, value: str | int) -> bool:
         try:
