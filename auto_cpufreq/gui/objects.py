@@ -868,8 +868,9 @@ class DaemonNotRunningView(Gtk.Box):
                 text="Unable to change debug logging",
             )
             dialog.format_secondary_text(str(error))
-            dialog.run()
-            dialog.destroy()
+            dialog.set_destroy_with_parent(True)
+            dialog.connect("response", lambda widget, _response: widget.destroy())
+            dialog.show_all()
 
     def start_monitor(self, button, parent):
         parent.remove(self)
