@@ -2,7 +2,9 @@
 from subprocess import PIPE, run
 import os
 from threading import Thread
-from time import sleep
+from time import monotonic, sleep
+
+from auto_cpufreq.battery_scripts.conflicts import ChargeDriftGuard
 
 from auto_cpufreq.battery_scripts.asus import AsusBatteryDevice
 from auto_cpufreq.battery_scripts.ideapad_laptop import IdeapadBatteryDevice
@@ -12,6 +14,7 @@ from auto_cpufreq.modules.system_info import SystemInfo
 from auto_cpufreq.config.config import config
 
 BATTERY_APPLY_INTERVAL = 3600  # 1 hour
+BATTERY_CONFIG_POLL_INTERVAL = 15  # detect reloaded configuration without busy polling
 
 
 def lsmod(module: str) -> bool:
@@ -35,24 +38,99 @@ def battery_get_thresholds():
         return dev.print_thresholds()
 
 
-def start_battery_daemon():
-    """Battery daemon that applies battery charge thresholds at regular intervals."""
-    dev = get_battery_device()
+def _battery_policy_signature():
+    """Only charging-policy changes trigger early application.
+
+    ConfigEventHandler atomically replaces the parsed configuration. This
+    signature includes battery_device and vendor-specific options without
+    reacting to unrelated CPU governor settings.
+    """
+    conf = config.get_config()
+    return tuple(sorted(conf.items("battery"))) if conf.has_section("battery") else ()
+
+
+def _device_identity(dev):
+    """Compare discovered kernel paths, not only class names."""
     if dev is None:
-        print(
-            "WARNING: No supported battery device found, battery thresholds will not be applied."
-        )
-        return
+        return None
+    return (
+        type(dev),
+        tuple(sorted(dev.batteries)),
+        tuple(sorted(dev.start_paths.items())),
+        tuple(sorted(dev.stop_paths.items())),
+        getattr(dev, "conservation_mode_path", None),
+    )
+
+
+class BatteryDaemonController:
+    """One synchronous iteration; background thread only supplies scheduling.
+
+    The shared drift guard survives backend reselection so a transient
+    transition never discards knowledge that an external writer intervened.
+    """
+
+    def __init__(self):
+        self.device = None
+        self._identity = None
+        self._policy_signature = None
+        self._last_run = None
+        self._drift_guard = ChargeDriftGuard()
+        self._reported_conflicts = set()
+        self._warned_missing = False
+
+    def tick(self, now=None):
+        if now is None:
+            now = monotonic()
+
+        policy = _battery_policy_signature()
+        policy_changed = policy != self._policy_signature
+        due = (self._last_run is None
+               or now - self._last_run >= BATTERY_APPLY_INTERVAL)
+        if not (policy_changed or due):
+            return
+
+        self._policy_signature = policy
+        self._last_run = now
+        # No write and no UPower/TLP probe when the feature is disabled.
+        conf = config.get_config()
+        if (not conf.has_section("battery")
+                or conf.get("battery", "enable_thresholds", fallback="false") != "true"):
+            return
+
+        candidate = get_battery_device()
+        if candidate is None:
+            if not self._warned_missing:
+                print("WARNING: No compatible charge-threshold device available")
+                self._warned_missing = True
+            self.device = None
+            self._identity = None
+            return
+
+        self._warned_missing = False
+        identity = _device_identity(candidate)
+        if self.device is None or self._identity != identity:
+            candidate._drift_guard = self._drift_guard
+            candidate._reported_conflicts = self._reported_conflicts
+            self.device = candidate
+            self._identity = identity
+        # Reuse the prior instance when selection has not changed. This keeps
+        # per-driver confirmed readbacks and its rounding cache.
+        self.device.apply_threshold_settings()
+
+
+def start_battery_daemon():
+    """Run charging policy periodically and after battery-config reloads."""
+    controller = BatteryDaemonController()
 
     def battery_daemon():
         while True:
             try:
-                dev.apply_threshold_settings()
+                controller.tick()
             except Exception as e:
                 print(
                     f"ERROR: An error occurred while applying battery thresholds: {e}"
                 )
-            sleep(BATTERY_APPLY_INTERVAL)
+            sleep(BATTERY_CONFIG_POLL_INTERVAL)
 
     Thread(target=battery_daemon, daemon=True).start()
 
