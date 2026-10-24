@@ -191,17 +191,18 @@ class GtkRefreshTests(unittest.TestCase):
 
     def test_repeated_interval_changes_do_not_duplicate_timers(self):
         self.window._schedule_refresh()
-        source = self.window.refresh_id
+        source = GLib.MainContext.default().find_source_by_id(
+            self.window.refresh_id
+        )
+        self.assertIsNotNone(source)
         for interval in (2, 5, 1, 5, 2):
             self.window.set_refresh_interval(interval)
-            self.assertIsNone(
-                GLib.MainContext.default().find_source_by_id(source)
+            self.assertTrue(source.is_destroyed())
+            source = GLib.MainContext.default().find_source_by_id(
+                self.window.refresh_id
             )
-            source = self.window.refresh_id
             self.assertIsNotNone(source)
-            self.assertIsNotNone(
-                GLib.MainContext.default().find_source_by_id(source)
-            )
+            self.assertFalse(source.is_destroyed())
 
     def test_dashboard_busy_state_is_owned_by_coordinator(self):
         started, release = threading.Event(), threading.Event()
@@ -303,13 +304,15 @@ class GtkRefreshTests(unittest.TestCase):
             self.window.refresh_in_thread()
             self.assertTrue(started.wait(timeout=2))
             self.window._schedule_refresh()
-            source = self.window.refresh_id
+            source = GLib.MainContext.default().find_source_by_id(
+                self.window.refresh_id
+            )
             self.window._cleanup_refresh()
             release.set()
             self.assertTrue(completed.wait(timeout=2))
             self.assertTrue(self.window.destroyed)
             self.assertIsNone(self.window.refresh_id)
-            self.assertIsNone(GLib.MainContext.default().find_source_by_id(source))
+            self.assertTrue(source.is_destroyed())
             self.assertEqual(self.window.applied, [])
         finally:
             release.set()
