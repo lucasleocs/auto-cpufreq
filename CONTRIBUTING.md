@@ -25,18 +25,36 @@ Prefer a development environment over replacing a running system installation. D
 | Responsibility | Start here |
 | --- | --- |
 | Read-only hardware telemetry and `SystemReport` | `auto_cpufreq/modules/system_info.py` |
-| Interpretation of available/unavailable values | `auto_cpufreq/modules/report_presentation.py` |
-| Read-only Monitor recommendations | `auto_cpufreq/modules/report_recommendations.py` |
+| Shared governor/Turbo suggestion rules | `auto_cpufreq/modules/report_recommendations.py` |
+| Read-only Monitor recommendation status and applicability | `auto_cpufreq/modules/report_recommendations.py` |
+| Interpreting available, unknown, and driver-managed values | `auto_cpufreq/modules/report_presentation.py` |
 | Cross-interface refresh concurrency | `auto_cpufreq/modules/report_refresh.py` |
-| GTK report layout | `auto_cpufreq/gui/report_view.py` |
+| GTK report layout for dashboard and Monitor | `auto_cpufreq/gui/report_view.py` |
 | GTK Monitor screen | `auto_cpufreq/gui/monitor_view.py` |
-| Main GTK window and navigation | `auto_cpufreq/gui/app.py` |
-| GTK scheduling and delivery | `auto_cpufreq/gui/refresh_timer.py`, `refresh_bridge.py` |
+| Main GTK window, power-apply UI state and navigation | `auto_cpufreq/gui/app.py` |
+| GTK controls, menus, dialogs and daemon actions | `auto_cpufreq/gui/objects.py` |
+| Desktop integration (opening directories) | `auto_cpufreq/gui/desktop.py` |
+| GTK scheduling and delivery | `auto_cpufreq/gui/refresh_timer.py`, `auto_cpufreq/gui/refresh_bridge.py` |
+| Optional GTK debug preference and watchdog | `auto_cpufreq/gui/diagnostics.py` |
+| Shared log session lifecycle and rotation | `auto_cpufreq/modules/diagnostics.py` |
+| Process/CPU/thread health measurements | `auto_cpufreq/modules/process_health.py` |
 | Terminal Stats, Monitor, Live display | `auto_cpufreq/modules/system_monitor.py` |
-| Live-mode service lifecycle | `auto_cpufreq/bin/auto_cpufreq.py`, `auto_cpufreq/power_helper.py` |
+| CLI modes, installation and policy lifecycle | `auto_cpufreq/bin/auto_cpufreq.py`, `auto_cpufreq/power_helper.py` |
 | Configuration and file notifications | `auto_cpufreq/config/` |
 
-Some older GTK widget imports remain available from `gui/objects.py` for compatibility. For new work, prefer the component's responsible module.
+The shared recommendation functions are the **only place to change the
+governor/Turbo suggestion formulas**. `SystemInfo.governor_suggestion()`
+and `SystemInfo.turbo_on_suggestion()` remain compatibility methods and
+delegate to those rules. Do not make their behavior diverge from the read-only
+GTK and terminal Monitor recommendations. Changes to the daemon's actual
+power policy require a separate review.
+
+New code should import `MonitorModeView` from `gui/monitor_view.py` and
+`open_containing_folder` from `gui/desktop.py`. The old imports via
+`gui/objects.py` remain usable for existing callers. The old unused GTK
+statistics widgets were removed from `gui/objects.py`: they were not used
+by any tracked application entrypoint and performed separate synchronous
+collection. Avoid reintroducing a second sampling path.
 
 ## Refresh behavior
 
@@ -51,11 +69,22 @@ Telemetry and recommendations must remain **read-only**. Only dedicated power-po
 
 ## Before submitting a pull request
 
-Keep the diff small, preserve CLI and GTK entrypoints, and avoid unrelated dependency updates or formatting-only changes. Run compilation and the available targeted tests in your development checkout:
+Keep the diff small, preserve CLI and GTK entrypoints, and avoid unrelated dependency updates or formatting-only changes. Run compilation and the available targeted tests in an isolated
+development checkout (never against the system-installed executable):
 
 ```bash
-python -m compileall -q auto_cpufreq
+python -m compileall -q auto_cpufreq tests
+PYTHONPATH="$PWD" python -m unittest discover -s tests -p 'test_*.py' -v
 ```
+
+GTK test modules need their normal optional GTK runtime; use a graphical
+session for real UI checks. The tests in `tests/` do not install the daemon
+or apply power policy. Cover both paths through the shared suggestion rules
+when changing recommendations (the legacy `SystemInfo` wrappers and the
+Monitor evaluator), and include a no-hardware-I/O snapshot scenario.
+Record manual GTK and terminal validation against the **exact branch commit**.
+Do not treat test results from a separate lab branch as evidence for the
+current commit.
 
 For changes to scheduling, include evidence that refresh requests do not overlap, old GTK/Urwid callbacks are cleaned up, and the view recovers after a failed collection. For power-policy changes, explain how temporary actions and competing services are restored on error or exit.
 
