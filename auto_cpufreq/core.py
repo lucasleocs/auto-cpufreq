@@ -163,7 +163,7 @@ def check_for_update():
     # Fetch the latest release information from GitHub API
     latest_release_url = GITHUB.replace("github.com", "api.github.com/repos") + "/releases/latest"
     try:
-        response = get(latest_release_url)
+        response = get(latest_release_url, timeout=(3.05, 5.0))
         if response.status_code == 200: latest_release = response.json()
         else:
             message = response.json().get("message")
