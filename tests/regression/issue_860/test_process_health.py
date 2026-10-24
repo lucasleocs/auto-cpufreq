@@ -318,6 +318,28 @@ class HealthSamplerTests(unittest.TestCase):
         self.assertTrue(any("episode interrupted" in x
                             for x in logger.infos))
 
+    def test_sampler_worker_creation_failure_has_no_live_thread(self):
+        from unittest.mock import patch
+
+        class UnstartableThread:
+            def __init__(self, **_kwargs):
+                pass
+
+            def start(self):
+                raise RuntimeError("synthetic sampler thread start failure")
+
+        sampler = h.ProcessHealthSampler(FakeLog(), interval=0.01)
+        with patch.object(h, "Thread", UnstartableThread):
+            with self.assertRaisesRegex(RuntimeError, "thread start failure"):
+                sampler.start()
+        self.assertFalse(sampler.is_alive())
+        self.assertIsNone(sampler._worker)
+        self.assertIsNone(sampler._stop)
+        # A later successful start must still be possible.
+        sampler.start()
+        self.assertTrue(sampler.stop())
+        self.assertFalse(sampler.is_alive())
+
     def test_blocked_sampler_cannot_be_restarted_until_old_worker_exits(self):
         logger = FakeLog()
         entered, release = Event(), Event()
