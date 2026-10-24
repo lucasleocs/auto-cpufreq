@@ -9,10 +9,9 @@ from gi.repository import Gtk, Pango
 
 from auto_cpufreq.modules.report_presentation import (
     present_report, interpret_turbo, interpret_battery,
+    present_platform_profile, offline_cpus_text,
 )
-from auto_cpufreq.modules.system_info import (
-    battery_power_label, format_platform_profile_choices,
-)
+from auto_cpufreq.modules.system_info import battery_power_label
 
 HBOX_PADDING = 20
 SECTION_SPACING = 12
@@ -146,6 +145,12 @@ class SystemReportView(Gtk.Box):
         self.fan_label.set_xalign(0)
         self.fan_label.set_no_show_all(True)
         self.cpu_box.pack_start(self.fan_label, False, False, 0)
+
+        self.offline_label = Gtk.Label(label="")
+        self.offline_label.set_halign(Gtk.Align.START)
+        self.offline_label.set_xalign(0)
+        self.offline_label.set_no_show_all(True)
+        self.cpu_box.pack_start(self.offline_label, False, False, 0)
 
         self.left_column.pack_start(cpu_frame, False, False, 0)
 
@@ -302,52 +307,28 @@ class SystemReportView(Gtk.Box):
             report.cpu_driver or "Unknown"
         )
 
-        platform_state = report.platform_profile
-        if platform_state.interface == "none":
-            self.platform_values["interface"].set_text("Not detected")
-            for row in (1, 2, 3):
-                _set_row_visible(self.platform_grid, row, False)
+        profile = present_platform_profile(report.platform_profile)
+        self.platform_values["interface"].set_text(profile.interface)
+        if profile.detected:
+            for row in (1, 2):
+                _set_row_visible(self.platform_grid, row, True)
+            self.platform_values["current"].set_text(profile.current)
+            self.platform_names["available"].set_text(
+                profile.available_label
+            )
+            self.platform_values["available"].set_text(profile.available)
         else:
-            interface_text = {
-                "modern": "Modern",
-                "legacy": "Legacy",
-            }.get(platform_state.interface, "Unknown")
-            control_text = (
-                "Available"
-                if platform_state.control_available
-                else "Unavailable"
-            )
-            self.platform_values["interface"].set_text(
-                f"{interface_text} · Control: {control_text}"
-            )
+            for row in (1, 2):
+                _set_row_visible(self.platform_grid, row, False)
 
-            _set_row_visible(self.platform_grid, 1, True)
-            _set_row_visible(self.platform_grid, 2, True)
-            self.platform_values["current"].set_text(
-                platform_state.current or "Unknown"
+        _set_row_visible(
+            self.platform_grid, 3, profile.provider_visible
+        )
+        if profile.provider_visible:
+            self.platform_names["provider"].set_text(
+                profile.provider_label
             )
-
-            available_label, available_text = format_platform_profile_choices(
-                platform_state
-            )
-            self.platform_names["available"].set_text(available_label)
-            self.platform_values["available"].set_text(available_text)
-
-            provider_states = platform_state.provider_states
-            provider_visible = bool(provider_states)
-            _set_row_visible(self.platform_grid, 3, provider_visible)
-            if provider_visible:
-                self.platform_names["provider"].set_text(
-                    "Providers" if len(provider_states) > 1 else "Provider"
-                )
-                if len(provider_states) > 1:
-                    provider_text = "; ".join(
-                        f"{provider}: {profile or 'Unknown'}"
-                        for provider, profile in provider_states
-                    )
-                else:
-                    provider_text = provider_states[0][0]
-                self.platform_values["provider"].set_text(provider_text)
+            self.platform_values["provider"].set_text(profile.provider)
 
         self.max_freq_value.set_text(
             f"{report.cpu_max_freq:.0f} MHz"
@@ -368,6 +349,13 @@ class SystemReportView(Gtk.Box):
             self.fan_label.show()
         else:
             self.fan_label.hide()
+
+        offline_text = offline_cpus_text(report.offline_cpus)
+        if offline_text:
+            self.offline_label.set_text(offline_text)
+            self.offline_label.show()
+        else:
+            self.offline_label.hide()
 
         if "governor" not in pending_power_updates:
             self.power_values["governor"].set_text(
@@ -397,9 +385,11 @@ class SystemReportView(Gtk.Box):
             presentation.battery.status.text
         )
         if battery is None:
-            for key in ("charge", "ac", "start", "stop", "power"):
-                self.battery_values[key].set_text("Unavailable")
+            for row in range(1, 6):
+                _set_row_visible(self.battery_grid, row, False)
         else:
+            for row in range(1, 6):
+                _set_row_visible(self.battery_grid, row, True)
             self.battery_values["charge"].set_text(
                 presentation.battery.level.text
             )
