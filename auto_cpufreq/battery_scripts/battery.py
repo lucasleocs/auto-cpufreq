@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
 from subprocess import PIPE, run
+import os
 from threading import Thread
 from time import sleep
 
 from auto_cpufreq.battery_scripts.asus import AsusBatteryDevice
 from auto_cpufreq.battery_scripts.ideapad_laptop import IdeapadBatteryDevice
 from auto_cpufreq.battery_scripts.shared import BatteryDevice
+from auto_cpufreq.battery_scripts.generic import GenericKernelBatteryDevice
+from auto_cpufreq.modules.system_info import SystemInfo
 
 BATTERY_APPLY_INTERVAL = 3600  # 1 hour
 
@@ -62,5 +65,13 @@ def get_battery_device():
         return BatteryDevice()
     elif lsmod("asus_wmi"):
         return AsusBatteryDevice()
-    else:
+
+    # Portable fallback for kernels exposing the standard battery stop
+    # threshold, including end-only machines. Preserve all vendor paths.
+    battery_path = SystemInfo.get_battery_path()
+    if not battery_path:
         return None
+    if not os.path.isfile(os.path.join(battery_path, "charge_control_end_threshold")):
+        return None
+    device = GenericKernelBatteryDevice()
+    return device if device.stop_paths else None

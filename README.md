@@ -805,6 +805,26 @@ stop_threshold = 80
 ```
 
 You will need to specify both `start_threshold` AND `stop_threshold` in most cases.
+
+For batteries exposing only the standard Linux `charge_control_end_threshold`
+attribute (and not handled by an existing vendor driver), a **stop-only**
+configuration is supported:
+
+```ini
+[battery]
+enable_thresholds = true
+stop_threshold = 80
+```
+
+The daemon must be running with appropriate privileges; editing the file
+alone does not apply a limit. If `start_threshold` is explicitly set, the
+device must expose a corresponding writable start attribute. The generic
+fallback selects a single physical system battery, respects `battery_device`
+when configured, and does not override charging protection already reported as
+enabled by UPower. The kernel may round unsupported percentages; the actual
+readback is reported and no specific percentage is guaranteed. This is opt-in:
+without `enable_thresholds = true`, the daemon does not change charge limits.
+Do not run multiple charging-limit managers concurrently.
 For these changes to have an effect, you will need to restart the daemon:
 
 ```shell
