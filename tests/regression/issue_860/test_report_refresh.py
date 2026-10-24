@@ -15,6 +15,38 @@ def wait_until(predicate, timeout=3):
 
 
 class RefreshCoordinatorTests(unittest.TestCase):
+    def test_stalled_collection_age_is_reported_without_extra_worker(self):
+        entered = threading.Event()
+        release = threading.Event()
+        results = []
+        calls = []
+
+        def blocked():
+            calls.append(1)
+            entered.set()
+            release.wait(3)
+            return "unblocked"
+
+        coordinator = ReportRefreshCoordinator(blocked, results.append)
+        self.addCleanup(coordinator.close)
+        self.assertIsNone(coordinator.request_age_seconds())
+        self.assertTrue(coordinator.request())
+        self.assertTrue(entered.wait(1))
+        time.sleep(0.06)
+        age = coordinator.request_age_seconds()
+        self.assertIsNotNone(age)
+        self.assertGreaterEqual(age, 0.04)
+        self.assertFalse(coordinator.request())
+        self.assertEqual(len(calls), 1)
+        release.set()
+        self.assertTrue(wait_until(lambda: len(results) == 1))
+        self.assertIsNotNone(coordinator.request_age_seconds())
+        self.assertTrue(coordinator.acknowledge(results[0].generation))
+        self.assertTrue(wait_until(lambda: len(results) == 2))
+        self.assertTrue(coordinator.acknowledge(results[1].generation))
+        self.assertIsNone(coordinator.request_age_seconds())
+        self.assertEqual(len(calls), 2)
+
     def test_coalesces_many_requests_into_one_followup(self):
         entered = threading.Event()
         release = threading.Event()
