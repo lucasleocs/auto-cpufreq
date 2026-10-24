@@ -27,7 +27,7 @@ def pump_until(predicate, timeout=3):
 
 class GtkBridgeTests(unittest.TestCase):
     def make_bridge(self, collector=None, on_report=None, on_error=None,
-                    before_ack=None, after_ack=None):
+                    before_ack=None):
         self.active = True
         self.records = []
         self.errors = []
@@ -42,7 +42,6 @@ class GtkBridgeTests(unittest.TestCase):
             on_error=on_error or self.errors.append,
             thread_name="gtk-bridge-test",
             before_ack=before_ack,
-            after_ack=after_ack,
         )
         self.addCleanup(bridge.coordinator.close)
         return bridge
@@ -117,7 +116,6 @@ class GtkBridgeTests(unittest.TestCase):
         bridge = self.make_bridge(
             collector=collect,
             before_ack=lambda: acknowledged.append("before"),
-            after_ack=lambda: acknowledged.append("after"),
         )
         try:
             bridge.coordinator.request()
@@ -128,8 +126,7 @@ class GtkBridgeTests(unittest.TestCase):
             release.set()
             self.assertTrue(pump_until(lambda: self.records == [1, 2]))
             self.assertEqual(calls, [0, 1])
-            self.assertEqual(acknowledged,
-                             ["before", "after", "before", "after"])
+            self.assertEqual(acknowledged, ["before", "before"])
             self.assertFalse(bridge.coordinator.in_progress)
         finally:
             release.set()
