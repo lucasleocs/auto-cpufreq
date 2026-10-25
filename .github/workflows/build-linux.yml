@@ -29,5 +29,5 @@ jobs:
         run: sudo ./auto-cpufreq-installer --install
 
       - name: "Live service regression tests (mocked systemctl)"
-        run: /opt/auto-cpufreq/current/venv/bin/python -m unittest discover -s tests -p "test_live_power_services.py" -v
+        run: /opt/auto-cpufreq/current/venv/bin/python -m unittest discover -s tests -p "test_*power*.py" -v
       
