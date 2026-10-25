@@ -8,6 +8,7 @@ import json
 import os
 import subprocess
 import tempfile
+import stat
 from pathlib import Path
 from shutil import which
 
@@ -66,12 +67,23 @@ class PowerServiceState:
         }
 
     def _read(self):
-        if not self.state_file.exists() and not self.state_file.is_symlink():
-            return {}
-        if self.state_file.is_symlink():
-            raise RuntimeError("Refusing a symlinked power-service state file")
+        if self.state_file.parent.is_symlink():
+            raise RuntimeError("Refusing a symlinked power-service state directory")
         try:
-            with self.state_file.open("r", encoding="utf-8") as stream:
+            fd = os.open(
+                self.state_file, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
+            )
+        except FileNotFoundError:
+            return {}
+        except OSError as error:
+            raise RuntimeError(f"Cannot open saved power-service state: {error}") from error
+        try:
+            with os.fdopen(fd, "r", encoding="utf-8") as stream:
+                info = os.fstat(stream.fileno())
+                if (not stat.S_ISREG(info.st_mode)
+                        or info.st_uid != os.geteuid()
+                        or stat.S_IMODE(info.st_mode) & 0o077):
+                    raise RuntimeError("Untrusted power-service state file ownership or mode")
                 payload = json.load(stream)
         except (OSError, ValueError) as error:
             raise RuntimeError(f"Cannot read saved power-service state: {error}") from error
@@ -120,6 +132,11 @@ class PowerServiceState:
             if any(item.get("restoring") for item in records.values()):
                 print("A previous power-service restoration is incomplete; resolve it first.")
                 return False
+            for unit in records:
+                current = self._inspect(unit)
+                if not current or current["unit_file"] != "masked" or current["active"]:
+                    print(f"{unit} changed since auto-cpufreq recorded it; review manually.")
+                    return False
             # Snapshot all units before changing any of them: stopping TuneD
             # may also stop tuned-ppd, so later observations could be wrong.
             originals = {}
