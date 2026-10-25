@@ -194,13 +194,15 @@ class RadioButtonView(Gtk.Box):
 
     def set_selected(self):
         override = get_override()
-        match override:
-            case "powersave": self.powersave.set_active(True)
-            case "performance": self.performance.set_active(True)
-            case "default":
-                # because this is the default button, it does not trigger the callback when set by the app
-                self.default.set_active(True)
-                if self.set_by_app: self.set_by_app = False
+        if override == "powersave":
+            self.powersave.set_active(True)
+        elif override == "performance":
+            self.performance.set_active(True)
+        elif override == "default":
+            # The default button does not trigger the callback when set by the app.
+            self.default.set_active(True)
+            if self.set_by_app:
+                self.set_by_app = False
 
 class CPUTurboOverride(Gtk.Box):
     def __init__(self):
@@ -256,13 +258,15 @@ class CPUTurboOverride(Gtk.Box):
 
     def set_selected(self):
         override = get_turbo_override()
-        match override:
-            case "never": self.never.set_active(True)
-            case "always": self.always.set_active(True)
-            case "auto":
-                # because this is the default button, it does not trigger the callback when set by the app
-                self.auto.set_active(True)
-                if self.set_by_app: self.set_by_app = False
+        if override == "never":
+            self.never.set_active(True)
+        elif override == "always":
+            self.always.set_active(True)
+        elif override == "auto":
+            # The default button does not trigger the callback when set by the app.
+            self.auto.set_active(True)
+            if self.set_by_app:
+                self.set_by_app = False
 
 class BluetoothBootControl(Gtk.Box):
     def __init__(self, show_advanced_button=True):
@@ -347,12 +351,13 @@ class BluetoothBootControl(Gtk.Box):
 
     def set_selected(self):
         status = get_bluetooth_boot_status()
-        match status:
-            case "off": self.off_btn.set_active(True)
-            case "on" | _:
-                # because this is the default button, it does not trigger the callback when set by the app
-                self.on_btn.set_active(True)
-                if self.set_by_app: self.set_by_app = False
+        if status == "off":
+            self.off_btn.set_active(True)
+        else:
+            # Unknown statuses use the same fallback as the original wildcard.
+            self.on_btn.set_active(True)
+            if self.set_by_app:
+                self.set_by_app = False
 
 class DropDownMenu(Gtk.MenuButton):
     def __init__(self, parent):
