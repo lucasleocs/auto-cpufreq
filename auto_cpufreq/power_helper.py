@@ -96,42 +96,61 @@ def gnome_power_detect_snap():
     print("This daemon might interfere with auto-cpufreq and should be disabled!")
     print(f"\nRun the host-side helper with --gnome_power_disable; see: {GITHUB}#1-power_helperpy-script-snap-package-install-only")
 
-# stops gnome >= 40 power profiles (live)
-def gnome_power_stop_live():
-    if not IS_INSTALLED_WITH_SNAP and systemctl_exists and gnome_power_status == 0:
-        if powerprofilesctl_exists:
-            try:
-                call(["powerprofilesctl", "set", "balanced"])
-            except (OSError, FileNotFoundError, PermissionError):
-                pass
+# Temporary service changes for --live are kept in memory, never persisted.
+# Only services observed as active are stopped and later restored.
+def _systemd_service_active(unit):
+    result = run(
+        ["systemctl", "show", unit, "--property=LoadState,ActiveState", "--no-pager"],
+        capture_output=True, text=True,
+    )
+    if result.returncode != 0:
+        return False
+    fields = dict(
+        line.split("=", 1) for line in result.stdout.splitlines() if "=" in line
+    )
+    return fields.get("LoadState") == "loaded" and fields.get("ActiveState") == "active"
 
-        try:
-            call(["systemctl", "stop", "power-profiles-daemon"])
-        except (OSError, FileNotFoundError, PermissionError):
-            pass
 
-# stops tuned (live)
-def tuned_stop_live():
-    if not IS_INSTALLED_WITH_SNAP and systemctl_exists and tuned_stat_exists:
+def restore_conflicting_services_live(stopped):
+    """Restore only services stopped by this Live session."""
+    for unit in reversed(stopped):
         try:
-            call(["systemctl", "stop", "tuned"])
-        except (OSError, FileNotFoundError, PermissionError):
-            pass
+            if _systemd_service_active(unit):
+                continue
+            result = run(["systemctl", "start", unit], capture_output=True, text=True)
+            if result.returncode != 0:
+                print(f"Warning: failed to restart {unit}: {result.stderr.strip()}")
+        except OSError as error:
+            print(f"Warning: failed to restart {unit}: {error}")
 
-# starts gnome >= 40 power profiles (live)
-def gnome_power_start_live():
-    if not IS_INSTALLED_WITH_SNAP and systemctl_exists and gnome_power_status == 0:
-        try:
-            call(["systemctl", "start", "power-profiles-daemon"])
-        except (OSError, FileNotFoundError, PermissionError):
-            pass
 
-def tuned_start_live():
-    if not IS_INSTALLED_WITH_SNAP and systemctl_exists and tuned_stat_exists: 
-        try:
-            call(["systemctl", "start", "tuned"])
-        except (OSError, FileNotFoundError, PermissionError):
-            pass
+def stop_conflicting_services_live():
+    """Stop active systemd power services, rolling back on partial failure."""
+    if IS_INSTALLED_WITH_SNAP or not systemctl_exists:
+        return []
+    stopped = []
+    try:
+        for unit in ("power-profiles-daemon.service", "tuned.service"):
+            if not _systemd_service_active(unit):
+                continue
+            if unit == "power-profiles-daemon.service" and powerprofilesctl_exists:
+                try:
+                    run(["powerprofilesctl", "set", "balanced"], capture_output=True)
+                except OSError:
+                    pass
+            # Record intent before stopping: a signal may interrupt the command
+            # after systemd has already stopped the service.
+            stopped.append(unit)
+            result = run(["systemctl", "stop", unit], capture_output=True, text=True)
+            if result.returncode != 0:
+                raise RuntimeError(
+                    f"Failed to stop {unit}: {result.stderr.strip()}"
+                )
+    except BaseException:
+        restore_conflicting_services_live(stopped)
+        raise
+    return stopped
+
 
 # enable gnome >= 40 power profiles (uninstall)
 def gnome_power_svc_enable():
