@@ -1,0 +1,44 @@
+name: PR 985 Final Recovery Audit
+on:
+  push:
+    branches: [lab/pr985-final-recovery]
+  workflow_dispatch:
+jobs:
+  recovery-regression:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run previous lifecycle regression suites
+        run: |
+          python3 -m unittest discover -s tests -p test_init_service_safety.py -v
+          python3 -m unittest discover -s tests -p test_pr975_runit_audit.py -v
+          python3 -m unittest discover -s tests -p test_systemd_removal_race.py -v
+      - name: Run interruption and preflight safety tests
+        run: python3 -m unittest discover -s tests -p test_lifecycle_recovery.py -v
+      - name: Shell syntax
+        run: bash -n scripts/auto-cpufreq-install.sh scripts/auto-cpufreq-remove.sh
+
+  dinit-offline-check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Examine real dinitctl idempotence without changing host services
+        shell: bash
+        run: |
+          set -eux
+          sudo apt-get update -qq
+          apt-get download dinit
+          mkdir -p dinit-pkg
+          dpkg-deb -x dinit_*.deb dinit-pkg
+          binary="$(find dinit-pkg -type f -name dinitctl -print -quit)"
+          test -n "$binary"
+          root="$RUNNER_TEMP/dinit-case"
+          mkdir -p "$root/boot.d"
+          printf 'type = internal\nwaits-for.d: boot.d\n' > "$root/boot"
+          printf 'type = internal\n' > "$root/auto-cpufreq"
+          set +e
+          for op in enable enable disable disable; do
+            "$binary" --offline --services-dir "$root" "$op" auto-cpufreq
+            status=$?
+            echo "DINIT_OFFLINE_RESULT operation=$op status=$status"
+          done
+          set -e
