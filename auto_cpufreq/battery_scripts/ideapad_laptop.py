@@ -35,24 +35,43 @@ class IdeapadBatteryDevice(BatteryDevice):
                 
         return None
 
-    def is_conservation_mode(self) -> bool:
+    def _read_conservation_mode(self) -> bool | None:
         if not self.conservation_mode_path:
-            return False
-            
+            return None
         val = self._read_value_from_file(self.conservation_mode_path)
         if val not in ("0", "1"):
             error_type = "Read failure" if val == "" else f"Unexpected value: {val}"
             print(f"WARNING: {error_type} at {self.conservation_mode_path}")
-            return False
+            return None
         return val == "1"
 
+    def is_conservation_mode(self) -> bool:
+        return self._read_conservation_mode() is True
+
     def set_conservation_mode(self, value: int) -> bool:
+        if type(value) is not int or value not in (0, 1):
+            print(f"ERROR: invalid conservation mode value: {value}")
+            return False
         if not self.conservation_mode_path:
             print("ERROR: conservation_mode file path not found")
             return False
-            
+
+        current = self._read_conservation_mode()
+        if current is None:
+            print("ERROR: cannot verify existing conservation mode; skipping write")
+            return False
+        if current == bool(value):
+            return True
+
         if not self._write_value_to_file(self.conservation_mode_path, value):
             print(f"WARNING: unable to set conservation mode at {self.conservation_mode_path}")
+            return False
+        observed = self._read_conservation_mode()
+        if observed != bool(value):
+            print(
+                f"ERROR: conservation mode write was not confirmed at "
+                f"{self.conservation_mode_path}; manual verification required"
+            )
             return False
         return True
 

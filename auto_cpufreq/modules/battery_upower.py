@@ -49,6 +49,17 @@ def decode_charge_capabilities(properties: dict) -> ChargeCapabilities | None:
     if type(supported) is not bool:
         return None
     if supported is False:
+        # Do not treat contradictory active/configured charge control as
+        # unsupported: this decision is used to authorize sysfs writes.
+        enabled = properties.get("ChargeThresholdEnabled")
+        mask = properties.get("ChargeThresholdSettingsSupported")
+        if enabled is True or (
+            type(mask) is int and mask != 0
+        ) or any(
+            type(properties.get(key)) is int and properties[key] > 0
+            for key in ("ChargeStartThreshold", "ChargeEndThreshold")
+        ):
+            return None
         return ChargeCapabilities(charge_protection_supported=False)
 
     enabled = properties.get("ChargeThresholdEnabled")

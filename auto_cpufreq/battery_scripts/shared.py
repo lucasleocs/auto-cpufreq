@@ -79,8 +79,9 @@ class BatteryDevice:
                 )
                 if selected is None:
                     return []
-                name = os.path.basename(selected)
-                return [name] if name.startswith("BAT") else []
+                # The selected entry was already validated as a system
+                # battery by SystemInfo; sysfs does not require BAT* names.
+                return [os.path.basename(selected)]
 
             from auto_cpufreq.core import get_power_supply_ignore_list
             ignore = get_power_supply_ignore_list(snapshot)
