@@ -20,6 +20,11 @@ UNITS = ("power-profiles-daemon.service", "tuned.service", "tuned-ppd.service")
 SUPPORTED_STATES = frozenset(("enabled", "disabled", "static"))
 
 
+def systemd_booted():
+    """Mirror the documented sd_booted() directory check."""
+    return Path("/run/systemd/system").is_dir()
+
+
 class PowerServiceState:
     def __init__(self, state_file=STATE_FILE, runner=None):
         self.state_file = Path(state_file)
@@ -124,7 +129,7 @@ class PowerServiceState:
 
     def disable(self):
         """Record original states before masking conflicting systemd units."""
-        if which("systemctl") is None:
+        if which("systemctl") is None or not systemd_booted():
             return True
         new_units = ()
         try:
@@ -173,6 +178,9 @@ class PowerServiceState:
             records = self._read()
         except RuntimeError as error:
             print(f"Unable to restore power services: {error}")
+            return False
+        if records and (which("systemctl") is None or not systemd_booted()):
+            print("Saved systemd power-service states cannot be restored without systemd.")
             return False
         success = True
         for unit, original in list(records.items()):
