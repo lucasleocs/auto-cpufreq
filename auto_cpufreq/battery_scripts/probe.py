@@ -7,21 +7,11 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
-import os
 
 from auto_cpufreq.modules.battery_upower import (
     UPOWER_NAME, UPOWER_PATH, DEVICE_INTERFACE, PROPERTIES_INTERFACE,
-    _match_battery,
+    ChargeCapabilities, decode_charge_capabilities, _match_battery,
 )
-
-
-@dataclass(frozen=True)
-class ChargeCapabilities:
-    charge_protection_supported: bool
-    charge_protection_enabled: bool | None = None
-    charge_control_types: tuple[str, ...] = ()
-    configured_start_threshold: int | None = None
-    configured_end_threshold: int | None = None
 
 
 @dataclass(frozen=True)
@@ -31,44 +21,9 @@ class ChargeServiceProbe:
     reason: str = ""
 
 
-CONTROLS = ((1, "Start threshold"), (2, "End threshold"),
-            (4, "Firmware managed"))
-
-
 def _charge_capabilities(properties: dict) -> ChargeCapabilities | None:
-    # Identify a real system battery independently of percentage/energy rate.
-    supported = properties.get("ChargeThresholdSupported")
-    if supported is None:
-        # Valid older UPower API that did not expose charge-limit control.
-        return ChargeCapabilities(charge_protection_supported=False)
-    if type(supported) is not bool:
-        return None
-    if not supported:
-        return ChargeCapabilities(charge_protection_supported=False)
-
-    enabled = properties.get("ChargeThresholdEnabled")
-    if type(enabled) is not bool:
-        enabled = None
-
-    mask = properties.get("ChargeThresholdSettingsSupported")
-    if type(mask) is not int or mask < 0:
-        mask = 0
-
-    controls = tuple(name for bit, name in CONTROLS if mask & bit)
-
-    def percent(prop, bit):
-        val = properties.get(prop)
-        if mask & bit and type(val) is int and 0 <= val <= 100:
-            return val
-        return None
-
-    return ChargeCapabilities(
-        charge_protection_supported=True,
-        charge_protection_enabled=enabled,
-        charge_control_types=controls,
-        configured_start_threshold=percent("ChargeStartThreshold", 1),
-        configured_end_threshold=percent("ChargeEndThreshold", 2),
-    )
+    """Keep the historical probe entrypoint but share one decoder."""
+    return decode_charge_capabilities(properties)
 
 
 async def _probe_bus(bus, battery_path, message, message_type) -> ChargeServiceProbe:

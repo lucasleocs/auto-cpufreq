@@ -240,8 +240,13 @@ def _charge_thresholds(battery):
     def described(observed, configured):
         if configured is None:
             return _known_text(observed)
-        if observed is None or observed == configured:
-            return _known_text(f"{configured}% (UPower)")
+        if observed is None:
+            return DisplayValue(
+                configured, Availability.UNKNOWN,
+                f"{configured}% configured (UPower; not verified by kernel)",
+            )
+        if observed == configured:
+            return _known_text(f"{observed}% (kernel; UPower configured)")
         return _known_text(
             f"{observed}% (kernel) · {configured}% configured (UPower)"
         )

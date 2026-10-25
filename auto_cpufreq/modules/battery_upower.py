@@ -24,6 +24,59 @@ CONTROLS = ((1, "Start threshold"), (2, "End threshold"), (4, "Firmware managed"
 
 
 @dataclass(frozen=True)
+class ChargeCapabilities:
+    """Decoded UPower policy, independent of the telemetry sampling path."""
+    charge_protection_supported: bool
+    charge_protection_enabled: bool | None = None
+    charge_control_types: tuple[str, ...] = ()
+    configured_start_threshold: int | None = None
+    configured_end_threshold: int | None = None
+
+
+def decode_charge_capabilities(properties: dict) -> ChargeCapabilities | None:
+    """Decode the charge-limit API shared by telemetry and write arbitration.
+
+    None means invalid/ambiguous advertised capability; a missing support
+    property is a valid older UPower API. Neither condition authorizes writes.
+    """
+    supported = properties.get("ChargeThresholdSupported")
+    if supported is None:
+        return ChargeCapabilities(charge_protection_supported=False)
+    if type(supported) is not bool:
+        return None
+    if supported is False:
+        return ChargeCapabilities(charge_protection_supported=False)
+
+    enabled = properties.get("ChargeThresholdEnabled")
+    if type(enabled) is not bool:
+        enabled = None
+
+    mask = properties.get("ChargeThresholdSettingsSupported")
+    if mask is None:
+        # This bitmask is newer than the basic charging-threshold API.
+        mask = 0
+    elif type(mask) is not int or mask < 0:
+        return None
+
+    controls = tuple(label for bit, label in CONTROLS if mask & bit)
+
+    def configured(prop: str, flag: int) -> int | None:
+        value = properties.get(prop)
+        return (
+            value if mask & flag and type(value) is int and 0 <= value <= 100
+            else None
+        )
+
+    return ChargeCapabilities(
+        charge_protection_supported=True,
+        charge_protection_enabled=enabled,
+        charge_control_types=controls,
+        configured_start_threshold=configured("ChargeStartThreshold", 1),
+        configured_end_threshold=configured("ChargeEndThreshold", 2),
+    )
+
+
+@dataclass(frozen=True)
 class UPowerBattery:
     status: str
     percentage: int
@@ -69,44 +122,26 @@ def _decode(properties: dict, sysfs_path: str) -> UPowerBattery | None:
         type(rate) in (int, float) and math.isfinite(rate)
     ) else None
 
-    # Missing API means unsupported on an older service. A malformed
-    # advertised capability is *unknown*, not confirmed unsupported.
-    supported = properties.get("ChargeThresholdSupported", False)
-    if type(supported) is not bool:
-        supported = None
-    mask = properties.get("ChargeThresholdSettingsSupported")
-    if supported is True and mask is not None and (
-        type(mask) is not int or mask < 0
-    ):
-        supported = None
-    enabled = properties.get("ChargeThresholdEnabled") if supported is True else None
-    if type(enabled) is not bool:
-        enabled = None
-
-    control_types = (
-        tuple(label for flag, label in CONTROLS if mask & flag)
-        if supported is True and type(mask) is int and mask >= 0
-        else ()
-    )
-    start = properties.get("ChargeStartThreshold")
-    end = properties.get("ChargeEndThreshold")
-    start_limit = (
-        start if supported is True and type(mask) is int and mask & 1
-        and type(start) is int and 0 <= start <= 100 else None
-    )
-    end_limit = (
-        end if supported is True and type(mask) is int and mask & 2
-        and type(end) is int and 0 <= end <= 100 else None
-    )
+    capabilities = decode_charge_capabilities(properties)
+    # Preserve useful telemetry even if charge-control properties are invalid.
+    # The ownership probe independently fails closed on the same condition.
     return UPowerBattery(
         status=STATES[state],
         percentage=int(round(percentage)),
         power_watts=rate_watts,
-        charge_protection_enabled=enabled,
-        charge_control_types=control_types,
-        charge_protection_supported=supported,
-        configured_start_threshold=start_limit,
-        configured_end_threshold=end_limit,
+        charge_protection_enabled=(
+            capabilities.charge_protection_enabled if capabilities else None
+        ),
+        charge_control_types=capabilities.charge_control_types if capabilities else (),
+        charge_protection_supported=(
+            capabilities.charge_protection_supported if capabilities else None
+        ),
+        configured_start_threshold=(
+            capabilities.configured_start_threshold if capabilities else None
+        ),
+        configured_end_threshold=(
+            capabilities.configured_end_threshold if capabilities else None
+        ),
     )
 
 
