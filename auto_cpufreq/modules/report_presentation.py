@@ -211,7 +211,14 @@ def _charge_thresholds(battery):
     """Describe observed kernel thresholds versus UPower's configured policy."""
     start = _known_text(battery.charging_start_threshold)
     stop = _known_text(battery.charging_stop_threshold)
-    if not getattr(battery, "charge_protection_supported", False):
+    capability = getattr(battery, "charge_protection_supported", False)
+    if capability is None:
+        return (
+            start, stop,
+            DisplayValue(None, Availability.UNKNOWN, "UPower capability unknown"),
+            False,
+        )
+    if capability is False:
         return start, stop, None, False
 
     controls = getattr(battery, "charge_control_types", ())

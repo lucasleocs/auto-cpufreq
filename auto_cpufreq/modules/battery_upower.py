@@ -27,10 +27,10 @@ CONTROLS = ((1, "Start threshold"), (2, "End threshold"), (4, "Firmware managed"
 class UPowerBattery:
     status: str
     percentage: int
-    power_watts: float
+    power_watts: float | None
     charge_protection_enabled: bool | None = None
     charge_control_types: tuple[str, ...] = ()
-    charge_protection_supported: bool = False
+    charge_protection_supported: bool | None = False
     configured_start_threshold: int | None = None
     configured_end_threshold: int | None = None
 
@@ -62,34 +62,46 @@ def _decode(properties: dict, sysfs_path: str) -> UPowerBattery | None:
         return None
     if not _valid_percent(percentage):
         return None
-    if type(rate) not in (int, float) or not math.isfinite(rate):
-        return None
+    # Older UPower versions and transient providers may omit the energy
+    # rate. Keep the valid battery identity/state/percentage in that case,
+    # allowing the caller to retain a kernel power reading.
+    rate_watts = abs(float(rate)) if (
+        type(rate) in (int, float) and math.isfinite(rate)
+    ) else None
 
-    supported = properties.get("ChargeThresholdSupported") is True
-    enabled = properties.get("ChargeThresholdEnabled") if supported else None
+    # Missing API means unsupported on an older service. A malformed
+    # advertised capability is *unknown*, not confirmed unsupported.
+    supported = properties.get("ChargeThresholdSupported", False)
+    if type(supported) is not bool:
+        supported = None
+    mask = properties.get("ChargeThresholdSettingsSupported")
+    if supported is True and mask is not None and (
+        type(mask) is not int or mask < 0
+    ):
+        supported = None
+    enabled = properties.get("ChargeThresholdEnabled") if supported is True else None
     if type(enabled) is not bool:
         enabled = None
 
-    mask = properties.get("ChargeThresholdSettingsSupported")
     control_types = (
         tuple(label for flag, label in CONTROLS if mask & flag)
-        if supported and type(mask) is int and mask >= 0
+        if supported is True and type(mask) is int and mask >= 0
         else ()
     )
     start = properties.get("ChargeStartThreshold")
     end = properties.get("ChargeEndThreshold")
     start_limit = (
-        start if supported and type(mask) is int and mask & 1
+        start if supported is True and type(mask) is int and mask & 1
         and type(start) is int and 0 <= start <= 100 else None
     )
     end_limit = (
-        end if supported and type(mask) is int and mask & 2
+        end if supported is True and type(mask) is int and mask & 2
         and type(end) is int and 0 <= end <= 100 else None
     )
     return UPowerBattery(
         status=STATES[state],
         percentage=int(round(percentage)),
-        power_watts=abs(float(rate)),
+        power_watts=rate_watts,
         charge_protection_enabled=enabled,
         charge_control_types=control_types,
         charge_protection_supported=supported,

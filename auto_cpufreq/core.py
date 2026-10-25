@@ -326,9 +326,9 @@ def set_turbo(value:bool):
 
 
 # ignore these devices under /sys/class/power_supply/
-def get_power_supply_ignore_list():
-
-    conf = config.get_config()
+def get_power_supply_ignore_list(snapshot=None):
+    """Use one published config snapshot when called by battery policy."""
+    conf = config.get_config() if snapshot is None else snapshot
 
     list = []
 

@@ -828,6 +828,11 @@ As of [v2.2.0](https://github.com/AdnanHodzic/auto-cpufreq/releases/tag/v2.2.0),
 - **Lenovo Legion** (ideapad_laptop)*
 - **ASUS :Laptops** (asus_wmi)*
 
+Devices exposing the standard Linux `charge_control_end_threshold` sysfs
+attribute may also use the generic kernel backend, including laptops with no
+manufacturer-specific threshold implementation. Support depends on the
+attributes actually exported by the kernel, not on the laptop brand alone.
+
 **Please note, your laptop must have an installed ACPI kernel driver specific to the manufacturer.** To check if you have the correct module installed and loaded run `lsmod [module]`
 
 Additionally, **you should make sure that you have no other software running that may conflict with auto-cpufreq's battery threshold management** (e.g., GNOME's *Preserve Battery Health* option). Using both at the same time will lead to conflicts and to your battery potentially never charging.
@@ -847,11 +852,47 @@ start_threshold = 20
 stop_threshold = 80
 ```
 
-You will need to specify both `start_threshold` AND `stop_threshold` in most cases.
-For these changes to have an effect, you will need to restart the daemon:
+The existing vendor-specific backends may require both `start_threshold`
+and `stop_threshold`. For a physical battery exposing the standard Linux
+`charge_control_end_threshold` attribute, the generic backend also supports
+**stop-only** configurations:
+
+```ini
+[battery]
+enable_thresholds = true
+stop_threshold = 80
+```
+
+If you explicitly supply `start_threshold`, the battery must also expose a
+writable start-threshold attribute. Kernel drivers may round the requested
+percentage to a supported setting; always consult the reported readback.
+
+When a matching system battery is available, status, percentage, and battery
+power are read from UPower, falling back to sysfs if necessary. Kernel
+charging thresholds and external-power detection are separate readings.
+Where UPower exposes charging-limit capabilities, GTK and `--stats` show
+their status, including firmware-managed protection and disagreement between
+UPower's configured limits and kernel readback. Displaying a configured value
+does not prove that the same limit is applied. Charging limits are not
+editable from GTK.
+
+The daemon must be running with appropriate privileges for requested limits
+to take effect. It watches the configuration file and normally picks up
+changes on its next battery-policy check (within about 15 seconds). You
+typically do **not** need to restart the daemon after changing these options.
+Threshold management is opt-in: without `enable_thresholds = true`, it
+performs no writes. Disabling it does not reset existing kernel or firmware
+thresholds to 100%.
+
+UPower's `EnableChargeThreshold()` method toggles configured charge
+protection; it cannot set an arbitrary percentage. auto-cpufreq therefore
+uses the available kernel or vendor interfaces for numeric settings and
+avoids competing with active protection or TLP.
+
+If the daemon is not running, you can start the installed service with:
 
 ```shell
-sudo systemctl restart auto-cpufreq.service
+sudo systemctl start auto-cpufreq.service
 ```
 
 See more here on the kernel doc pages: [docs.kernel.org](https://docs.kernel.org/admin-guide/laptops/thinkpad-acpi.html#battery-charge-control)

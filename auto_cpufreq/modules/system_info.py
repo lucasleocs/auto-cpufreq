@@ -628,7 +628,7 @@ class SystemInfo:
 
         # Fall back to auto-detection if no custom device specified or if it's invalid
         try:
-            ignore_list = get_power_supply_ignore_list()
+            ignore_list = get_power_supply_ignore_list(snapshot)
             batteries = []
             for entry in sorted(os.listdir(POWER_SUPPLY_DIR)):
                 if any(item in entry for item in ignore_list):
@@ -771,12 +771,12 @@ class SystemInfo:
         power_watts = SystemInfo._battery_power_watts(battery_path)
 
         charge_start_threshold = (
-            SystemInfo.read_file(os.path.join(battery_path, "charge_start_threshold"))
-            or SystemInfo.read_file(os.path.join(battery_path, "charge_control_start_threshold"))
+            SystemInfo.read_file(os.path.join(battery_path, "charge_control_start_threshold"))
+            or SystemInfo.read_file(os.path.join(battery_path, "charge_start_threshold"))
         )
         charge_stop_threshold = (
-            SystemInfo.read_file(os.path.join(battery_path, "charge_stop_threshold"))
-            or SystemInfo.read_file(os.path.join(battery_path, "charge_control_end_threshold"))
+            SystemInfo.read_file(os.path.join(battery_path, "charge_control_end_threshold"))
+            or SystemInfo.read_file(os.path.join(battery_path, "charge_stop_threshold"))
         )
         is_charging = battery_status.lower() == "charging" if battery_status else None
         battery_level = int(battery_capacity) if battery_capacity and battery_capacity.isdigit() else None
@@ -792,7 +792,8 @@ class SystemInfo:
         if upower is not None:
             battery_status = upower.status
             battery_level = upower.percentage
-            power_watts = upower.power_watts
+            if upower.power_watts is not None:
+                power_watts = upower.power_watts
             is_charging = battery_status == "Charging"
 
         return BatteryInfo(
