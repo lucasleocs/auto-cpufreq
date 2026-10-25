@@ -199,8 +199,9 @@ case "$(ps h -o comm 1)" in
         echo -e "\n* Removing auto-cpufreq daemon (runit) unit file"
         # Remove only entries owned by this service. If another entry appears
         # after validation, rmdir fails instead of recursively deleting it.
-        rm -f -- "$service_dir/run" || return $?
+        # Retain the identifying run script if supervise cleanup fails.
         rm -rf -- "$service_dir/supervise" || return $?
+        rm -f -- "$service_dir/run" || return $?
         rmdir -- "$service_dir" || return $?
       fi
     }

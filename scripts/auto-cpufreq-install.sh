@@ -116,6 +116,87 @@ function s6_service_is_managed {
     return 0
 }
 
+# Read-only preflight before changing Bluetooth, competing services or helpers.
+function daemon_install_preflight {
+    local init_system service_file managed_file service_dir active_link required_command
+    init_system="$(ps h -o comm 1)" || return 1
+    case "$init_system" in
+      dinit|init|systemd)
+        case "$init_system" in
+          dinit) service_file=/etc/dinit.d/auto-cpufreq
+                 managed_file="$SHARE_DIR/scripts/auto-cpufreq-dinit" ;;
+          init) service_file=/etc/init.d/auto-cpufreq
+                managed_file="$SHARE_DIR/scripts/auto-cpufreq-openrc" ;;
+          systemd) service_file=/etc/systemd/system/auto-cpufreq.service
+                   managed_file="$SHARE_DIR/scripts/auto-cpufreq.service" ;;
+        esac
+        service_file_is_managed "$service_file" "$managed_file" || {
+          echo "Error: Refusing an unmanaged $init_system service file: $service_file" >&2
+          return 1
+        }
+        ;;
+      runit)
+        if [ ! -f /etc/os-release ]; then
+          echo "Error: Runit distribution could not be determined." >&2
+          return 1
+        fi
+        local ID
+        . /etc/os-release
+        case "$ID" in
+          void) service_dir=/etc/sv/auto-cpufreq
+                active_link=/var/service/auto-cpufreq ;;
+          artix) service_dir=/etc/runit/sv/auto-cpufreq
+                 active_link=/run/runit/service/auto-cpufreq ;;
+          *) echo "Error: Unsupported runit distribution: $ID" >&2
+             return 1 ;;
+        esac
+        runit_service_is_managed "$service_dir" || {
+          echo "Error: Refusing an unmanaged runit directory: $service_dir" >&2
+          return 1
+        }
+        if [ -L "$active_link" ]; then
+          [ "$(readlink "$active_link")" = "$service_dir" ] || {
+            echo "Error: Refusing an unmanaged runit link: $active_link" >&2
+            return 1
+          }
+        elif [ -e "$active_link" ]; then
+          echo "Error: Refusing an unmanaged runit path: $active_link" >&2
+          return 1
+        fi
+        ;;
+      s6-svscan)
+        for required_command in flock s6-service s6-db-reload s6-rc; do
+          command -v "$required_command" >/dev/null 2>&1 || {
+            echo "Error: Missing s6 command: $required_command" >&2
+            return 1
+          }
+        done
+        if [ -e /etc/s6/sv/.auto-cpufreq-removing ] ||
+           [ -L /etc/s6/sv/.auto-cpufreq-removing ]; then
+          echo "Error: Incomplete s6 removal; retry removal before installing." >&2
+          return 1
+        fi
+        s6_service_is_managed /etc/s6/sv/auto-cpufreq || {
+          echo "Error: Refusing an unmanaged s6 service definition." >&2
+          return 1
+        }
+        ;;
+      *)
+        echo "Error: Unsupported init system: $init_system" >&2
+        return 1
+        ;;
+    esac
+    return 0
+}
+
+if [ "$1" = "--preflight" ]; then
+  daemon_install_preflight
+  exit $?
+fi
+
+# Re-check during the real install in case state changed after preflight.
+daemon_install_preflight || exit $?
+
 case "$(ps h -o comm 1)" in
   dinit)
     service_file=/etc/dinit.d/auto-cpufreq
