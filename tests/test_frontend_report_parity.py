@@ -58,7 +58,7 @@ def make_gtk_double():
         platform_values=labels(("interface", "current", "available", "provider")),
         platform_names=labels(("available", "provider")),
         power_values=labels(("governor", "epp", "epb", "hwp", "turbo")),
-        battery_values=labels(("status", "charge", "ac", "start", "stop", "power")),
+        battery_values=labels(("status", "charge", "ac", "start", "stop", "power", "limit")),
         battery_names=labels(("power",)),
         stats_values=labels(("usage", "load", "load_avg", "temp")),
         max_freq_value=Mock(), min_freq_value=Mock(),
@@ -144,7 +144,7 @@ class FrontendReportParityTests(unittest.TestCase):
         self.assertEqual(
             [row for grid, row, shown in visibility
              if grid is view.battery_grid and not shown],
-            [1, 2, 3, 4, 5],
+            [1, 2, 3, 4, 5, 6],
         )
 
     def test_no_battery_real_collection_path_keeps_ac_and_ui_consistent(self):
@@ -172,7 +172,7 @@ class FrontendReportParityTests(unittest.TestCase):
         self.assertEqual(
             [row for grid, row, shown in visible
              if grid is view.battery_grid and not shown],
-            [1, 2, 3, 4, 5],
+            [1, 2, 3, 4, 5, 6],
         )
 
     def test_detected_battery_keeps_charge_status_and_all_rows(self):
@@ -206,7 +206,7 @@ class FrontendReportParityTests(unittest.TestCase):
         self.assertEqual(
             [row for grid, row, shown in visible
              if grid is view.battery_grid and shown],
-            [1, 2, 3, 4, 5],
+            [1, 2, 3, 4, 5, 6],
         )
 
     def test_battery_rows_return_after_device_becomes_available(self):
@@ -222,9 +222,28 @@ class FrontendReportParityTests(unittest.TestCase):
         self.assertEqual(
             [row for grid, row, shown in visibility
              if grid is view.battery_grid and shown],
-            [1, 2, 3, 4, 5],
+            [1, 2, 3, 4, 5, 6],
         )
         view.battery_values["status"].set_text.assert_called_with(expected)
+        final = {row: shown for grid, row, shown in visibility
+                 if grid is view.battery_grid}
+        self.assertIs(final[6], False)
+
+    def test_upower_charge_protection_row_is_visible_when_supported(self):
+        battery = BatteryInfo(
+            is_charging=False, is_ac_plugged=True,
+            charging_start_threshold=None, charging_stop_threshold=80,
+            battery_level=60, power_watts=0.0,
+            charge_protection_supported=True,
+            charge_protection_enabled=False,
+        )
+        view, visibility = self.render_gtk(sample_report(battery=battery))
+        final = {row: shown for grid, row, shown in visibility
+                 if grid is view.battery_grid}
+        self.assertIs(final[6], True)
+        view.battery_values["limit"].set_text.assert_called_with(
+            "Supported (disabled)"
+        )
 
     def test_missing_average_temperature_is_visible_in_both(self):
         report = sample_report(temperatures=(0.0, 0.0))
