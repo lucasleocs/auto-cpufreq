@@ -16,6 +16,8 @@ jobs:
           bash -n scripts/start_app
       - name: Validate Python modules without importing runtime dependencies
         run: python3 -m compileall -q auto_cpufreq
+      - name: Verify old reporting functions are gone while active entrypoints remain
+        run: python3 -m unittest discover -s tests -p test_dead_legacy_core.py -v
       - name: Verify active entrypoints and no legacy tray
         shell: bash
         run: |
