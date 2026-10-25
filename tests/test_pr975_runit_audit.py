@@ -69,6 +69,20 @@ class RunitOwnershipParity(unittest.TestCase):
         (self.service / "supervise").mkdir()
         self.assert_both(True)
 
+    def test_managed_run_with_supervise_symlink_is_supported(self):
+        self.service.mkdir(parents=True)
+        (self.service / "run").write_bytes(self.managed.read_bytes())
+        external = self.root / "runit-runtime-state"
+        external.mkdir()
+        (self.service / "supervise").symlink_to(external, target_is_directory=True)
+        self.assert_both(True)
+
+    def test_supervise_regular_file_is_not_owned(self):
+        self.service.mkdir(parents=True)
+        (self.service / "run").write_bytes(self.managed.read_bytes())
+        (self.service / "supervise").write_text("unexpected")
+        self.assert_both(False)
+
     def test_supervise_only_directory_is_not_owned(self):
         self.service.mkdir(parents=True)
         (self.service / "supervise").mkdir()
