@@ -8,13 +8,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 import subprocess
 
-from auto_cpufreq.config.config import config
-
 
 @dataclass(frozen=True)
 class ChargeConflict:
     blocked: bool
     reason: str = ""
+    status: str = "clear"  # active, inactive, absent, unknown, or clear (drift)
 
 
 def competing_charge_manager() -> ChargeConflict:
@@ -25,13 +24,21 @@ def competing_charge_manager() -> ChargeConflict:
             timeout=2, check=False, stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
-    except (OSError, subprocess.TimeoutExpired):
-        # This isn't proof that no third party owns the resource: drift
-        # detection below remains authoritative for subsequent changes.
-        return ChargeConflict(False)
+    except (OSError, subprocess.TimeoutExpired) as error:
+        # Preserve the prior non-systemd behavior while exposing uncertainty.
+        # No ownership proof is inferred from a failed status check.
+        return ChargeConflict(False, type(error).__name__, "unknown")
     if result.returncode == 0:
-        return ChargeConflict(True, "TLP service active; avoid competing charge managers")
-    return ChargeConflict(False)
+        return ChargeConflict(
+            True, "TLP service active; avoid competing charge managers", "active"
+        )
+    if result.returncode == 3:
+        return ChargeConflict(False, "TLP service inactive", "inactive")
+    if result.returncode == 4:
+        return ChargeConflict(False, "TLP service unit not found", "absent")
+    return ChargeConflict(
+        False, f"systemctl is-active returned {result.returncode}", "unknown"
+    )
 
 
 class ChargeDriftGuard:

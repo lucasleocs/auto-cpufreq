@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import os
+from enum import Enum
 from typing import Any
 
 from auto_cpufreq.config.config import config
@@ -18,6 +19,26 @@ CHARGE_STOP_THRESHOLD_FILES = [
     "charge_control_end_threshold",
     "charge_stop_threshold",
 ]
+
+ 
+class BatteryApplyResult(str, Enum):
+    """Policy outcome used by the daemon's retry scheduler."""
+    APPLIED = "applied"
+    SATISFIED = "satisfied"
+    RETRY = "retry"
+    BLOCKED = "blocked"
+    INVALID = "invalid"
+
+
+def writable_threshold_file(bat: str, candidates) -> str | None:
+    """Select the first existing writable attribute in declared order."""
+    if not bat or os.path.basename(bat) != bat:
+        return None
+    for filename in candidates:
+        path = os.path.join(POWER_SUPPLY_DIR, bat, filename)
+        if os.path.isfile(path) and os.access(path, os.W_OK):
+            return path
+    return None
 
 
 class BatteryDevice:
@@ -84,12 +105,7 @@ class BatteryDevice:
         Return the first found file path from files list, or None if not found
         """
 
-        for filename in files:
-            path = os.path.join(POWER_SUPPLY_DIR, bat, filename)
-            # File must exist and be writable
-            if os.path.isfile(path) and os.access(path, os.W_OK):
-                return path
-        return None
+        return writable_threshold_file(bat, files)
 
     def _get_config(self, snapshot=None) -> dict[str, str]:
         conf = config.get_config() if snapshot is None else snapshot
@@ -355,27 +371,33 @@ class BatteryDevice:
             config["stop_threshold"],
         )
 
-    def apply_threshold_settings(self, snapshot=None):
-        """Return whether a complete policy check succeeded.
+    def apply_threshold_settings(self, snapshot=None) -> BatteryApplyResult:
+        """Apply an enabled policy while classifying retryable and hard stops.
 
-        False schedules a bounded retry by the daemon; it does not authorize
-        bypassing existing ownership, drift or transaction checks.
+        A blocked owner or drift is never overridden by a retry.
         """
         parsed_config = self.get_parsed_config(snapshot)
         if not parsed_config["thresholds_enabled"]:
-            return False
+            return BatteryApplyResult.INVALID
         if not self.batteries:
             print("WARNING: no batteries found to set thresholds for")
-            return False
+            return BatteryApplyResult.RETRY
 
         competitor = competing_charge_manager()
         if competitor.blocked:
             if competitor.reason not in self._reported_conflicts:
                 print(f"WARNING: charge control paused: {competitor.reason}")
                 self._reported_conflicts.add(competitor.reason)
-            return False
+            return BatteryApplyResult.BLOCKED
+        if competitor.status == "unknown":
+            key = ("competitor", competitor.reason)
+            if key not in self._reported_conflicts:
+                print(f"WARNING: TLP status could not be determined: {competitor.reason}")
+                self._reported_conflicts.add(key)
 
-        complete = True
+        retry_needed = False
+        blocked = False
+        applied = False
         for bat in self.batteries:
             signature = (
                 parsed_config["start_threshold"],
@@ -389,11 +411,9 @@ class BatteryDevice:
                 if key not in self._reported_conflicts:
                     print(f"WARNING: skipping {bat}: {drift.reason}")
                     self._reported_conflicts.add(key)
-                complete = False
+                blocked = True
                 continue
 
-            # All generic and manufacturer writers pass through this single
-            # ownership check when invoked by the daemon.
             request = resolve_charge_control(
                 os.path.join(POWER_SUPPLY_DIR, bat),
                 parsed_config["stop_threshold"],
@@ -406,23 +426,32 @@ class BatteryDevice:
                 continue
             if request.action != "apply":
                 print(f"WARNING: skipping {bat}: {request.reason}")
-                complete = False
+                if request.retryable:
+                    retry_needed = True
+                else:
+                    blocked = True
                 continue
             if not self.apply_threshold_settings_to_bat(bat, parsed_config):
                 print(f"ERROR: failed to set thresholds for battery {bat}")
-                complete = False
                 after_failure = self.get_current_threshold(bat)
                 if after_failure != current:
                     self._drift_guard.suspend(
                         bat, signature,
                         "Partial or concurrent threshold change; manual verification required"
                     )
+                    blocked = True
+                else:
+                    retry_needed = True
                 continue
             updated = self.get_current_threshold(bat)
-            # Track only readbacks corresponding to an actual numeric writer.
-            # Firmware modes without observable numeric values cannot claim a
-            # verified percentage and must not be marked as such.
+            applied = applied or updated != current
+            # Only numeric verified readbacks establish a drift baseline.
             if (updated != current and updated[1] is not None
                     and parsed_config.get("ideapad_conservation_mode") is None):
                 self._drift_guard.record(bat, signature, updated)
-        return complete
+
+        if retry_needed:
+            return BatteryApplyResult.RETRY
+        if blocked:
+            return BatteryApplyResult.BLOCKED
+        return BatteryApplyResult.APPLIED if applied else BatteryApplyResult.SATISFIED

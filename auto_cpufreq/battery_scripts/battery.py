@@ -8,7 +8,9 @@ from auto_cpufreq.battery_scripts.conflicts import ChargeDriftGuard
 
 from auto_cpufreq.battery_scripts.asus import AsusBatteryDevice
 from auto_cpufreq.battery_scripts.ideapad_laptop import IdeapadBatteryDevice
-from auto_cpufreq.battery_scripts.shared import BatteryDevice
+from auto_cpufreq.battery_scripts.shared import (
+    BatteryDevice, BatteryApplyResult, writable_threshold_file,
+)
 from auto_cpufreq.battery_scripts.generic import GenericKernelBatteryDevice
 from auto_cpufreq.modules.system_info import SystemInfo
 from auto_cpufreq.config.config import config
@@ -123,7 +125,8 @@ class BatteryDaemonController:
                 self.device = candidate
                 self._identity = identity
             # Reuse the prior instance when selection has not changed.
-            if self.device.apply_threshold_settings(snapshot) is False:
+            result = self.device.apply_threshold_settings(snapshot)
+            if result == BatteryApplyResult.RETRY:
                 self._retry_at = now + BATTERY_RETRY_INTERVAL
         except Exception:
             self._retry_at = now + BATTERY_RETRY_INTERVAL
@@ -172,11 +175,11 @@ def get_battery_device(snapshot=None):
         return IdeapadBatteryDevice(settings)
 
     if not explicitly_conservation:
-        if (battery_path
-                and os.path.isfile(os.path.join(
-                    battery_path, "charge_control_end_threshold"))):
+        if battery_path and writable_threshold_file(
+            os.path.basename(battery_path), ("charge_control_end_threshold",)
+        ):
             dev = GenericKernelBatteryDevice(settings)
-            if dev.stop_paths:
+            if dev.stop_paths.get(os.path.basename(battery_path)):
                 return dev
 
     if lsmod("ideapad_acpi"):

@@ -40,6 +40,11 @@ class GenericKernelBatteryDevice(BatteryDevice):
             return []
         return [battery]
 
+    def _choose_threshold_file(self, bat: str, files: list[str]) -> str | None:
+        # The generic backend is exclusively for the standard kernel ABI.
+        # Manufacturer-specific legacy attributes belong to vendor backends.
+        return super()._choose_threshold_file(bat, files[:1])
+
     def _parse_threshold_values(self, start: str | None, stop: str | None):
         if stop is None or not stop.isdecimal():
             raise ValueError("Generic kernel threshold requires integer stop_threshold")

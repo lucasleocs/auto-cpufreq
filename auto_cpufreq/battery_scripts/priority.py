@@ -16,6 +16,7 @@ from auto_cpufreq.modules.system_info import SystemInfo
 class ChargeControlDecision:
     action: str  # "apply", "satisfied", "blocked"
     reason: str
+    retryable: bool = False
 
 
 def _kernel_threshold(battery_path: str, names: tuple[str, ...]) -> int | None:
@@ -45,7 +46,8 @@ def resolve_charge_control(
     if probe.status != "ready" or probe.capabilities is None:
         return ChargeControlDecision(
             "blocked", "UPower service or battery capability unavailable: "
-            + (probe.reason or probe.status)
+            + (probe.reason or probe.status),
+            retryable=True,
         )
 
     info = probe.capabilities
@@ -54,7 +56,8 @@ def resolve_charge_control(
 
     if info.charge_protection_enabled is None:
         return ChargeControlDecision(
-            "blocked", "UPower supports protection but its enabled state is unknown"
+            "blocked", "UPower supports protection but its enabled state is unknown",
+            retryable=True,
         )
 
     if not info.charge_protection_enabled:
