@@ -104,6 +104,19 @@ class PowerServiceStateTests(unittest.TestCase):
         self.assertEqual(self.sim.units["power-profiles-daemon.service"], {"unit_file": "enabled", "active": True})
         self.assertFalse(self.file.exists())
 
+    def test_interrupted_restore_can_resume_after_unmask(self):
+        self.assertTrue(self.manager.disable())
+        self.sim.fail_once = ("enable", "power-profiles-daemon.service")
+        self.assertFalse(self.manager.restore())
+        record = json.loads(self.file.read_text())["services"]
+        self.assertTrue(record["power-profiles-daemon.service"]["restoring"])
+        self.assertTrue(self.manager.restore())
+        self.assertFalse(self.file.exists())
+        self.assertEqual(
+            self.sim.units["power-profiles-daemon.service"],
+            {"unit_file": "enabled", "active": True},
+        )
+
     def test_repeated_disable_keeps_first_snapshot(self):
         self.assertTrue(self.manager.disable())
         first = self.file.read_bytes()
