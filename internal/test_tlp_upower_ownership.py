@@ -149,6 +149,7 @@ class UPowerCapabilityTests(unittest.TestCase):
         bus = Ambiguous(properties=attrs)
         result = probe_bus(bus)
         self.assertEqual(result.status, "unavailable")
+        self.assertIn("omitted by GetAll", result.reason)
         self.assertEqual(bus.last_introspect.flags, MessageFlag.NO_AUTOSTART)
 
     def test_inaccessible_introspection_fails_closed(self):
@@ -157,7 +158,9 @@ class UPowerCapabilityTests(unittest.TestCase):
             if key.startswith("Charge"):
                 del attrs[key]
         bus = FakeBus(properties=attrs, broken="Introspect")
-        self.assertEqual(probe_bus(bus).status, "unavailable")
+        state = probe_bus(bus)
+        self.assertEqual(state.status, "unavailable")
+        self.assertIn("introspection unavailable", state.reason)
 
     def test_partial_getall_without_supported_never_calls_introspection(self):
         attrs = base_props()
