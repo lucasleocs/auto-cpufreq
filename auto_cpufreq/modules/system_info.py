@@ -60,7 +60,7 @@ class BatteryInfo:
     # Optional UPower telemetry; absent fields preserve existing sysfs clients.
     status: str | None = None
     source: str = "sysfs"
-    charge_protection_supported: bool = False
+    charge_protection_supported: bool | None = False
     charge_protection_enabled: bool | None = None
     charge_control_types: tuple[str, ...] = ()
     upower_configured_start: int | None = None
