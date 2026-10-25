@@ -53,13 +53,17 @@ def decode_charge_capabilities(properties: dict) -> ChargeCapabilities | None:
         # unsupported: this decision is used to authorize sysfs writes.
         enabled = properties.get("ChargeThresholdEnabled")
         mask = properties.get("ChargeThresholdSettingsSupported")
-        if enabled is True or (
-            type(mask) is int and mask != 0
-        ) or any(
-            type(properties.get(key)) is int and properties[key] > 0
-            for key in ("ChargeStartThreshold", "ChargeEndThreshold")
-        ):
+        if (enabled is not None and
+                (type(enabled) is not bool or enabled)):
             return None
+        if mask is not None and (type(mask) is not int or mask != 0):
+            return None
+        for key in ("ChargeStartThreshold", "ChargeEndThreshold"):
+            threshold = properties.get(key)
+            if threshold is not None and (
+                type(threshold) is not int or threshold != 0
+            ):
+                return None
         return ChargeCapabilities(charge_protection_supported=False)
 
     enabled = properties.get("ChargeThresholdEnabled")
