@@ -57,6 +57,8 @@ class ServiceOwnershipTests(unittest.TestCase):
             ["auto_cpufreq_remove", "openrc_disable"]
         )
         names = included + ["service_file_is_managed"] if "function service_file_is_managed {" in code else included
+        if init_name == "dinit":
+            names.append("dinit_enable" if mode == "install" else "dinit_disable")
         functions = "\n\n".join(extract_function(code, name) for name in names)
         case = code[code.index('case "$(ps h -o comm 1)" in'):]
         case = case.replace(
