@@ -174,6 +174,25 @@ class PowerServiceStateTests(unittest.TestCase):
         self.assertFalse(self.manager.disable())
         self.assertFalse(self.file.exists())
 
+    def test_repeated_install_aborts_if_existing_mask_was_removed(self):
+        self.assertTrue(self.manager.disable())
+        self.sim.units["tuned.service"]["unit_file"] = "enabled"
+        before = self.file.read_bytes()
+        self.assertFalse(self.manager.disable())
+        self.assertEqual(self.file.read_bytes(), before)
+        self.assertEqual(self.sim.units["tuned.service"]["unit_file"], "enabled")
+
+    def test_reject_readable_by_other_users_state_file(self):
+        self.assertTrue(self.manager.disable())
+        self.file.chmod(0o644)
+        self.assertFalse(self.manager.restore())
+        self.assertTrue(self.file.exists())
+
+    def test_reject_state_file_that_is_not_regular(self):
+        self.file.mkdir()
+        self.assertFalse(self.manager.disable())
+        self.assertTrue(self.file.is_dir())
+
     def test_repeated_disable_keeps_first_snapshot(self):
         self.assertTrue(self.manager.disable())
         first = self.file.read_bytes()
