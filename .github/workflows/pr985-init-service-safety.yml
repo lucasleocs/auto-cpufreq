@@ -1,0 +1,15 @@
+name: PR 985 Init Service Safety Audit
+on:
+  push:
+    branches:
+      - lab/pr985-init-service-safety
+  workflow_dispatch:
+jobs:
+  init-ownership:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run isolated OpenRC and dinit lifecycle scenarios
+        run: python3 -m unittest discover -s tests -p test_init_service_safety.py -v
+      - name: Check shell syntax
+        run: bash -n scripts/auto-cpufreq-install.sh scripts/auto-cpufreq-remove.sh
