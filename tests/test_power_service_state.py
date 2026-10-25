@@ -66,8 +66,11 @@ class PowerServiceStateTests(unittest.TestCase):
         self.sim = SystemdSimulator()
         self.manager = state.PowerServiceState(self.file, runner=self.sim)
         use_systemd = patch.object(state, "which", return_value="/usr/bin/systemctl")
+        booted = patch.object(state, "systemd_booted", return_value=True)
         use_systemd.start()
+        booted.start()
         self.addCleanup(use_systemd.stop)
+        self.addCleanup(booted.stop)
 
     def test_restore_original_enabled_active_and_disabled_inactive(self):
         self.assertTrue(self.manager.disable())
@@ -77,6 +80,20 @@ class PowerServiceStateTests(unittest.TestCase):
         self.assertFalse(self.file.exists())
         self.assertEqual(self.sim.units["power-profiles-daemon.service"], {"unit_file": "enabled", "active": True})
         self.assertEqual(self.sim.units["tuned.service"], {"unit_file": "disabled", "active": False})
+
+    def test_systemctl_installed_without_systemd_does_not_change_services(self):
+        with patch.object(state, "systemd_booted", return_value=False):
+            self.assertTrue(self.manager.disable())
+        self.assertEqual(self.sim.commands, [])
+        self.assertFalse(self.file.exists())
+
+    def test_preserve_existing_snapshot_if_systemd_is_unavailable(self):
+        self.assertTrue(self.manager.disable())
+        before = self.file.read_bytes()
+        with patch.object(state, "systemd_booted", return_value=False):
+            self.assertFalse(self.manager.restore())
+        self.assertEqual(self.file.read_bytes(), before)
+        self.assertEqual(self.sim.units["tuned.service"]["unit_file"], "masked")
 
     def test_no_snapshot_means_no_changes_to_services(self):
         self.assertTrue(self.manager.restore())
