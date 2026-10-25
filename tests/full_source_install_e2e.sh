@@ -28,6 +28,13 @@ command -v desktop-file-install >/dev/null || fail "desktop-file-install unavail
 log "Copy readonly checkout into private writable working tree"
 mkdir -p /work/source
 cp -a /src/. /work/source/
+# A normal 'sudo ./auto-cpufreq-installer --install' inherits SUDO_UID, and
+# Git uses that original UID to authorize an otherwise user-owned checkout.
+# Preserve that distinction rather than manufacturing a root-only failure.
+export SUDO_UID="$(stat -c '%u' /work/source)"
+export SUDO_GID="$(stat -c '%g' /work/source)"
+[ "$SUDO_UID" != 0 ] || fail "Expected checkout owned by the unprivileged CI user"
+log "Simulated sudo checkout owner UID: $SUDO_UID"
 cd /work/source
 git --version >/dev/null || true  # Installer installs Git before resolving source metadata.
 
