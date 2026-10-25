@@ -1,0 +1,23 @@
+name: Battery guarded-control validation
+on:
+  push:
+    branches:
+      - lab/battery-on-pr985-thresholds-validation
+  workflow_dispatch:
+
+jobs:
+  battery_regression:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install package and runtime dependencies
+        run: python -m pip install .
+      - name: Compile Python sources
+        run: python -m compileall -q auto_cpufreq
+      - name: Run battery regression tests using simulated sysfs
+        run: python -m unittest discover -s internal -p 'test_*.py' -v
