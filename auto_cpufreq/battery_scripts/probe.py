@@ -114,7 +114,8 @@ async def _probe_bus(bus, battery_path, message, message_type) -> ChargeServiceP
 
         return ChargeServiceProbe("unavailable", reason="UPower did not identify the selected system battery")
     except Exception as exc:
-        return ChargeServiceProbe("unavailable", reason=type(exc).__name__)
+        reason = str(exc) if isinstance(exc, ValueError) else type(exc).__name__
+        return ChargeServiceProbe("unavailable", reason=reason)
 
 
 async def _probe_system(battery_path: str, timeout: float) -> ChargeServiceProbe:
@@ -138,5 +139,11 @@ def probe_charge_service(
     """Probe charge capabilities; any connectivity failure is NOT absence."""
     try:
         return asyncio.run(_probe_system(battery_path, timeout))
+    except (OSError, ConnectionError) as exc:
+        return ChargeServiceProbe(
+            "unavailable", reason=f"System D-Bus connection unavailable: {type(exc).__name__}"
+        )
+    except asyncio.TimeoutError:
+        return ChargeServiceProbe("unavailable", reason="UPower D-Bus request timed out")
     except Exception as exc:
         return ChargeServiceProbe("unavailable", reason=type(exc).__name__)
