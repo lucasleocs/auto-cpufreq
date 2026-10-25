@@ -397,6 +397,32 @@ function discard_public_file_backups {
   done
 }
 
+# Restore the selected source generation and public entry points after a
+# failure *following* activation. Never discard a candidate that may still
+# be referenced by current if activating the previous generation fails.
+function rollback_activated_release {
+  local previous_release="$1"
+  local candidate_release="$2"
+  local candidate_is_active=true
+
+  if [ -n "$previous_release" ]; then
+    if activate_release "$previous_release"; then
+      candidate_is_active=false
+    else
+      echo "Error: Failed to restore the previous active source release."
+    fi
+  elif rm -f -- "$CURRENT_PATH"; then
+    candidate_is_active=false
+  else
+    echo "Error: Failed to undo the first source release activation."
+  fi
+
+  restore_public_files || echo "Error: Failed to restore public auto-cpufreq files."
+  if [ "$candidate_is_active" = false ]; then
+    discard_release "$candidate_release"
+  fi
+}
+
 function verify_command_version {
   local command_path="$1"
   local installed_version="$2"
@@ -562,7 +588,6 @@ function build_release {
 
 function tool_install {
   local active_version
-  local candidate_is_active
   local integration_files_published=false
   local prepared_share_dir
   local previous_release=""
@@ -796,20 +821,7 @@ function tool_install {
     || [ -z "$active_version" ] \
     || ! verify_command_version "$AUTO_CPUFREQ_FILE" "$active_version"; then
     echo "Error: The installed auto-cpufreq command failed its final version check."
-    candidate_is_active=true
-    if [ -n "$previous_release" ]; then
-      if activate_release "$previous_release"; then
-        candidate_is_active=false
-      else
-        echo "Error: Failed to restore the previous active source release."
-      fi
-    elif rm -f -- "$CURRENT_PATH"; then
-      candidate_is_active=false
-    else
-      echo "Error: Failed to undo the first source release activation."
-    fi
-    restore_public_files || echo "Error: Failed to restore public auto-cpufreq files."
-    $candidate_is_active || discard_release "$PREPARED_RELEASE"
+    rollback_activated_release "$previous_release" "$PREPARED_RELEASE"
     return 1
   fi
 
@@ -827,20 +839,7 @@ function tool_install {
   fi
 
   if [ "$integration_files_published" != true ]; then
-    candidate_is_active=true
-    if [ -n "$previous_release" ]; then
-      if activate_release "$previous_release"; then
-        candidate_is_active=false
-      else
-        echo "Error: Failed to restore the previous active source release."
-      fi
-    elif rm -f -- "$CURRENT_PATH"; then
-      candidate_is_active=false
-    else
-      echo "Error: Failed to undo the first source release activation."
-    fi
-    restore_public_files || echo "Error: Failed to restore public auto-cpufreq files."
-    $candidate_is_active || discard_release "$PREPARED_RELEASE"
+    rollback_activated_release "$previous_release" "$PREPARED_RELEASE"
     return 1
   fi
 
