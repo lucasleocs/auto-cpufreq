@@ -1,0 +1,51 @@
+name: PR 975 Installer and Runit Audit
+
+on:
+  push:
+    branches:
+      - lab/pr985-installer-runit-audit
+  workflow_dispatch:
+
+jobs:
+  runit-ownership:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run isolated runit lifecycle assertions
+        run: python3 -m unittest discover -s tests -p test_pr975_runit_audit.py -v
+      - name: Check shell syntax
+        run: bash -n scripts/auto-cpufreq-install.sh scripts/auto-cpufreq-remove.sh
+
+  archive-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Create a Git archive without .git, like a source release
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/source-archive"
+          git archive --format=tar HEAD | tar -xf - -C "$RUNNER_TEMP/source-archive"
+          test ! -e "$RUNNER_TEMP/source-archive/.git"
+          python - "$RUNNER_TEMP/source-archive/.git_archival.json" <<'PY'
+          import json
+          import pathlib
+          import re
+          import sys
+          metadata = json.loads(pathlib.Path(sys.argv[1]).read_text())
+          assert re.fullmatch(r"[0-9a-f]{40}", metadata["hash-full"]), metadata
+          assert "$Format:" not in str(metadata), metadata
+          print("Git archive revision:", metadata["hash-full"])
+          print("Git archive description:", metadata["describe"])
+          PY
+      - name: Build a wheel from the metadata-only archive with the actual PEP 517 backend
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/archive-wheels"
+          python -m pip wheel --no-deps --wheel-dir "$RUNNER_TEMP/archive-wheels" "$RUNNER_TEMP/source-archive"
+          test -n "$(find "$RUNNER_TEMP/archive-wheels" -maxdepth 1 -name 'auto_cpufreq*.whl' -print -quit)"
+          ls -lh "$RUNNER_TEMP/archive-wheels"
