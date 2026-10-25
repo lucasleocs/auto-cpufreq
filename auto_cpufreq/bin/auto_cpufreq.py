@@ -127,53 +127,46 @@ def main(monitor, live, daemon, install, update, remove, force, turbo, config, s
                 sys.exit(0)
             running_daemon_check()
             root_check()
-            start_battery_daemon()
-            conf.notifier.start()
-            if IS_INSTALLED_WITH_SNAP:
-                gnome_power_detect_snap()
-                tlp_service_detect_snap()
-            else:
-                gnome_power_detect_live()
-                tuned_stop_live()
-                tlp_service_detect()
-            
-            if IS_INSTALLED_WITH_SNAP or tlp_stat_exists or (systemctl_exists and not bool(gnome_power_status)):
+            # Do not stop any host service before the user accepts the prompt.
+            gnome_power_detect_live()
+            tlp_service_detect()
+            if tlp_stat_exists or (systemctl_exists and not bool(gnome_power_status)):
                 try:
                     input("press Enter to continue or Ctrl + c to exit...")
                 except KeyboardInterrupt:
-                    conf.stop_watching()
                     sys.exit(0)
 
-            gnome_power_stop_live()
-            cpufreqctl()
-            def live_daemon():
-                # Redirect stdout to suppress prints
-                class NullWriter:
-                    def write(self, _): pass
-                    def flush(self): pass
-                try:
-                    sys.stdout = NullWriter()
-                    
-                    while True:
-                        time.sleep(1)
-                        set_autofreq()
-                except KeyboardInterrupt:
-                    raise
-                except Exception:
-                    pass
-            
-            def live_daemon_off():
-                gnome_power_start_live()
-                tuned_start_live()
+            stopped_services = []
+            try:
+                stopped_services = stop_conflicting_services_live()
+                start_battery_daemon()
+                conf.notifier.start()
+                cpufreqctl()
+
+                def live_daemon():
+                    # Redirect stdout to suppress prints
+                    class NullWriter:
+                        def write(self, _): pass
+                        def flush(self): pass
+                    try:
+                        sys.stdout = NullWriter()
+                        while True:
+                            time.sleep(1)
+                            set_autofreq()
+                    except KeyboardInterrupt:
+                        raise
+                    except Exception:
+                        pass
+
+                thread = Thread(target=live_daemon, daemon=True)
+                thread.start()
+                monitor = SystemMonitor(type=ViewType.LIVE,
+                                        diagnostic_log=diagnostic_log)
+                monitor.run(on_quit=conf.stop_watching)
+            finally:
+                restore_conflicting_services_live(stopped_services)
                 cpufreqctl_restore()
                 conf.stop_watching()
-            
-            thread = Thread(target=live_daemon, daemon=True)
-            thread.start()
-            
-            monitor = SystemMonitor(type=ViewType.LIVE,
-                                    diagnostic_log=diagnostic_log)
-            monitor.run(on_quit=live_daemon_off)
         elif daemon:
             config_info_dialog()
             root_check()
