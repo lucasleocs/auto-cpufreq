@@ -129,6 +129,105 @@ class AuditTests(unittest.TestCase):
         self.assertTrue(view.firmware_only)
         self.assertEqual(view.charge_limit.text, "Firmware managed (active)")
 
+    def test_gtk_renderer_hides_and_restores_threshold_rows(self):
+        """Exercise the GTK renderer with inert widget stand-ins."""
+        import importlib
+        import sys
+        from collections import defaultdict
+        from types import ModuleType
+
+        class Label:
+            def __init__(self):
+                self.text = ""
+                self.visible = True
+
+            def set_text(self, text):
+                self.text = text
+
+            def set_no_show_all(self, value):
+                pass
+
+            def show(self):
+                self.visible = True
+
+            def hide(self):
+                self.visible = False
+
+        class Grid:
+            def __init__(self):
+                self.widgets = {(col, row): Label()
+                                for col in (0, 1) for row in range(7)}
+
+            def get_child_at(self, col, row):
+                return self.widgets.get((col, row))
+
+        fake_gi = ModuleType("gi")
+        fake_gi.require_version = lambda *_: None
+        fake_repository = ModuleType("gi.repository")
+        fake_repository.Gtk = SimpleNamespace(Box=object)
+        fake_repository.Pango = SimpleNamespace()
+        with patch.dict(sys.modules, {
+            "gi": fake_gi,
+            "gi.repository": fake_repository,
+        }):
+            report_view = importlib.import_module(
+                "auto_cpufreq.gui.report_view"
+            )
+
+        view = report_view.SystemReportView.__new__(
+            report_view.SystemReportView
+        )
+        for attr in (
+            "system_values", "platform_values", "platform_names",
+            "power_values", "stats_values", "battery_values",
+            "battery_names",
+        ):
+            setattr(view, attr, defaultdict(Label))
+        for attr in ("platform_grid", "power_grid", "battery_grid"):
+            setattr(view, attr, Grid())
+        for attr in (
+            "max_freq_value", "min_freq_value", "fan_label", "offline_label",
+        ):
+            setattr(view, attr, Label())
+        view._refresh_core_rows = lambda _: None
+        battery = BatteryInfo(
+            False, True, None, 80, 80, 0.0, status="Not charging",
+            charge_protection_supported=True, charge_protection_enabled=True,
+            charge_control_types=("Firmware managed",),
+        )
+        report = self._sample_report(battery)
+        view.apply_report(report)
+        self.assertEqual(view.battery_values["status"].text, "Not charging")
+        self.assertEqual(
+            view.battery_values["limit"].text, "Firmware managed (active)"
+        )
+        self.assertFalse(view.battery_grid.get_child_at(0, 3).visible)
+        self.assertFalse(view.battery_grid.get_child_at(0, 4).visible)
+        self.assertTrue(view.battery_grid.get_child_at(0, 6).visible)
+
+        report.battery_info = BatteryInfo(False, True, 70, 80, 80, 0.0)
+        view.apply_report(report)
+        self.assertTrue(view.battery_grid.get_child_at(0, 3).visible)
+        self.assertTrue(view.battery_grid.get_child_at(0, 4).visible)
+        self.assertFalse(view.battery_grid.get_child_at(0, 6).visible)
+
+        report.battery_info.is_present = False
+        view.apply_report(report)
+        self.assertEqual(view.battery_values["status"].text, "No battery detected")
+        self.assertFalse(view.battery_grid.get_child_at(0, 6).visible)
+
+    @staticmethod
+    def _sample_report(battery):
+        return SystemReport(
+            distro_name="Test", distro_ver="1", arch="x86_64",
+            processor_model="Example CPU", total_core=2, kernel_version="7.0",
+            current_gov="powersave", current_epp=None, current_epb=None,
+            current_hwp_dynamic_boost=None, cpu_driver="intel_pstate",
+            cpu_fan_speed=None, cpu_usage=1.0, cpu_max_freq=None,
+            cpu_min_freq=None, load=0.1, avg_load=None, cores_info=[],
+            battery_info=battery, is_turbo_on=(None, None),
+        )
+
     def test_terminal_consumes_same_battery_presentation(self):
         battery = BatteryInfo(
             False, True, None, 80, 80, 0.0, status="Not charging",
