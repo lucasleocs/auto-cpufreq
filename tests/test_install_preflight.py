@@ -150,7 +150,7 @@ class PreflightRunitRequirements(unittest.TestCase):
             fun(source, "directory_contains_only"),
             fun(source, "runit_service_is_managed"),
             "ps() { echo runit; }",
-            'command() { if [ "$1" = -v ]; then [ "$2" != "\${MISSING_COMMAND:-}" ]; else builtin command "$@"; fi; }',
+            'command() { if [ "$1" = -v ]; then [ "$2" != "${MISSING_COMMAND:-}" ]; else builtin command "$@"; fi; }',
             fn,
             "daemon_install_preflight",
         ))
