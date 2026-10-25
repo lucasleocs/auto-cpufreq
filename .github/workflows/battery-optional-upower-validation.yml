@@ -1,0 +1,22 @@
+name: UPower absence and nonactivation (experimental)
+
+on:
+  push:
+    branches:
+      - lab/battery-on-pr985-optional-upower-validation
+  workflow_dispatch:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install package
+        run: python -m pip install .
+      - name: Syntax validation
+        run: python -m compileall -q auto_cpufreq internal
+      - name: Isolated battery tests
+        run: python -m unittest discover -s internal -p 'test_*.py' -v
