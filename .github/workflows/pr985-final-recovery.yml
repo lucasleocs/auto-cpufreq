@@ -17,6 +17,8 @@ jobs:
         run: python3 -m unittest discover -s tests -p test_lifecycle_recovery.py -v
       - name: Test real dinit lifecycle helper error classification
         run: python3 -m unittest discover -s tests -p test_dinit_retries.py -v
+      - name: Test read-only shell preflight and missing template handling
+        run: python3 -m unittest discover -s tests -p test_install_preflight.py -v
       - name: Shell syntax
         run: bash -n scripts/auto-cpufreq-install.sh scripts/auto-cpufreq-remove.sh
 
