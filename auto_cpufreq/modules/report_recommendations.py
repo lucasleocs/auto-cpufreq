@@ -31,10 +31,6 @@ class Recommendation:
             return self.target
         return None
 
-    @property
-    def needs_change(self):
-        return self.status is RecommendationStatus.CHANGE
-
 
 @dataclass(frozen=True)
 class ReportRecommendations:

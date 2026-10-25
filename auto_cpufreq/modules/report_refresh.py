@@ -80,10 +80,6 @@ class RefreshResult:
     requested_at: float = 0.0
     completed_at: float = 0.0
 
-    @property
-    def succeeded(self):
-        return self.error is None
-
 
 class ReportRefreshCoordinator:
     """Coalesce refresh requests; no overlapping collectors for one view.
