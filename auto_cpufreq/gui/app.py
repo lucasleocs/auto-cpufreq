@@ -636,7 +636,12 @@ class ToolWindow(Gtk.Window):
             self.refresh_pending = True
             diagnostics.debug("GTK refresh requested during active collection")
             return True
-        self._refresh_coordinator.request()
+        try:
+            self._refresh_coordinator.request()
+        except RuntimeError as error:
+            # The periodic timer can retry when worker creation recovers.
+            self._finish_refresh_error(str(error))
+            return False
         return True
 
     def _collect_report(self):

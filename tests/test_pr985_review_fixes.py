@@ -198,6 +198,43 @@ class GtkUpdateRegression(unittest.TestCase):
         self.assertEqual(self.sensitivity, [])
         self.assertEqual(self.dialog_errors, [])
 
+    def test_initial_dashboard_refresh_failure_is_nonfatal(self):
+        errors = []
+
+        def fail():
+            raise RuntimeError("cannot start refresh thread")
+
+        self.window._refresh_coordinator = types.SimpleNamespace(
+            in_progress=False, request=fail
+        )
+        self.window._finish_refresh_error = errors.append
+        self.assertFalse(self.window.refresh_in_thread())
+        self.assertEqual(errors, ["cannot start refresh thread"])
+
+    def test_initial_monitor_refresh_failure_is_nonfatal(self):
+        source = Path("auto_cpufreq/gui/monitor_view.py").read_text()
+        parsed = ast.parse(source)
+        cls = next(
+            n for n in parsed.body
+            if isinstance(n, ast.ClassDef) and n.name == "MonitorModeView"
+        )
+        namespace = {"Gtk": types.SimpleNamespace(Box=object)}
+        exec(compile(
+            ast.fix_missing_locations(ast.Module(body=[cls], type_ignores=[])),
+            "auto_cpufreq/gui/monitor_view.py", "exec",
+        ), namespace)
+        monitor = object.__new__(namespace["MonitorModeView"])
+        errors = []
+        monitor.running = True
+        monitor._show_error = errors.append
+
+        def fail():
+            raise RuntimeError("cannot start monitor thread")
+
+        monitor._refresh_coordinator = types.SimpleNamespace(request=fail)
+        self.assertFalse(monitor.refresh_in_thread())
+        self.assertEqual(errors, ["cannot start monitor thread"])
+
 
 if __name__ == "__main__":
     unittest.main()
