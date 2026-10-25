@@ -112,6 +112,9 @@ class PowerServiceState:
             if any(item.get("restoring") for item in records.values()):
                 print("A previous power-service restoration is incomplete; resolve it first.")
                 return False
+            # Snapshot all units before changing any of them: stopping TuneD
+            # may also stop tuned-ppd, so later observations could be wrong.
+            originals = {}
             for unit in UNITS:
                 if unit in records:
                     continue  # Preserve the first installation's snapshot.
@@ -121,8 +124,11 @@ class PowerServiceState:
                 if original["unit_file"] not in SUPPORTED_STATES:
                     print(f"Warning: leaving {unit} unchanged (unsupported unit-file state)")
                     continue
-                records[unit] = original
+                originals[unit] = original
+            if originals:
+                records.update(originals)
                 self._save(records)  # Durable before any system service change.
+            for unit, original in originals.items():
                 if original["unit_file"] == "enabled":
                     self._command("disable", unit)
                 if original["active"]:
