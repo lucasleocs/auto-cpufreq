@@ -43,6 +43,12 @@ def resolve_charge_control(
         return ChargeControlDecision(
             "apply", "UPower service confirmed absent on a healthy system bus"
         )
+    if probe.status == "inactive":
+        # A stopped activatable service is a deliberate ownership hold, not
+        # a transient connection failure to retry every five minutes.
+        return ChargeControlDecision(
+            "blocked", "UPower is installed but not running; no auto-activation"
+        )
     if probe.status != "ready" or probe.capabilities is None:
         return ChargeControlDecision(
             "blocked", "UPower service or battery capability unavailable: "

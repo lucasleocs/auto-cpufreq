@@ -16,7 +16,7 @@ from auto_cpufreq.modules.battery_upower import (
 
 @dataclass(frozen=True)
 class ChargeServiceProbe:
-    status: str  # "absent", "ready", "unavailable"
+    status: str  # "absent", "ready", "inactive", "unavailable"
     capabilities: ChargeCapabilities | None = None
     reason: str = ""
 
@@ -58,7 +58,7 @@ async def _probe_bus(bus, battery_path, message, message_type) -> ChargeServiceP
                 raise ValueError("Invalid ListActivatableNames response")
             if UPOWER_NAME not in activatable[0]:
                 return ChargeServiceProbe("absent", reason="UPower not owned or activatable")
-            return ChargeServiceProbe("unavailable", reason="UPower is activatable but not running")
+            return ChargeServiceProbe("inactive", reason="UPower is activatable but not running")
 
         devices = await call(UPOWER_NAME, UPOWER_PATH, UPOWER_NAME, "EnumerateDevices")
         if len(devices) != 1 or not isinstance(devices[0], list):
@@ -82,7 +82,21 @@ async def _probe_bus(bus, battery_path, message, message_type) -> ChargeServiceP
                 continue
             capabilities = _charge_capabilities(properties)
             if capabilities is None:
-                raise ValueError("Invalid UPower charging capability property")
+                raise ValueError("Invalid or incomplete UPower charging capability")
+            if "ChargeThresholdSupported" not in properties:
+                # GetAll may hide inaccessible properties. Confirm a truly
+                # older UPower API via the explicit UnknownProperty response.
+                reply = await bus.call(message(
+                    destination=UPOWER_NAME, path=path,
+                    interface=PROPERTIES_INTERFACE, member="Get",
+                    signature="ss",
+                    body=[DEVICE_INTERFACE, "ChargeThresholdSupported"],
+                    flags=MessageFlag.NO_AUTOSTART,
+                ))
+                if (reply is None or
+                        reply.message_type != message_type.ERROR or
+                        reply.error_name != "org.freedesktop.DBus.Error.UnknownProperty"):
+                    raise ValueError("UPower charge support could not be verified")
             return ChargeServiceProbe("ready", capabilities=capabilities)
 
         return ChargeServiceProbe("unavailable", reason="UPower did not identify the selected system battery")

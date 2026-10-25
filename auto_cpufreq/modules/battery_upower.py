@@ -39,9 +39,13 @@ def decode_charge_capabilities(properties: dict) -> ChargeCapabilities | None:
     None means invalid/ambiguous advertised capability; a missing support
     property is a valid older UPower API. Neither condition authorizes writes.
     """
-    supported = properties.get("ChargeThresholdSupported")
-    if supported is None:
+    if "ChargeThresholdSupported" not in properties:
+        # A whole missing family may be an old API. An incomplete family
+        # may instead indicate GetAll access filtering; never infer disabled.
+        if any(key.startswith("Charge") for key in properties):
+            return None
         return ChargeCapabilities(charge_protection_supported=False)
+    supported = properties["ChargeThresholdSupported"]
     if type(supported) is not bool:
         return None
     if supported is False:

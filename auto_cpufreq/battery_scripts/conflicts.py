@@ -7,6 +7,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import subprocess
+from shutil import which
+
+from auto_cpufreq.tlp_stat_parser import TLPStatusParser
 
 
 @dataclass(frozen=True)
@@ -17,7 +20,31 @@ class ChargeConflict:
 
 
 def competing_charge_manager() -> ChargeConflict:
-    """Do not share power-management tunables with an active TLP service."""
+    """Consult TLP's own status, not the lifecycle of its oneshot unit."""
+    if which("tlp-stat"):
+        try:
+            result = subprocess.run(
+                ["tlp-stat", "-s"], timeout=2, check=False,
+                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                text=True,
+            )
+        except (OSError, subprocess.TimeoutExpired) as error:
+            return ChargeConflict(False, type(error).__name__, "unknown")
+        if result.returncode != 0:
+            return ChargeConflict(
+                False, f"tlp-stat -s returned {result.returncode}", "unknown"
+            )
+        state = TLPStatusParser(result.stdout).state()
+        if state == "enabled":
+            return ChargeConflict(
+                True, "TLP reports enabled; avoid competing charge managers", "active"
+            )
+        if state == "disabled":
+            return ChargeConflict(False, "TLP reports disabled", "inactive")
+        return ChargeConflict(False, "Unrecognized tlp-stat -s state", "unknown")
+
+    # When the TLP command is unavailable, a running service is a useful
+    # positive signal but an inactive oneshot unit proves nothing about TLP.
     try:
         result = subprocess.run(
             ["systemctl", "is-active", "--quiet", "tlp.service"],
@@ -25,19 +52,16 @@ def competing_charge_manager() -> ChargeConflict:
             stderr=subprocess.DEVNULL,
         )
     except (OSError, subprocess.TimeoutExpired) as error:
-        # Preserve the prior non-systemd behavior while exposing uncertainty.
-        # No ownership proof is inferred from a failed status check.
         return ChargeConflict(False, type(error).__name__, "unknown")
     if result.returncode == 0:
         return ChargeConflict(
             True, "TLP service active; avoid competing charge managers", "active"
         )
-    if result.returncode == 3:
-        return ChargeConflict(False, "TLP service inactive", "inactive")
     if result.returncode == 4:
         return ChargeConflict(False, "TLP service unit not found", "absent")
     return ChargeConflict(
-        False, f"systemctl is-active returned {result.returncode}", "unknown"
+        False, "TLP status unknown without tlp-stat; "
+        f"systemctl returned {result.returncode}", "unknown"
     )
 
 
