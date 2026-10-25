@@ -25,11 +25,9 @@ jobs:
         shell: bash
         run: |
           set -eux
-          sudo apt-get update -qq
-          apt-get download dinit
-          mkdir -p dinit-pkg
-          dpkg-deb -x dinit_*.deb dinit-pkg
-          binary="$(find dinit-pkg -type f -name dinitctl -print -quit)"
+          git clone --quiet --depth 1 --branch v0.22.1 https://github.com/davmac314/dinit.git "$RUNNER_TEMP/dinit-source"
+          make -C "$RUNNER_TEMP/dinit-source" -j2
+          binary="$(find "$RUNNER_TEMP/dinit-source" -type f -name dinitctl -executable -print -quit)"
           test -n "$binary"
           root="$RUNNER_TEMP/dinit-case"
           mkdir -p "$root/boot.d"
