@@ -36,6 +36,7 @@ class CoreServiceIntegrationTests(unittest.TestCase):
             patcher.start()
             self.addCleanup(patcher.stop)
         self.installer_call = core.call
+        self.exists_mock = core.os.path.exists
         self.disable_services = core.disable_conflicting_services
         self.restore_services = core.restore_conflicting_services
 
@@ -58,21 +59,21 @@ class CoreServiceIntegrationTests(unittest.TestCase):
         self.restore_services.assert_called_once_with()
 
     def test_failed_remove_script_preserves_existing_service_state(self):
-        self.exists.return_value = True
+        self.exists_mock.return_value = True
         self.installer_call.return_value = 1
         self.assertEqual(core.remove_daemon(), 1)
         self.restore_services.assert_not_called()
         core.os.remove.assert_not_called()
 
     def test_failed_state_restoration_keeps_retry_entrypoint(self):
-        self.exists.return_value = True
+        self.exists_mock.return_value = True
         self.installer_call.return_value = 0
         self.restore_services.return_value = False
         self.assertEqual(core.remove_daemon(), 1)
         core.os.remove.assert_not_called()
 
     def test_no_saved_state_keeps_legacy_removal_safe(self):
-        self.exists.return_value = True
+        self.exists_mock.return_value = True
         self.installer_call.return_value = 0
         self.restore_services.return_value = True
         self.assertEqual(core.remove_daemon(), 0)
