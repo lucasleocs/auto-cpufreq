@@ -431,7 +431,9 @@ case "$(ps h -o comm 1)" in
       echo "Error: Refusing to modify a changed s6 service definition." >&2
       exit 1
     fi
-    chmod 755 "$s6_service_dir/run" || exit $?
+    if [ ! -x "$s6_service_dir/run" ]; then
+      chmod 755 "$s6_service_dir/run" || exit $?
+    fi
 
     if ! s6_bundle_entry_is_managed "$s6_bundle_entry"; then
       echo "Error: Refusing an unmanaged s6 bundle entry: $s6_bundle_entry" >&2

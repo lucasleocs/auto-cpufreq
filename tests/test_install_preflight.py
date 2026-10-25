@@ -119,5 +119,71 @@ class PreflightServiceOwnership(unittest.TestCase):
         self.assertNotEqual(self.preflight("unknown-init").returncode, 0)
 
 
+class PreflightRunitRequirements(unittest.TestCase):
+    """Use the real runit preflight functions with disposable paths."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.template_dir = self.root / "share/scripts"
+        self.template_dir.mkdir(parents=True)
+        (self.template_dir / "auto-cpufreq-runit").write_text(
+            "#!/bin/sh\nexec auto-cpufreq --daemon\n")
+        self.service_parent = self.root / "etc/sv"
+        self.service_parent.mkdir(parents=True)
+        self.link_parent = self.root / "var/service"
+        self.link_parent.mkdir(parents=True)
+        (self.root / "os-release").write_text("ID=void\n")
+
+    def preflight(self, missing_command=None):
+        source = INSTALL.read_text()
+        fn = fun(source, "daemon_install_preflight")
+        replacements = (
+            ("/etc/os-release", self.root / "os-release"),
+            ("/etc/sv/auto-cpufreq", self.service_parent / "auto-cpufreq"),
+            ("/var/service/auto-cpufreq", self.link_parent / "auto-cpufreq"),
+        )
+        for old, new in replacements:
+            fn = fn.replace(old, str(new))
+        shell = "\n\n".join((
+            fun(source, "directory_contains_only"),
+            fun(source, "runit_service_is_managed"),
+            "ps() { echo runit; }",
+            'command() { if [ "$1" = -v ]; then [ "$2" != "\${MISSING_COMMAND:-}" ]; else builtin command "$@"; fi; }',
+            fn,
+            "daemon_install_preflight",
+        ))
+        return subprocess.run(
+            ["bash", "-c", shell], capture_output=True, text=True,
+            env={**os.environ, "SHARE_DIR": str(self.root / "share"),
+                 "MISSING_COMMAND": missing_command or ""})
+
+    def test_void_runit_preflight_accepts_valid_service_layout(self):
+        result = self.preflight()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_runit_preflight_rejects_missing_sv_binary(self):
+        result = self.preflight(missing_command="sv")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("sv", result.stderr)
+
+    def test_runit_preflight_rejects_missing_active_parent(self):
+        self.link_parent.rmdir()
+        result = self.preflight()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("directory", result.stderr)
+
+    def test_runit_preflight_preserves_managed_live_link(self):
+        service = self.service_parent / "auto-cpufreq"
+        service.mkdir()
+        (service / "run").write_bytes(
+            (self.template_dir / "auto-cpufreq-runit").read_bytes())
+        (self.link_parent / "auto-cpufreq").symlink_to(service)
+        result = self.preflight()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+
+
 if __name__ == "__main__":
     unittest.main()
