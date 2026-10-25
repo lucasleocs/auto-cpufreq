@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
+from xml.etree import ElementTree
 
 from auto_cpufreq.modules.battery_upower import (
     UPOWER_NAME, UPOWER_PATH, DEVICE_INTERFACE, PROPERTIES_INTERFACE,
@@ -84,19 +85,31 @@ async def _probe_bus(bus, battery_path, message, message_type) -> ChargeServiceP
             if capabilities is None:
                 raise ValueError("Invalid or incomplete UPower charging capability")
             if "ChargeThresholdSupported" not in properties:
-                # GetAll may hide inaccessible properties. Confirm a truly
-                # older UPower API via the explicit UnknownProperty response.
+                # GetAll can omit inaccessible properties. Inspect the
+                # interface instead of interpreting Properties.Get errors:
+                # GLib uses InvalidArgs for both unknown and unreadable.
                 reply = await bus.call(message(
                     destination=UPOWER_NAME, path=path,
-                    interface=PROPERTIES_INTERFACE, member="Get",
-                    signature="ss",
-                    body=[DEVICE_INTERFACE, "ChargeThresholdSupported"],
+                    interface="org.freedesktop.DBus.Introspectable",
+                    member="Introspect",
                     flags=MessageFlag.NO_AUTOSTART,
                 ))
                 if (reply is None or
-                        reply.message_type != message_type.ERROR or
-                        reply.error_name != "org.freedesktop.DBus.Error.UnknownProperty"):
-                    raise ValueError("UPower charge support could not be verified")
+                        reply.message_type != message_type.METHOD_RETURN or
+                        len(reply.body) != 1 or not isinstance(reply.body[0], str)):
+                    raise ValueError("UPower introspection unavailable")
+                root = ElementTree.fromstring(reply.body[0])
+                interfaces = [
+                    element for element in root.findall("interface")
+                    if element.get("name") == DEVICE_INTERFACE
+                ]
+                if len(interfaces) != 1:
+                    raise ValueError("UPower device interface not identified")
+                if any(
+                    element.get("name") == "ChargeThresholdSupported"
+                    for element in interfaces[0].findall("property")
+                ):
+                    raise ValueError("UPower charge capability omitted by GetAll")
             return ChargeServiceProbe("ready", capabilities=capabilities)
 
         return ChargeServiceProbe("unavailable", reason="UPower did not identify the selected system battery")
