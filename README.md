@@ -199,11 +199,11 @@ The AUR [Release Package](https://aur.archlinux.org/packages/auto-cpufreq) is cu
 - The build process links to `/usr/share/` instead of `/usr/local/share/`
 - The daemon installer provided by the project is not used for AUR packages. Enable and start the service with:
 
-```bash
-sudo systemctl enable --now auto-cpufreq
-```
+  ```bash
+  sudo systemctl enable --now auto-cpufreq
+  ```
 - The [source installer's daemon setup](#auto-cpufreq-installer) disables GNOME Power Profiles to avoid conflicts. AUR installations do not do this automatically, which may cause issues (see [#463](https://github.com/AdnanHodzic/auto-cpufreq/issues/463)).
-  - Open a terminal and run `sudo systemctl mask power-profiles-daemon.service` (then `enable` and `start` the auto-cpufreq.service if you haven't already).
+  - If GNOME Power Profiles is running, stop and disable it with `sudo systemctl disable --now power-profiles-daemon.service`, then mask it with `sudo systemctl mask power-profiles-daemon.service` before starting auto-cpufreq. Restore the service as needed after uninstalling the AUR package.
 - The [source installer's daemon setup](#auto-cpufreq-installer) also disables TuneD to avoid conflicts with auto-cpufreq.
 
 ### Gentoo Linux (GURU Repository)
@@ -218,24 +218,25 @@ emaint sync -r guru
 emerge --ask sys-power/auto-cpufreq
 ```
 
-If Portage requires the `~amd64` keyword, add `sys-power/auto-cpufreq ~amd64` to `/etc/portage/package.accept_keywords` (if it is a file), or to a file inside that directory, then rerun `emerge`. The path can be either a file or a directory.
+If Portage requires the `~amd64` keyword, add `sys-power/auto-cpufreq ~amd64` to `/etc/portage/package.accept_keywords` (if it is a file), or to a file inside that directory, then rerun `emerge`.
 
 **Notices**
 
 - The build process links to `/usr/share/` instead of `/usr/local/share/`
-- The build works on both systemd/OpenRC systems (both systemd and OpenRC will have a service called auto-cpufreq which can be started automatically)
-- The daemon can be enabled and started through your init system. On systemd (as root):
+- The package supports both systemd and OpenRC. Enable and start the daemon through your init system:
 
-```bash
-systemctl enable --now auto-cpufreq
-```
+  On systemd (as root):
+
+  ```bash
+  systemctl enable --now auto-cpufreq
+  ```
 
   On OpenRC (as root):
 
-```bash
-rc-update add auto-cpufreq default
-rc-service auto-cpufreq start
-```
+  ```bash
+  rc-update add auto-cpufreq default
+  rc-service auto-cpufreq start
+  ```
 
 ### NixOS
 
