@@ -11,6 +11,9 @@ fail() { echo "VM-FAIL: $*" >&2; exit 1; }
 [ -e /dev/disk/by-label/AUTOSRC ] || fail "Source ISO not mounted"
 mkdir -p /root/work
 cp -a /mnt/src/source/. /root/work/
+# Files on a read-only ISO inherit the CI runner's UID, not root's. Repair
+# ownership of this private disposable copy without changing the checkout.
+chown -R 0:0 /root/work
 cd /root/work
 git rev-parse --verify HEAD >/dev/null || fail "Checkout Git metadata missing"
 log "Real source installation in disposable Ubuntu guest"
