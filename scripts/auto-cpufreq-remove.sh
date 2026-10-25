@@ -232,11 +232,17 @@ case "$(ps h -o comm 1)" in
         rm -f -- "$active_link" || return $?
       fi
       if [ -d "$service_dir" ]; then
-        # sv stop waits only for the daemon. Once the active link is gone,
-        # sv shutdown also waits for runsv itself, so it cannot recreate
-        # supervise files while we remove the service directory.
+        # sv stop waits for the daemon, not its runsv supervisor. Once
+        # detached from runsvdir, wait for an initialized supervisor to exit.
+        # A partial attempt may leave an empty supervise directory without
+        # its FIFO: sv shutdown cannot address that state and returns 1.
         if [ -e "$service_dir/supervise" ] || [ -L "$service_dir/supervise" ]; then
-          sv shutdown "$service_dir" || return $?
+          if [ -p "$service_dir/supervise/ok" ]; then
+            sv shutdown "$service_dir" || return $?
+          elif [ -e "$service_dir/supervise/ok" ] || [ -L "$service_dir/supervise/ok" ]; then
+            echo "Error: Unexpected runit supervisor state: $service_dir/supervise/ok" >&2
+            return 1
+          fi
         fi
         if ! runit_service_is_managed "$service_dir"; then
           echo "Error: Refusing to remove a changed runit service: $service_dir" >&2
