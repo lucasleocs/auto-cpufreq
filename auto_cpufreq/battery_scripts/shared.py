@@ -101,10 +101,29 @@ class BatteryDevice:
                 if name.startswith("BAT")]
 
     def _choose_threshold_file(self, bat: str, files: list[str]) -> str | None:
+        """Select a coherent pair for numeric vendor operations.
+
+        A generic backend passes only a standard attribute (files[:1]) and
+        therefore cannot be redirected to vendor attributes.
         """
-        Get the charge threshold file path for given battery
-        Return the first found file path from files list, or None if not found
-        """
+        snapshot = self._config_snapshot
+        if (len(files) > 1 and snapshot is not None
+                and snapshot.get("battery", "start_threshold", fallback="").strip()):
+            standard_start = writable_threshold_file(
+                bat, ("charge_control_start_threshold",)
+            )
+            standard_stop = writable_threshold_file(
+                bat, ("charge_control_end_threshold",)
+            )
+            if not (standard_start and standard_stop):
+                legacy_start = writable_threshold_file(
+                    bat, ("charge_start_threshold",)
+                )
+                legacy_stop = writable_threshold_file(
+                    bat, ("charge_stop_threshold",)
+                )
+                if legacy_start and legacy_stop:
+                    return legacy_start if files == CHARGE_START_THRESHOLD_FILES else legacy_stop
 
         return writable_threshold_file(bat, files)
 

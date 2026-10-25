@@ -163,6 +163,9 @@ def get_battery_device(snapshot=None):
         and settings.has_option("battery", "ideapad_laptop_conservation_mode")
     )
     explicitly_selected = settings.has_option("battery", "battery_device")
+    start_requested = bool(
+        settings.get("battery", "start_threshold", fallback="").strip()
+    )
     # A configured target must never silently fall back to another battery,
     # including manufacturer backends or firmware conservation controls.
     battery_path = SystemInfo.get_battery_path(
@@ -174,13 +177,28 @@ def get_battery_device(snapshot=None):
     if explicitly_conservation and lsmod("ideapad_laptop"):
         return IdeapadBatteryDevice(settings)
 
-    if not explicitly_conservation:
-        if battery_path and writable_threshold_file(
-            os.path.basename(battery_path), ("charge_control_end_threshold",)
-        ):
+    if not explicitly_conservation and battery_path:
+        bat = os.path.basename(battery_path)
+        standard_stop = writable_threshold_file(
+            bat, ("charge_control_end_threshold",)
+        )
+        standard_start = writable_threshold_file(
+            bat, ("charge_control_start_threshold",)
+        ) if start_requested else None
+        if standard_stop and (not start_requested or standard_start):
             dev = GenericKernelBatteryDevice(settings)
-            if dev.stop_paths.get(os.path.basename(battery_path)):
+            if dev.stop_paths.get(bat) and (
+                not start_requested or dev.start_paths.get(bat)
+            ):
                 return dev
+
+        # Requiring a start limit means the fallback must provide a coherent
+        # start/stop pair. Never mix standard and vendor attributes silently.
+        if start_requested and not (
+            writable_threshold_file(bat, ("charge_start_threshold",))
+            and writable_threshold_file(bat, ("charge_stop_threshold",))
+        ):
+            return None
 
     if lsmod("ideapad_acpi"):
         return BatteryDevice(settings)
