@@ -1,0 +1,44 @@
+name: Source Installer End-to-End (Lab Only)
+
+on:
+  push:
+    branches: [lab/pr985-dead-code-cleanup]
+    paths:
+      - "auto-cpufreq-installer"
+      - "auto_cpufreq/**"
+      - "scripts/**"
+      - "images/**"
+      - "pyproject.toml"
+      - "poetry.lock"
+      - "tests/full_source_install_e2e.sh"
+      - ".github/workflows/source-installer-e2e.yml"
+  workflow_dispatch:
+
+jobs:
+  sandbox-full-install:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Validate sandbox gate before launching
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f tests/full_source_install_e2e.sh
+          bash -n tests/full_source_install_e2e.sh
+          docker --version
+      - name: Run real install, migration, rollback, upgrade and removal inside Docker
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm --init \
+            --network bridge \
+            --pids-limit 512 \
+            --memory 5g \
+            --mount "type=bind,src=$GITHUB_WORKSPACE,dst=/src,readonly" \
+            --env AUTO_CPUFREQ_E2E_CONTAINER=enabled \
+            --env CI=true \
+            ubuntu:24.04 \
+            bash /src/tests/full_source_install_e2e.sh
