@@ -176,7 +176,8 @@ class GtkUpdateRegression(unittest.TestCase):
             ast.Module(body=[target], type_ignores=[])
         )
         exec(compile(isolated, "auto_cpufreq/gui/app.py", "exec"), namespace)
-        self.window = namespace["ToolWindow"]()
+        # Bypass the real GTK constructor; exercise only update handlers.
+        self.window = object.__new__(namespace["ToolWindow"])
         self.window.destroyed = False
         self.window._update_check_pending = False
         self.window.set_sensitive = self.sensitivity.append
