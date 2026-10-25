@@ -19,6 +19,7 @@ from auto_cpufreq.globals import (
     ALL_GOVERNORS, AVAILABLE_GOVERNORS, AVAILABLE_GOVERNORS_SORTED, GITHUB, IS_INSTALLED_WITH_AUR, IS_INSTALLED_WITH_SNAP, POWER_SUPPLY_DIR, SNAP_DAEMON_CHECK
 )
 from auto_cpufreq.modules.platform_profile import platform_profile
+from auto_cpufreq.power_service_state import disable_conflicting_services, restore_conflicting_services
 from auto_cpufreq.power_helper import *
 
 filterwarnings("ignore")
@@ -402,15 +403,23 @@ def deploy_daemon():
     copy(SCRIPTS_DIR / "auto-cpufreq-remove.sh", "/usr/local/bin/auto-cpufreq-remove")
     call(["chmod", "a+x", "/usr/local/bin/auto-cpufreq-remove"])
 
-    # output warning if gnome power profile is running
+    # Only the source daemon installer changes competing host services.
+    # Capture their original states before stopping/masking anything.
     gnome_power_detect_install()
-    gnome_power_svc_disable()
-
-    tuned_svc_disable()
+    if not disable_conflicting_services():
+        return 1
 
     tlp_service_detect() # output warning if TLP service is detected
-
-    return call("/usr/local/bin/auto-cpufreq-install", shell=True)
+    install_status = call("/usr/local/bin/auto-cpufreq-install", shell=True)
+    if install_status != 0:
+        # Never restore competing daemons alongside an auto-cpufreq daemon
+        # which may have started before the installer reported its failure.
+        if call(["systemctl", "is-active", "--quiet", "auto-cpufreq.service"],
+                stdout=DEVNULL, stderr=DEVNULL) != 0:
+            restore_conflicting_services()
+        else:
+            print("Service state retained; remove the daemon before restoring competing services.")
+    return install_status
 
 def remove_daemon():
     # check if auto-cpufreq is installed
@@ -430,11 +439,11 @@ def remove_daemon():
 
     bluetooth_enable() # turn on bluetooth on boot
 
-    # output warning if gnome power profile is stopped
-    gnome_power_rm_reminder()
-    gnome_power_svc_enable()
-
-    tuned_svc_enable()
+    # Do not enable a service that was disabled before auto-cpufreq.
+    # If no snapshot exists (older installs), leave host services unchanged.
+    if not restore_conflicting_services():
+        print("Power service restoration needs attention; state snapshot was retained.")
+        return 1
 
     # remove auto-cpufreq-remove
     os.remove("/usr/local/bin/auto-cpufreq-remove")
