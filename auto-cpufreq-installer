@@ -18,7 +18,6 @@ PREPARED_RELEASE=""
 PYTHON_BIN="/usr/bin/python3"
 PYGOBJECT_INSTALL="pypi"
 
-SHARE_DIR="$CURRENT_PATH/share"
 LEGACY_SHARE_DIR="/usr/local/share/auto-cpufreq"
 
 AUTO_CPUFREQ_FILE="/usr/local/bin/auto-cpufreq"
