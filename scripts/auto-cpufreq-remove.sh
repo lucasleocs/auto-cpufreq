@@ -131,6 +131,16 @@ function s6_service_is_managed {
     return 0
 }
 
+function s6_bundle_entry_is_managed {
+    local entry="$1"
+    # Artix s6-service stores bundle membership as an empty regular file.
+    # Never remove or reuse a symlink, directory or administrative contents.
+    if [ ! -e "$entry" ] && [ ! -L "$entry" ]; then
+      return 0
+    fi
+    [ -f "$entry" ] && [ ! -L "$entry" ] && [ ! -s "$entry" ]
+}
+
 function openrc_disable {
     local current_membership current_runlevel current_runlevels
     local current_separator current_service delete_status
@@ -212,11 +222,20 @@ case "$(ps h -o comm 1)" in
         echo -e "\n* Stopping auto-cpufreq daemon (runit) service"
         if [ -d "$service_dir" ]; then
           sv stop "$active_link" || return $?
+          # An administrator may have replaced the service during sv stop.
+          if ! runit_service_is_managed "$service_dir"; then
+            echo "Error: Runit service changed during stop: $service_dir" >&2
+            return 1
+          fi
         fi
         echo -e "\n* Disabling auto-cpufreq daemon (runit) at boot"
         rm -f -- "$active_link" || return $?
       fi
       if [ -d "$service_dir" ]; then
+        if ! runit_service_is_managed "$service_dir"; then
+          echo "Error: Refusing to remove a changed runit service: $service_dir" >&2
+          return 1
+        fi
         echo -e "\n* Removing auto-cpufreq daemon (runit) unit file"
         # Remove only entries owned by this service. If another entry appears
         # after validation, rmdir fails instead of recursively deleting it.
@@ -300,6 +319,10 @@ case "$(ps h -o comm 1)" in
     # definition still consists only of files deployed by auto-cpufreq.
     if ! s6_service_is_managed "$s6_service_dir"; then
       echo "Error: Refusing to remove an unmanaged s6 service path: $s6_service_dir"
+      exit 1
+    fi
+    if ! s6_bundle_entry_is_managed "$s6_bundle_entry"; then
+      echo "Error: Refusing to remove an unmanaged s6 bundle entry: $s6_bundle_entry" >&2
       exit 1
     fi
     if [ -e "$s6_bundle_entry" ] || [ -L "$s6_bundle_entry" ]; then
