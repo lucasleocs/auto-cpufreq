@@ -37,7 +37,7 @@ class S6BundleOwnership(unittest.TestCase):
         self.commands = self.root / "commands.log"
 
     def invoke(self, action):
-        source = (INSTALL if action == "preflight" else REMOVE).read_text()
+        source = (INSTALL if action in ("preflight", "install") else REMOVE).read_text()
         source = source.replace("/etc/s6/", str(self.root / "etc/s6") + "/")
         functions = "\n\n".join(shell_function(source, name) for name in (
             "directory_contains_only", "s6_service_is_managed",
@@ -52,6 +52,8 @@ s6-rc() { echo "s6-rc:$*" >> "$COMMANDS"; }
 """
         if action == "preflight":
             shell = stubs + functions + "\n" + shell_function(source, "daemon_install_preflight") + "\ndaemon_install_preflight"
+        elif action == "install":
+            shell = stubs + functions + "\n" + shell_function(source, "auto_cpufreq_install") + "\n" + source[source.index('case "$(ps h -o comm 1)" in'):]
         else:
             shell = stubs + functions + "\n" + source[source.index('case "$(ps h -o comm 1)" in'):]
         return subprocess.run(
@@ -89,6 +91,17 @@ s6-rc() { echo "s6-rc:$*" >> "$COMMANDS"; }
         result = self.invoke("preflight")
         self.assertNotEqual(result.returncode, 0)
         self.assertTrue(self.bundle.is_dir())
+        self.assert_no_commands()
+
+    def test_install_rechecks_bundle_after_preflight(self):
+        self.assertEqual(self.invoke("preflight").returncode, 0)
+        external = self.root / "external"
+        external.write_text("foreign")
+        self.bundle.symlink_to(external)
+        result = self.invoke("install")
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertTrue(self.bundle.is_symlink())
+        self.assertEqual(external.read_text(), "foreign")
         self.assert_no_commands()
 
     def test_removal_refuses_foreign_symlink_before_service_commands(self):
