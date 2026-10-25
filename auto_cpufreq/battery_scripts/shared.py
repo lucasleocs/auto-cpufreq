@@ -441,6 +441,9 @@ class BatteryDevice:
                 firmware_operation=(
                     parsed_config.get("ideapad_conservation_mode") is not None
                 ),
+                observed_paths=(
+                    self.start_paths.get(bat), self.stop_paths.get(bat)
+                ),
             )
             if request.action == "satisfied":
                 continue
