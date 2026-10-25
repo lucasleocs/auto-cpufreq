@@ -101,7 +101,8 @@ class PowerServiceState:
             if (unit not in UNITS or not isinstance(saved, dict)
                     or saved.get("unit_file") not in SUPPORTED_STATES
                     or type(saved.get("active")) is not bool
-                    or type(saved.get("restoring", False)) is not bool):
+                    or type(saved.get("restoring", False)) is not bool
+                    or saved.get("phase") not in (None, "unmask", "enable", "start")):
                 raise RuntimeError("Invalid power-service state entry")
         return records
 
@@ -173,7 +174,7 @@ class PowerServiceState:
             return False
 
     def restore(self, force=False, only_units=None):
-        """Undo our masks, without overriding subsequent user modifications."""
+        """Restore recorded service states, refusing unexpected transitions."""
         try:
             records = self._read()
         except RuntimeError as error:
@@ -190,21 +191,47 @@ class PowerServiceState:
                 current = self._inspect(unit)
                 if current is None:
                     raise RuntimeError("service state is no longer readable")
-                if not force and not original.get("restoring") and (
-                    current["unit_file"] != "masked" or current["active"]
-                ):
-                    # A different actor modified this unit after installation.
-                    raise RuntimeError("service changed since installation; review manually")
-                # Persist the restoration phase so interrupted restores can resume
-                # even after the mask has already been removed.
-                original["restoring"] = True
-                self._save(records)
+                phase = original.get("phase")
+                if not force:
+                    if not original.get("restoring"):
+                        if current["unit_file"] != "masked" or current["active"]:
+                            raise RuntimeError("service changed since installation; review manually")
+                    elif phase == "unmask":
+                        # After unmask, systemd should expose the prior disabled
+                        # or static unit. Do not accept an unrelated enable.
+                        allowed = ("masked", "static" if original["unit_file"] == "static" else "disabled")
+                        if current["unit_file"] not in allowed or current["active"]:
+                            raise RuntimeError("unexpected state during unmask; review manually")
+                    elif phase == "enable":
+                        allowed = (
+                            ("disabled", "enabled") if original["unit_file"] == "enabled"
+                            else (original["unit_file"],)
+                        )
+                        if current["unit_file"] not in allowed or current["active"]:
+                            raise RuntimeError("unexpected state during enable; review manually")
+                    elif phase == "start":
+                        if (current["unit_file"] != original["unit_file"]
+                                or (current["active"] and not original["active"])):
+                            raise RuntimeError("service changed during restart; review manually")
+                    else:
+                        raise RuntimeError("unknown restoration phase; review manually")
+
+                def mark(phase_name):
+                    original["restoring"] = True
+                    original["phase"] = phase_name
+                    self._save(records)
+
+                # Journal each phase before its side effects. Repeated
+                # systemctl commands are deliberately idempotent.
+                mark("unmask")
                 if current["unit_file"] == "masked":
                     self._command("unmask", unit)
+                mark("enable")
                 if original["unit_file"] == "enabled":
                     self._command("enable", unit)
                 elif original["unit_file"] == "disabled":
                     self._command("disable", unit)
+                mark("start")
                 if original["active"]:
                     self._command("start", unit)
                 records.pop(unit)
