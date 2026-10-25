@@ -16,7 +16,6 @@ class GenericKernelBatteryDevice(BatteryDevice):
     """Apply standard Linux charge-control attributes to one system battery."""
 
     def __init__(self, snapshot=None):
-        self._config_snapshot = snapshot
         self._accepted_stops = {}
         super().__init__(snapshot)
 

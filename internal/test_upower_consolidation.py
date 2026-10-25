@@ -50,7 +50,6 @@ class UPowerConsolidationTests(unittest.TestCase):
         for value in samples:
             with self.subTest(value=value):
                 capabilities = decode_charge_capabilities(value)
-                self.assertEqual(capabilities, probe._charge_capabilities(value))
                 battery = _decode(value, PATH)
                 self.assertEqual(
                     {
@@ -90,7 +89,6 @@ class UPowerConsolidationTests(unittest.TestCase):
             with self.subTest(changes=changes):
                 value = props(**changes)
                 self.assertIsNone(decode_charge_capabilities(value))
-                self.assertIsNone(probe._charge_capabilities(value))
                 battery = _decode(value, PATH)
                 self.assertIsNotNone(battery)
                 self.assertIsNone(battery.charge_protection_supported)

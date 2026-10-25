@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import unittest
 
 from auto_cpufreq.battery_scripts.probe import (
-    _charge_capabilities, _probe_bus, ChargeServiceProbe,
+    _probe_bus, ChargeServiceProbe,
 )
 from auto_cpufreq.modules.battery_upower import UPOWER_NAME
 

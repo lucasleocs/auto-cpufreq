@@ -4,5 +4,4 @@ from auto_cpufreq.battery_scripts.shared import BatteryDevice
 
 
 class AsusBatteryDevice(BatteryDevice):
-    def __init__(self, snapshot=None):
-        super().__init__(snapshot)
+    """Preserve the ASUS backend identity while using the shared writer."""
