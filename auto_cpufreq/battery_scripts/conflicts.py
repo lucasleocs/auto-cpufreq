@@ -29,10 +29,10 @@ def competing_charge_manager() -> ChargeConflict:
                 text=True,
             )
         except (OSError, subprocess.TimeoutExpired) as error:
-            return ChargeConflict(False, type(error).__name__, "unknown")
+            return ChargeConflict(True, "Cannot determine installed TLP status: " + type(error).__name__, "unknown")
         if result.returncode != 0:
             return ChargeConflict(
-                False, f"tlp-stat -s returned {result.returncode}", "unknown"
+                True, f"tlp-stat -s returned {result.returncode}", "unknown"
             )
         state = TLPStatusParser(result.stdout).state()
         if state == "enabled":
@@ -41,7 +41,7 @@ def competing_charge_manager() -> ChargeConflict:
             )
         if state == "disabled":
             return ChargeConflict(False, "TLP reports disabled", "inactive")
-        return ChargeConflict(False, "Unrecognized tlp-stat -s state", "unknown")
+        return ChargeConflict(True, "Unrecognized tlp-stat -s state", "unknown")
 
     # When the TLP command is unavailable, a running service is a useful
     # positive signal but an inactive oneshot unit proves nothing about TLP.
