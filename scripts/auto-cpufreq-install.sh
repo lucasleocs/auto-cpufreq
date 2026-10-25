@@ -142,6 +142,10 @@ function daemon_install_preflight {
           systemd) service_file=/etc/systemd/system/auto-cpufreq.service
                    managed_file="$SHARE_DIR/scripts/auto-cpufreq.service" ;;
         esac
+        if [ ! -f "$managed_file" ]; then
+          echo "Error: Missing managed $init_system service template: $managed_file" >&2
+          return 1
+        fi
         service_file_is_managed "$service_file" "$managed_file" || {
           echo "Error: Refusing an unmanaged $init_system service file: $service_file" >&2
           return 1
@@ -162,6 +166,10 @@ function daemon_install_preflight {
           *) echo "Error: Unsupported runit distribution: $ID" >&2
              return 1 ;;
         esac
+        if [ ! -f "$SHARE_DIR/scripts/auto-cpufreq-runit" ]; then
+          echo "Error: Missing runit service template." >&2
+          return 1
+        fi
         runit_service_is_managed "$service_dir" || {
           echo "Error: Refusing an unmanaged runit directory: $service_dir" >&2
           return 1
@@ -186,6 +194,11 @@ function daemon_install_preflight {
         if [ -e /etc/s6/sv/.auto-cpufreq-removing ] ||
            [ -L /etc/s6/sv/.auto-cpufreq-removing ]; then
           echo "Error: Incomplete s6 removal; retry removal before installing." >&2
+          return 1
+        fi
+        if [ ! -f "$SHARE_DIR/scripts/auto-cpufreq-s6/run" ] ||
+           [ ! -f "$SHARE_DIR/scripts/auto-cpufreq-s6/type" ]; then
+          echo "Error: Missing s6 service templates." >&2
           return 1
         fi
         s6_service_is_managed /etc/s6/sv/auto-cpufreq || {
