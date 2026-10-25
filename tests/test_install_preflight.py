@@ -35,7 +35,7 @@ class PreflightServiceOwnership(unittest.TestCase):
         for template in self.templates.values():
             template.write_text("managed service contents\n")
 
-    def preflight(self, manager):
+    def preflight(self, manager, missing_command=None):
         source = INSTALL.read_text()
         f = fun(source, "daemon_install_preflight")
         for actual, substitute in [
@@ -47,12 +47,14 @@ class PreflightServiceOwnership(unittest.TestCase):
         shell = "\n".join([
             fun(source, "service_file_is_managed"),
             "ps() { printf '%s\\n' \"$FAKE_INIT\"; }",
+            'command() { if [ "$1" = -v ]; then [ "$2" != "${MISSING_COMMAND:-}" ]; else builtin command "$@"; fi; }',
             f,
             "daemon_install_preflight",
         ])
         return subprocess.run(["bash", "-c", shell], capture_output=True, text=True,
                               env={**os.environ, "FAKE_INIT": manager,
-                                   "SHARE_DIR": str(self.share.parent)})
+                                   "SHARE_DIR": str(self.share.parent),
+                                   "MISSING_COMMAND": missing_command or ""})
 
     def test_new_service_preflight_is_allowed(self):
         for manager in self.destinations:
@@ -92,6 +94,26 @@ class PreflightServiceOwnership(unittest.TestCase):
                     self.assertNotEqual(self.preflight(manager).returncode, 0)
                 finally:
                     self.templates[manager].write_text("managed service contents\n")
+
+    def test_missing_manager_commands_refused(self):
+        cases = (("dinit", "dinitctl"), ("init", "rc-service"),
+                 ("init", "rc-update"), ("systemd", "systemctl"))
+        for manager, missing in cases:
+            with self.subTest(manager=manager, missing=missing):
+                result = self.preflight(manager, missing_command=missing)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(missing, result.stderr)
+
+    def test_missing_target_parent_refused(self):
+        for manager, target in self.destinations.items():
+            with self.subTest(manager=manager):
+                target.parent.rmdir()
+                try:
+                    result = self.preflight(manager)
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn("service directory", result.stderr)
+                finally:
+                    target.parent.mkdir()
 
     def test_unsupported_init_rejected(self):
         self.assertNotEqual(self.preflight("unknown-init").returncode, 0)

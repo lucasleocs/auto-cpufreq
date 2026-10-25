@@ -104,6 +104,35 @@ s6-rc() { echo "s6-rc:$*" >> "$COMMANDS"; }
         self.assertEqual(external.read_text(), "foreign")
         self.assert_no_commands()
 
+    def test_new_install_makes_git_mode_0644_run_executable(self):
+        self.assertFalse(os.access(self.template / "run", os.X_OK))
+        for filename in ("run", "type"):
+            (self.definition / filename).unlink()
+        self.definition.rmdir()
+        result = self.invoke("install")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertTrue(os.access(self.definition / "run", os.X_OK))
+        self.assertEqual((self.definition / "run").read_bytes(),
+                         (self.template / "run").read_bytes())
+
+    def test_retry_repairs_inert_managed_run_without_overwriting_contents(self):
+        run = self.definition / "run"
+        self.assertFalse(os.access(run, os.X_OK))
+        before = run.read_bytes()
+        result = self.invoke("install")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertTrue(os.access(run, os.X_OK))
+        self.assertEqual(run.read_bytes(), before)
+
+    def test_reject_changed_run_without_chmod(self):
+        run = self.definition / "run"
+        run.write_text("exec admin-daemon\\n")
+        result = self.invoke("install")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(os.access(run, os.X_OK))
+        self.assertEqual(run.read_text(), "exec admin-daemon\\n")
+        self.assert_no_commands()
+
     def test_removal_refuses_foreign_symlink_before_service_commands(self):
         external = self.root / "external"
         external.write_text("unchanged")
