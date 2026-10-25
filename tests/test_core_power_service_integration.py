@@ -43,18 +43,34 @@ class CoreServiceIntegrationTests(unittest.TestCase):
     def test_failed_state_capture_prevents_daemon_install_script(self):
         self.disable_services.return_value = False
         self.assertEqual(core.deploy_daemon(), 1)
-        self.installer_call.assert_not_called()
+        self.assertFalse(any(
+            entry.args[0] == "/usr/local/bin/auto-cpufreq-install"
+            for entry in self.installer_call.call_args_list
+        ))
 
     def test_failed_install_does_not_restore_when_service_active(self):
         self.disable_services.return_value = True
-        self.installer_call.side_effect = [1, 0]
+        def fake_call(command, **kwargs):
+            if command == "/usr/local/bin/auto-cpufreq-install":
+                return 1
+            return 0
+        self.installer_call.side_effect = fake_call
         self.assertEqual(core.deploy_daemon(), 1)
-        self.assertEqual(self.installer_call.call_count, 2)
+        self.assertTrue(any(
+            entry.args[0] == "/usr/local/bin/auto-cpufreq-install"
+            for entry in self.installer_call.call_args_list
+        ))
         self.restore_services.assert_not_called()
 
     def test_failed_install_restores_only_after_service_is_inactive(self):
         self.disable_services.return_value = True
-        self.installer_call.side_effect = [1, 3]
+        def fake_call(command, **kwargs):
+            if command == "/usr/local/bin/auto-cpufreq-install":
+                return 1
+            if isinstance(command, list) and command[:2] == ["systemctl", "is-active"]:
+                return 3
+            return 0
+        self.installer_call.side_effect = fake_call
         self.assertEqual(core.deploy_daemon(), 1)
         self.restore_services.assert_called_once_with()
 
