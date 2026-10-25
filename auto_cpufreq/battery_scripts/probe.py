@@ -22,11 +22,6 @@ class ChargeServiceProbe:
     reason: str = ""
 
 
-def _charge_capabilities(properties: dict) -> ChargeCapabilities | None:
-    """Keep the historical probe entrypoint but share one decoder."""
-    return decode_charge_capabilities(properties)
-
-
 async def _probe_bus(bus, battery_path, message, message_type) -> ChargeServiceProbe:
     from dbus_next import MessageFlag
 
@@ -81,7 +76,7 @@ async def _probe_bus(bus, battery_path, message, message_type) -> ChargeServiceP
                     or properties.get("IsPresent") is not True
                     or not _match_battery(properties.get("NativePath"), battery_path)):
                 continue
-            capabilities = _charge_capabilities(properties)
+            capabilities = decode_charge_capabilities(properties)
             if capabilities is None:
                 raise ValueError("Invalid or incomplete UPower charging capability")
             if "ChargeThresholdSupported" not in properties:
