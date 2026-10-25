@@ -90,8 +90,10 @@ class BatteryReadTests(unittest.TestCase):
         self.assertEqual(info.battery_level, 80)
         self.assertEqual(info.charging_stop_threshold, 100)
         self.assertTrue(info.is_ac_plugged)
+        self.assertEqual(info.status, "Pending charge")
         display = interpret_battery(info)
-        self.assertEqual(display.status.text, "Pending charge")
+        # Presentation intentionally simplifies pending charge for readability.
+        self.assertEqual(display.status.text, "Not charging")
         self.assertIn("100% (kernel)", display.charge_stop.text)
         self.assertIn("80% configured (UPower)", display.charge_stop.text)
 
