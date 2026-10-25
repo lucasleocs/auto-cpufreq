@@ -35,6 +35,8 @@ class BatteryPresentation:
     charge_start: DisplayValue
     charge_stop: DisplayValue
     power_watts: DisplayValue
+    charge_limit: DisplayValue | None = None
+    firmware_only: bool = False
 
 
 @dataclass(frozen=True)
@@ -180,6 +182,72 @@ def battery_present(battery):
     return battery is not None and getattr(battery, "is_present", True) is not False
 
 
+def _battery_status(battery):
+    """Respect the explicit UPower/sysfs state before inferring from AC."""
+    status = (getattr(battery, "status", None) or "").strip().lower()
+    labels = {
+        "charging": "Charging",
+        "discharging": "Discharging",
+        "not charging": "Not charging",
+        "full": "Full",
+        "fully charged": "Fully charged",
+        "pending charge": "Not charging",
+        "pending discharge": "Pending discharge",
+        "empty": "Empty",
+        "unknown": "Unknown",
+    }
+    if status in labels:
+        return labels[status]
+    if battery.is_charging is True:
+        return "Charging"
+    if battery.is_ac_plugged is False:
+        return "Discharging"
+    if battery.is_ac_plugged is True:
+        return "Not charging"
+    return "Unknown"
+
+
+def _charge_thresholds(battery):
+    """Describe observed kernel thresholds versus UPower's configured policy."""
+    start = _known_text(battery.charging_start_threshold)
+    stop = _known_text(battery.charging_stop_threshold)
+    if not getattr(battery, "charge_protection_supported", False):
+        return start, stop, None, False
+
+    controls = getattr(battery, "charge_control_types", ())
+    enabled = getattr(battery, "charge_protection_enabled", None)
+    firmware_only = "Firmware managed" in controls and not (
+        "Start threshold" in controls or "End threshold" in controls
+    )
+    if firmware_only:
+        state = "active" if enabled is True else (
+            "disabled" if enabled is False else "state unknown"
+        )
+        return start, stop, _known_text(f"Firmware managed ({state})"), True
+
+    if enabled is False:
+        return start, stop, _known_text("Supported (disabled)"), False
+    if enabled is None:
+        return start, stop, _known_text("Supported (state unknown)"), False
+
+    def described(observed, configured):
+        if configured is None:
+            return _known_text(observed)
+        if observed is None or observed == configured:
+            return _known_text(f"{configured}% (UPower)")
+        return _known_text(
+            f"{observed}% (kernel) · {configured}% configured (UPower)"
+        )
+
+    if "Start threshold" in controls:
+        start = described(battery.charging_start_threshold,
+                          getattr(battery, "upower_configured_start", None))
+    if "End threshold" in controls:
+        stop = described(battery.charging_stop_threshold,
+                         getattr(battery, "upower_configured_end", None))
+    return start, stop, None, False
+
+
 def interpret_battery(battery):
     if not battery_present(battery):
         missing = DisplayValue(None, Availability.UNAVAILABLE, "Unavailable")
@@ -191,14 +259,12 @@ def interpret_battery(battery):
             charge_start=missing, charge_stop=missing, power_watts=missing,
         )
 
-    if battery.is_charging is True:
-        status = DisplayValue(True, Availability.AVAILABLE, "Charging")
-    elif battery.is_ac_plugged is False:
-        status = DisplayValue(False, Availability.AVAILABLE, "Discharging")
-    elif battery.is_ac_plugged is True:
-        status = DisplayValue(False, Availability.AVAILABLE, "Not charging")
-    else:
-        status = DisplayValue(None, Availability.UNKNOWN, "Unknown")
+    status_text = _battery_status(battery)
+    status = DisplayValue(
+        battery.is_charging if status_text != "Unknown" else None,
+        Availability.UNKNOWN if status_text == "Unknown" else Availability.AVAILABLE,
+        status_text,
+    )
 
     if battery.is_ac_plugged is True:
         ac = DisplayValue(True, Availability.AVAILABLE, "Connected")
@@ -219,13 +285,16 @@ def interpret_battery(battery):
         if battery.power_watts is not None
         else DisplayValue(None, Availability.UNAVAILABLE, "Unavailable")
     )
+    start, stop, charge_limit, firmware_only = _charge_thresholds(battery)
     return BatteryPresentation(
         status=status,
         level=level,
         ac=ac,
-        charge_start=_known_text(battery.charging_start_threshold),
-        charge_stop=_known_text(battery.charging_stop_threshold),
+        charge_start=start,
+        charge_stop=stop,
         power_watts=power,
+        charge_limit=charge_limit,
+        firmware_only=firmware_only,
     )
 
 

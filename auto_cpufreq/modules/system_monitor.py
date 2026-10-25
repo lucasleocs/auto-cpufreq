@@ -435,18 +435,25 @@ class SystemMonitor:
                     aligned_text(
                         f"AC plugged: {presentation.battery.ac.text}"
                     ),
-                    aligned_text(
-                        "Charging start threshold: "
-                        f"{presentation.battery.charge_start.text}"
-                    ),
-                    aligned_text(
-                        "Charging stop threshold: "
-                        f"{presentation.battery.charge_stop.text}"
-                    ),
+                    *([
+                        aligned_text(
+                            "Charging start threshold: "
+                            f"{presentation.battery.charge_start.text}"
+                        ),
+                        aligned_text(
+                            "Charging stop threshold: "
+                            f"{presentation.battery.charge_stop.text}"
+                        ),
+                    ] if not presentation.battery.firmware_only else []),
                     aligned_text(
                         f"{battery_power_label(report.battery_info)}: "
                         + presentation.battery.power_watts.text
                     ),
+                    *([
+                        aligned_text(
+                            f"Charge limit: {presentation.battery.charge_limit.text}"
+                        ),
+                    ] if presentation.battery.charge_limit is not None else []),
                     aligned_text(""),
                 ]
             )

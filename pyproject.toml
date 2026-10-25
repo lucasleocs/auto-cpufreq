@@ -32,6 +32,7 @@ requests = "^2.32.4"
 PyGObject = {version="^3.50.0", optional=true}
 urwid = ">=3.0.2,<5.0.0"
 inotify-simple = "2.0.1"
+dbus-next = ">=0.2.3,<0.3.0"
 
 [tool.poetry.extras]
 gui = ["PyGObject"]

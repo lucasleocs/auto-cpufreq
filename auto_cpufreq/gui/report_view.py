@@ -203,6 +203,7 @@ class SystemReportView(Gtk.Box):
                 ("start", "Start threshold"),
                 ("stop", "Stop threshold"),
                 ("power", "Battery power"),
+                ("limit", "Charge limit"),
             )
         ):
             name_label, value_label = _add_row(
@@ -368,11 +369,18 @@ class SystemReportView(Gtk.Box):
             presentation.battery.status.text
         )
         if not battery_present(battery):
-            for row in range(1, 6):
+            for row in range(1, 7):
                 _set_row_visible(self.battery_grid, row, False)
         else:
-            for row in range(1, 6):
+            for row in range(1, 7):
                 _set_row_visible(self.battery_grid, row, True)
+            if presentation.battery.firmware_only:
+                _set_row_visible(self.battery_grid, 3, False)
+                _set_row_visible(self.battery_grid, 4, False)
+            limit = presentation.battery.charge_limit
+            _set_row_visible(self.battery_grid, 6, limit is not None)
+            if limit is not None:
+                self.battery_values["limit"].set_text(limit.text)
             self.battery_values["charge"].set_text(
                 presentation.battery.level.text
             )

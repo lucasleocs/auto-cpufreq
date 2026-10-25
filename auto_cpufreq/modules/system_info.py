@@ -28,6 +28,7 @@ from auto_cpufreq.modules.report_recommendations import (
     governor_candidate,
     turbo_candidate,
 )
+from auto_cpufreq.modules.battery_upower import read_upower_battery
 from auto_cpufreq.modules.platform_profile import (
     PlatformProfileSnapshot,
     platform_profile,
@@ -56,6 +57,14 @@ class BatteryInfo:
     # Keep power-source inference independent of physical battery presence.
     # Default True preserves older BatteryInfo callers and test fixtures.
     is_present: bool = True
+    # Optional UPower telemetry; absent fields preserve existing sysfs clients.
+    status: str | None = None
+    source: str = "sysfs"
+    charge_protection_supported: bool = False
+    charge_protection_enabled: bool | None = None
+    charge_control_types: tuple[str, ...] = ()
+    upower_configured_start: int | None = None
+    upower_configured_end: int | None = None
 
     def __repr__(self) -> str:
         if self.is_charging:
@@ -71,9 +80,10 @@ def battery_power_label(battery: BatteryInfo | None) -> str:
     """Describe the direction of the reported battery power."""
     if battery is None:
         return "Battery power"
-    if battery.is_charging is True:
+    status = (battery.status or "").strip().lower()
+    if status == "charging" or (not status and battery.is_charging is True):
         return "Charging power"
-    if battery.is_ac_plugged is False:
+    if status == "discharging" or (not status and battery.is_ac_plugged is False):
         return "Discharge power"
     return "Battery power"
 
@@ -774,6 +784,16 @@ class SystemInfo:
         charging_stop_threshold = int(charge_stop_threshold) if charge_stop_threshold \
             and charge_stop_threshold.isdigit() else None
 
+        # UPower is preferred for read-only telemetry when it identifies the
+        # same physical battery. Kernel thresholds and AC detection remain
+        # independently sourced from sysfs.
+        upower = read_upower_battery(battery_path)
+        if upower is not None:
+            battery_status = upower.status
+            battery_level = upower.percentage
+            power_watts = upower.power_watts
+            is_charging = battery_status == "Charging"
+
         return BatteryInfo(
             is_charging=is_charging,
             is_ac_plugged=is_ac_plugged,
@@ -781,6 +801,13 @@ class SystemInfo:
             charging_stop_threshold=charging_stop_threshold,
             battery_level=battery_level,
             power_watts=power_watts,
+            status=battery_status,
+            source="upower" if upower is not None else "sysfs",
+            charge_protection_supported=upower.charge_protection_supported if upower else False,
+            charge_protection_enabled=upower.charge_protection_enabled if upower else None,
+            charge_control_types=upower.charge_control_types if upower else (),
+            upower_configured_start=upower.configured_start_threshold if upower else None,
+            upower_configured_end=upower.configured_end_threshold if upower else None,
         )
 
     @staticmethod
