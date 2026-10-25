@@ -21,6 +21,8 @@ jobs:
         run: python3 -m unittest discover -s tests -p test_install_preflight.py -v
       - name: Test runit replacement and s6 foreign bundle protection
         run: python3 -m unittest discover -s tests -p test_service_poststop_and_s6_bundle.py -v
+      - name: Executable script permissions
+        run: test -x scripts/auto-cpufreq-install.sh && test -x scripts/auto-cpufreq-remove.sh
       - name: Shell syntax
         run: bash -n scripts/auto-cpufreq-install.sh scripts/auto-cpufreq-remove.sh
 
