@@ -146,9 +146,13 @@ def _decode(properties: dict, sysfs_path: str) -> UPowerBattery | None:
 
 
 async def _read_bus(bus, sysfs_path, message_cls, message_type):
+    # The monitor is an optional observer: never activate a stopped UPower.
+    from dbus_next import MessageFlag
+
     response = await bus.call(message_cls(
         destination=UPOWER_NAME, path=UPOWER_PATH,
         interface=UPOWER_NAME, member="EnumerateDevices",
+        flags=MessageFlag.NO_AUTOSTART,
     ))
     if not response or response.message_type != message_type.METHOD_RETURN:
         return None
@@ -162,6 +166,7 @@ async def _read_bus(bus, sysfs_path, message_cls, message_type):
             destination=UPOWER_NAME, path=device_path,
             interface=PROPERTIES_INTERFACE, member="GetAll",
             signature="s", body=[DEVICE_INTERFACE],
+            flags=MessageFlag.NO_AUTOSTART,
         ))
         if not reply or reply.message_type != message_type.METHOD_RETURN:
             continue

@@ -27,10 +27,16 @@ def _charge_capabilities(properties: dict) -> ChargeCapabilities | None:
 
 
 async def _probe_bus(bus, battery_path, message, message_type) -> ChargeServiceProbe:
+    from dbus_next import MessageFlag
+
     async def call(destination, path, interface, member, signature="", body=None):
         result = await bus.call(message(
             destination=destination, path=path, interface=interface,
             member=member, signature=signature, body=body or [],
+            flags=(
+                MessageFlag.NO_AUTOSTART
+                if destination == UPOWER_NAME else MessageFlag.NONE
+            ),
         ))
         if (result is None or result.message_type != message_type.METHOD_RETURN
                 or not isinstance(result.body, list)):
