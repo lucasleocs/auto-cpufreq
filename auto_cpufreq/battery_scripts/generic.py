@@ -18,7 +18,7 @@ class GenericKernelBatteryDevice(BatteryDevice):
     def __init__(self, snapshot=None):
         self._config_snapshot = snapshot
         self._accepted_stops = {}
-        super().__init__()
+        super().__init__(snapshot)
 
     def _get_batteries(self) -> list[str]:
         selected = SystemInfo.get_battery_path(
