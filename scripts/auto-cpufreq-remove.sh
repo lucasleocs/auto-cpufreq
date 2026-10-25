@@ -62,6 +62,10 @@ function runit_service_is_managed {
         && [ ! -L "$service_dir/run" ] \
         && cmp -s -- "$managed_run" "$service_dir/run" \
         || return 1
+    elif [ -e "$service_dir/supervise" ] || [ -L "$service_dir/supervise" ]; then
+      # A supervise-only directory is not proof of an owned service.
+      # Match the install-side predicate while allowing empty retry state.
+      return 1
     fi
 
     [ ! -e "$service_dir/supervise" ] \
