@@ -33,7 +33,7 @@ if [ "$HAS_PREVIOUS" = yes ]; then previous_release="$ROOT/previous"; fi
 mkdir -p "$PREPARED_RELEASE/venv/bin" "$ROOT/bin"
 printf '#!/bin/sh\nprintf "3.2.0\\n"\n' > "$PREPARED_RELEASE/venv/bin/python"
 chmod +x "$PREPARED_RELEASE/venv/bin/python"
-printf '#!/bin/sh\nexit 19\n' > "$ROOT/bin/desktop-file-install"
+printf '#!/bin/sh\n[ "$STAGE" != desktop ]\n' > "$ROOT/bin/desktop-file-install"
 chmod +x "$ROOT/bin/desktop-file-install"
 export PATH="$ROOT/bin:$PATH"
 ln -s "$PREPARED_RELEASE" "$CURRENT_PATH"
