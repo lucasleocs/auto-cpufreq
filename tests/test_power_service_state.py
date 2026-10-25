@@ -135,6 +135,45 @@ class PowerServiceStateTests(unittest.TestCase):
             {"unit_file": "enabled", "active": True},
         )
 
+    def test_rollback_keeps_preexisting_installation_state(self):
+        self.assertTrue(self.manager.disable())
+        first = json.loads(self.file.read_text())["services"].copy()
+        self.sim.units["tuned-ppd.service"] = {"unit_file": "enabled", "active": True}
+        self.sim.fail_once = ("stop", "tuned-ppd.service")
+        self.assertFalse(self.manager.disable())
+        records = json.loads(self.file.read_text())["services"]
+        self.assertEqual(set(records), set(first))
+        self.assertEqual(self.sim.units["power-profiles-daemon.service"]["unit_file"], "masked")
+        self.assertEqual(self.sim.units["tuned.service"]["unit_file"], "masked")
+        self.assertEqual(self.sim.units["tuned-ppd.service"],
+                         {"unit_file": "enabled", "active": True})
+
+    def test_systemctl_query_failure_does_not_skip_conflict(self):
+        def failing_query(command, **kwargs):
+            if command[1:3] == ["show", "tuned.service"]:
+                return subprocess.CompletedProcess(command, 1, stdout="", stderr="bus unavailable")
+            return self.sim(command, **kwargs)
+
+        self.manager.runner = failing_query
+        self.assertFalse(self.manager.disable())
+        self.assertFalse(self.file.exists())
+        self.assertEqual(self.sim.units["power-profiles-daemon.service"],
+                         {"unit_file": "enabled", "active": True})
+
+    def test_unknown_active_state_does_not_skip_conflict(self):
+        def activating_query(command, **kwargs):
+            if command[1:3] == ["show", "tuned.service"]:
+                return subprocess.CompletedProcess(
+                    command, 0,
+                    stdout="LoadState=loaded\nActiveState=activating\nUnitFileState=enabled\n",
+                    stderr="",
+                )
+            return self.sim(command, **kwargs)
+
+        self.manager.runner = activating_query
+        self.assertFalse(self.manager.disable())
+        self.assertFalse(self.file.exists())
+
     def test_repeated_disable_keeps_first_snapshot(self):
         self.assertTrue(self.manager.disable())
         first = self.file.read_bytes()
