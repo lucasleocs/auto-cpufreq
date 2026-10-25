@@ -44,18 +44,25 @@ class PowerServiceState:
             "--property=LoadState,ActiveState,UnitFileState", "--no-pager",
         )
         if result.returncode:
-            return None
+            raise RuntimeError(
+                f"Unable to inspect {unit}: {(result.stderr or result.stdout).strip()}"
+            )
         fields = dict(
             line.split("=", 1) for line in result.stdout.splitlines()
             if "=" in line
         )
-        if fields.get("LoadState") not in ("loaded", "masked"):
+        load_state = fields.get("LoadState")
+        if load_state == "not-found":
             return None
-        if not fields.get("UnitFileState") or not fields.get("ActiveState"):
-            return None
+        if load_state not in ("loaded", "masked"):
+            raise RuntimeError(f"Unexpected load state for {unit}: {load_state}")
+        unit_file = fields.get("UnitFileState")
+        active_state = fields.get("ActiveState")
+        if not unit_file or active_state not in ("active", "inactive", "failed"):
+            raise RuntimeError(f"Unexpected unit state for {unit}: {fields}")
         return {
-            "unit_file": fields["UnitFileState"],
-            "active": fields["ActiveState"] == "active",
+            "unit_file": unit_file,
+            "active": active_state == "active",
         }
 
     def _read(self):
@@ -107,6 +114,7 @@ class PowerServiceState:
         """Record original states before masking conflicting systemd units."""
         if which("systemctl") is None:
             return True
+        new_units = ()
         try:
             records = self._read()
             if any(item.get("restoring") for item in records.values()):
@@ -128,6 +136,7 @@ class PowerServiceState:
             if originals:
                 records.update(originals)
                 self._save(records)  # Durable before any system service change.
+                new_units = tuple(originals)
             for unit, original in originals.items():
                 if original["unit_file"] == "enabled":
                     self._command("disable", unit)
@@ -137,10 +146,11 @@ class PowerServiceState:
             return True
         except (RuntimeError, OSError) as error:
             print(f"Unable to manage conflicting power services: {error}")
-            self.restore(force=True)  # Undo a partially completed installation.
+            if new_units and not self.restore(force=True, only_units=new_units):
+                print("Some services could not be rolled back; saved state was retained.")
             return False
 
-    def restore(self, force=False):
+    def restore(self, force=False, only_units=None):
         """Undo our masks, without overriding subsequent user modifications."""
         try:
             records = self._read()
@@ -149,6 +159,8 @@ class PowerServiceState:
             return False
         success = True
         for unit, original in list(records.items()):
+            if only_units is not None and unit not in only_units:
+                continue
             try:
                 current = self._inspect(unit)
                 if current is None:
