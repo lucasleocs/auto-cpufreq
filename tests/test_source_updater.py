@@ -111,5 +111,61 @@ class SourceUpdaterTagTests(unittest.TestCase):
         self.assertIn("finally:", source)
 
 
+class LatestReleaseSelectionTests(unittest.TestCase):
+    """Test the actual release API parser with in-memory responses only."""
+
+    def select(self, installed="3.2.0+abc123", remote="v3.2.1",
+               http_status=200, source=True, raises=None):
+        import re
+        fn = next(n for n in TREE.body if isinstance(n, ast.FunctionDef)
+                  and n.name == "check_for_update")
+        scope = {
+            "GITHUB": "https://github.com/example/auto-cpufreq",
+            "is_source_installation": lambda: source,
+            "get_literal_version": lambda _: installed,
+            "search": re.search,
+            "print": lambda *args, **kwargs: None,
+            "exceptions": SimpleNamespace(
+                ConnectionError=ConnectionError,
+                Timeout=TimeoutError,
+                RequestException=OSError,
+                HTTPError=RuntimeError,
+            ),
+            "get": (
+                (lambda url: (_ for _ in ()).throw(raises))
+                if raises else lambda url: SimpleNamespace(
+                    status_code=http_status,
+                    json=lambda: {"tag_name": remote, "message": "API unavailable"},
+                )
+            ),
+        }
+        exec(compile(ast.Module(body=[fn], type_ignores=[]), "core.py", "exec"), scope)
+        return scope["check_for_update"]()
+
+    def test_newer_release_returns_exact_tag(self):
+        self.assertEqual(self.select(remote="v3.2.1"), "v3.2.1")
+        self.assertEqual(self.select(remote="3.2.2"), "3.2.2")
+
+    def test_current_and_older_release_are_not_updates(self):
+        for remote in ("v3.2.0", "v3.1.99"):
+            with self.subTest(remote=remote):
+                self.assertIs(self.select(remote=remote), False)
+
+    def test_malformed_release_metadata_is_not_executed(self):
+        for remote in ("main", "v3.2.1-rc1", "v3.2.1;echo x", "v03.2.1", None):
+            with self.subTest(remote=remote):
+                self.assertIsNone(self.select(remote=remote))
+
+    def test_invalid_local_version_is_rejected(self):
+        self.assertIsNone(self.select(installed="unknown", remote="v3.2.3"))
+
+    def test_http_error_and_network_failure_do_not_offer_update(self):
+        self.assertIsNone(self.select(http_status=403))
+        self.assertIsNone(self.select(raises=TimeoutError("synthetic timeout")))
+
+    def test_non_source_installation_refuses_builtin_updater(self):
+        self.assertIsNone(self.select(source=False))
+
+
 if __name__ == "__main__":
     unittest.main()
