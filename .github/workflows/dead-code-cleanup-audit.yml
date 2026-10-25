@@ -8,6 +8,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Run compatibility tests on Python 3.9
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.9'
+      - name: Verify Python 3.9 module imports
+        run: python -m unittest discover -s tests -p test_python39_annotations.py -v
       - name: Validate Bash scripts
         run: |
           bash -n auto-cpufreq-installer
