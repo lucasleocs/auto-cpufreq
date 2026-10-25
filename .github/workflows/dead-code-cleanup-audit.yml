@@ -26,6 +26,8 @@ jobs:
         run: python3 -m compileall -q auto_cpufreq
       - name: Validate single installer rollback across injected failure modes
         run: python3 -m unittest discover -s tests -p test_installer_rollback.py -v
+      - name: Verify removed helper contracts and retained dataclasses
+        run: python -m unittest discover -s tests -p test_cleanup_properties.py -v
       - name: Verify old reporting functions are gone while active entrypoints remain
         run: python3 -m unittest discover -s tests -p test_dead_legacy_core.py -v
       - name: Verify active entrypoints and no legacy tray
