@@ -172,7 +172,7 @@ auto-cpufreq is available in [some official Debian suites](https://packages.debi
 sudo apt install auto-cpufreq
 ```
 
-The Debian package is currently being maintained by [emfox](https://github.com/emfox).
+The Debian package is currently being maintained by [emfox](https://github.com/emfox). Its service-management commands and dependencies may differ from source installations. For the packaged `--enable`/`--disable` commands and service-conflict guidance, see the `README.Debian` supplied with the Debian package; the `--install`, `--remove`, and `--update` instructions below describe source installations.
 
 
 ### Snap Store
@@ -204,7 +204,7 @@ The AUR [Release Package](https://aur.archlinux.org/packages/auto-cpufreq) is cu
   ```
 - The [source installer's daemon setup](#auto-cpufreq-installer) disables GNOME Power Profiles to avoid conflicts. AUR installations do not do this automatically, which may cause issues (see [#463](https://github.com/AdnanHodzic/auto-cpufreq/issues/463)).
   - If GNOME Power Profiles is running, stop and disable it with `sudo systemctl disable --now power-profiles-daemon.service`, then mask it with `sudo systemctl mask power-profiles-daemon.service` before starting auto-cpufreq. Restore the service as needed after uninstalling the AUR package.
-- The [source installer's daemon setup](#auto-cpufreq-installer) also disables TuneD to avoid conflicts with auto-cpufreq.
+- The [source installer's daemon setup](#auto-cpufreq-installer) also disables TuneD to avoid conflicts with auto-cpufreq. Fedora 41 introduced TuneD as the default power-profile backend in several desktop editions; other package installations may require manual conflict management.
 
 ### Gentoo Linux (GURU Repository)
 
@@ -218,7 +218,7 @@ emaint sync -r guru
 emerge --ask sys-power/auto-cpufreq
 ```
 
-If Portage requires the `~amd64` keyword, add `sys-power/auto-cpufreq ~amd64` to `/etc/portage/package.accept_keywords` (if it is a file), or to a file inside that directory, then rerun `emerge`.
+The GURU ebuild is keyworded `~amd64`. On systems that do not already accept this keyword, add `sys-power/auto-cpufreq ~amd64` to `/etc/portage/package.accept_keywords` (if it is a file), or to a file inside that directory, then rerun `emerge`.
 
 **Notices**
 
@@ -360,7 +360,7 @@ poetry install
 sudo "$(poetry env info --path)/bin/python" -m auto_cpufreq.power_helper --gnome_power_disable
 ```
 
-For the list of helper options, replace `--gnome_power_disable` with `--help`.
+To re-enable GNOME Power Profiles after removing the Snap, use `--gnome_power_enable` instead. The helper also supports `--bluetooth_boot_off` and `--bluetooth_boot_on` for Snap-restricted Bluetooth boot settings. Replace the final option in the command above with the desired flag, or use `--help` to list all options.
 
 ### 2: `--force` governor override
 
