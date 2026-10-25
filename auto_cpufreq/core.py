@@ -388,6 +388,15 @@ def remove_complete_msg():
 def deploy_daemon():
     print("\n" + "-" * 21 + " Deploying auto-cpufreq as a daemon " + "-" * 22 + "\n")
 
+    # Reject install conflicts before modifying host power or Bluetooth state.
+    try:
+        preflight_status = call(["bash", str(SCRIPTS_DIR / "auto-cpufreq-install.sh"), "--preflight"])
+    except OSError as error:
+        print(f"Failed to preflight daemon installation: {error}")
+        return 1
+    if preflight_status != 0:
+        return preflight_status
+
     cpufreqctl() # deploy cpufreqctl script func call
 
     bluetooth_disable() # turn off bluetooth on boot

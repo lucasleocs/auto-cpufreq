@@ -26,8 +26,45 @@ function auto_cpufreq_remove {
     [ -z "${2:-}" ] || $2 || return $?
     echo -e "\n* Disabling auto-cpufreq daemon ($1) at boot"
     [ -z "${3:-}" ] || $3 || return $?
+    # A replacement made while stopping/disabling must not be deleted.
+    if ! service_file_is_managed "$4" "$5"; then
+      echo "Error: Refusing to remove an unmanaged $1 unit: $4"
+      return 1
+    fi
     echo -e "\n* Removing auto-cpufreq daemon ($1) unit file"
     rm -f -- "$4" || return $?
+}
+
+# A repeated disable reports a missing dependency link. Suppress only
+# this already-completed step when the containing directory still exists.
+function dinit_disable {
+    local output status entry
+    output="$(dinitctl disable auto-cpufreq 2>&1)"
+    status=$?
+    [ -z "$output" ] || printf '%s\n' "$output"
+    [ "$status" -eq 0 ] && return 0
+    case "$output" in
+      "dinitctl: could not unlink dependency entry "*": No such file or directory")
+        entry="$(printf '%s\n' "$output" | sed -n 's/^dinitctl: could not unlink dependency entry \(.*\): No such file or directory$/\1/p')"
+        if [ "$(basename "$entry")" = "auto-cpufreq" ] &&
+           [ -d "$(dirname "$entry")" ] &&
+           [ ! -e "$entry" ] && [ ! -L "$entry" ]; then
+          return 0
+        fi
+        ;;
+    esac
+    return "$status"
+}
+
+function service_file_is_managed {
+    local target="$1" template="$2"
+    # Missing paths are legitimate partial-install/removal retry states.
+    if [ ! -e "$target" ] && [ ! -L "$target" ]; then
+      return 0
+    fi
+    [ -f "$target" ] && [ ! -L "$target" ] \
+      && [ -f "$template" ] \
+      && cmp -s -- "$template" "$target"
 }
 
 function directory_contains_only {
@@ -62,6 +99,10 @@ function runit_service_is_managed {
         && [ ! -L "$service_dir/run" ] \
         && cmp -s -- "$managed_run" "$service_dir/run" \
         || return 1
+    elif [ -e "$service_dir/supervise" ] || [ -L "$service_dir/supervise" ]; then
+      # A supervise-only directory is not proof of an owned service.
+      # Match the install-side predicate while allowing empty retry state.
+      return 1
     fi
 
     [ ! -e "$service_dir/supervise" ] \
@@ -125,15 +166,27 @@ function openrc_disable {
 
 case "$(ps h -o comm 1)" in
   dinit)
-    if [ -e /etc/dinit.d/auto-cpufreq ] || [ -L /etc/dinit.d/auto-cpufreq ]; then
-      auto_cpufreq_remove "dinit" "dinitctl stop --ignore-unstarted auto-cpufreq" "dinitctl disable auto-cpufreq" "/etc/dinit.d/auto-cpufreq" || exit $?
+    service_file=/etc/dinit.d/auto-cpufreq
+    managed_file="$SHARE_DIR/scripts/auto-cpufreq-dinit"
+    if [ -e "$service_file" ] || [ -L "$service_file" ]; then
+      if ! service_file_is_managed "$service_file" "$managed_file"; then
+        echo "Error: Refusing to remove an unmanaged dinit unit: $service_file"
+        exit 1
+      fi
+      auto_cpufreq_remove "dinit" "dinitctl stop --ignore-unstarted auto-cpufreq" "dinit_disable" "$service_file" "$managed_file" || exit $?
     else
       echo -e "\n* auto-cpufreq dinit service is already removed"
     fi
   ;;
   init)
-    if [ -e /etc/init.d/auto-cpufreq ] || [ -L /etc/init.d/auto-cpufreq ]; then
-      auto_cpufreq_remove "openrc" "rc-service --ifexists --ifstarted auto-cpufreq stop" "openrc_disable" "/etc/init.d/auto-cpufreq" || exit $?
+    service_file=/etc/init.d/auto-cpufreq
+    managed_file="$SHARE_DIR/scripts/auto-cpufreq-openrc"
+    if [ -e "$service_file" ] || [ -L "$service_file" ]; then
+      if ! service_file_is_managed "$service_file" "$managed_file"; then
+        echo "Error: Refusing to remove an unmanaged OpenRC unit: $service_file"
+        exit 1
+      fi
+      auto_cpufreq_remove "openrc" "rc-service --ifexists --ifstarted auto-cpufreq stop" "openrc_disable" "$service_file" "$managed_file" || exit $?
     else
       echo -e "\n* auto-cpufreq OpenRC service is already removed"
     fi
@@ -167,8 +220,9 @@ case "$(ps h -o comm 1)" in
         echo -e "\n* Removing auto-cpufreq daemon (runit) unit file"
         # Remove only entries owned by this service. If another entry appears
         # after validation, rmdir fails instead of recursively deleting it.
-        rm -f -- "$service_dir/run" || return $?
+        # Retain the identifying run script if supervise cleanup fails.
         rm -rf -- "$service_dir/supervise" || return $?
+        rm -f -- "$service_dir/run" || return $?
         rmdir -- "$service_dir" || return $?
       fi
     }
@@ -205,6 +259,12 @@ case "$(ps h -o comm 1)" in
       # stop already clears its failed state, so no reset-failed is needed.
       echo -e "\n* Disabling auto-cpufreq daemon (systemd) at boot"
       systemctl disable auto-cpufreq || exit $?
+      # The service unit can be replaced while stop/disable is running.
+      # Do not unlink a new administrator-owned unit after the preflight.
+      if ! service_file_is_managed "$systemd_unit" "$managed_systemd_unit"; then
+        echo "Error: Refusing to remove a replaced or unmanaged systemd unit: $systemd_unit"
+        exit 1
+      fi
       echo -e "\n* Removing auto-cpufreq daemon (systemd) unit file"
       rm -f -- "$systemd_unit" || exit $?
     else
