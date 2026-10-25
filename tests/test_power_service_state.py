@@ -210,6 +210,41 @@ class PowerServiceStateTests(unittest.TestCase):
         self.assertFalse(self.manager.disable())
         self.assertTrue(self.file.is_dir())
 
+    def test_manual_enable_during_unmask_phase_is_not_overwritten(self):
+        self.assertTrue(self.manager.disable())
+        self.sim.fail_once = ("unmask", "power-profiles-daemon.service")
+        self.assertFalse(self.manager.restore())
+        self.assertEqual(
+            json.loads(self.file.read_text())["services"]["power-profiles-daemon.service"]["phase"],
+            "unmask",
+        )
+        self.sim.units["power-profiles-daemon.service"]["unit_file"] = "enabled"
+        self.assertFalse(self.manager.restore())
+        self.assertEqual(
+            self.sim.units["power-profiles-daemon.service"]["unit_file"], "enabled"
+        )
+
+    def test_manual_disable_during_start_phase_is_not_overwritten(self):
+        self.assertTrue(self.manager.disable())
+        self.sim.fail_once = ("start", "power-profiles-daemon.service")
+        self.assertFalse(self.manager.restore())
+        record = json.loads(self.file.read_text())["services"]
+        self.assertEqual(record["power-profiles-daemon.service"]["phase"], "start")
+        self.sim.units["power-profiles-daemon.service"]["unit_file"] = "disabled"
+        self.assertFalse(self.manager.restore())
+        self.assertEqual(
+            self.sim.units["power-profiles-daemon.service"]["unit_file"], "disabled"
+        )
+
+    def test_legacy_interrupted_snapshot_without_phase_is_not_assumed_safe(self):
+        self.assertTrue(self.manager.disable())
+        record = json.loads(self.file.read_text())
+        record["services"]["power-profiles-daemon.service"]["restoring"] = True
+        self.file.write_text(json.dumps(record))
+        self.assertFalse(self.manager.restore())
+        self.assertIn("power-profiles-daemon.service",
+                      json.loads(self.file.read_text())["services"])
+
     def test_repeated_disable_keeps_first_snapshot(self):
         self.assertTrue(self.manager.disable())
         first = self.file.read_bytes()
