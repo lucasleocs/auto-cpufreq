@@ -128,6 +128,16 @@ function s6_service_is_managed {
     return 0
 }
 
+function s6_bundle_entry_is_managed {
+    local entry="$1"
+    # Artix s6-service stores bundle membership as an empty regular file.
+    # Never remove or reuse a symlink, directory or administrative contents.
+    if [ ! -e "$entry" ] && [ ! -L "$entry" ]; then
+      return 0
+    fi
+    [ -f "$entry" ] && [ ! -L "$entry" ] && [ ! -s "$entry" ]
+}
+
 # Read-only preflight before changing Bluetooth, competing services or helpers.
 function daemon_install_preflight {
     local init_system service_file managed_file service_dir active_link required_command
@@ -203,6 +213,10 @@ function daemon_install_preflight {
         fi
         s6_service_is_managed /etc/s6/sv/auto-cpufreq || {
           echo "Error: Refusing an unmanaged s6 service definition." >&2
+          return 1
+        }
+        s6_bundle_entry_is_managed /etc/s6/adminsv/default/contents.d/auto-cpufreq || {
+          echo "Error: Refusing an unmanaged s6 bundle entry." >&2
           return 1
         }
         ;;
@@ -375,6 +389,10 @@ case "$(ps h -o comm 1)" in
       ) || exit $?
     fi
 
+    if ! s6_bundle_entry_is_managed "$s6_bundle_entry"; then
+      echo "Error: Refusing an unmanaged s6 bundle entry: $s6_bundle_entry" >&2
+      exit 1
+    fi
     echo -e "\n* Add auto-cpufreq service (s6) to default bundle"
     if [ ! -e "$s6_bundle_entry" ] && [ ! -L "$s6_bundle_entry" ]; then
       s6-service add default auto-cpufreq 8<&- || exit $?
