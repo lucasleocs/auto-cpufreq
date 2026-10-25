@@ -1,7 +1,7 @@
 name: PR 985 Final Recovery Audit
 on:
   push:
-    branches: [lab/pr985-final-recovery, lab/pr985-lifecycle-final-validation, lab/pr985-init-recovery-final-audit]
+    branches: [lab/pr985-final-recovery, lab/pr985-lifecycle-final-validation, lab/pr985-init-recovery-final-audit, lab/pr985-runit-retry-audit]
   workflow_dispatch:
 jobs:
   recovery-regression:
@@ -72,3 +72,4 @@ jobs:
           set -euo pipefail
           export PATH="$RUNNER_TEMP/runit-bin/usr/bin:$RUNNER_TEMP/runit-bin/usr/sbin:$RUNNER_TEMP/runit-bin/bin:$PATH"
           python3 tests/test_runit_live_isolated.py
+          python3 tests/test_runit_residual.py
