@@ -5,6 +5,7 @@ Live mode continue to own all power-state changes independently.
 """
 
 from __future__ import annotations
+
 from dataclasses import dataclass
 from enum import Enum
 from math import isfinite
