@@ -126,6 +126,10 @@ class BatteryDevice:
                 )
                 if legacy_start and legacy_stop:
                     return legacy_start if files == CHARGE_START_THRESHOLD_FILES else legacy_stop
+                # Neither complete pair is available for this battery.
+                # Refuse to mix standard and vendor attributes, including
+                # on secondary batteries handled by a vendor backend.
+                return None
 
         return writable_threshold_file(bat, files)
 

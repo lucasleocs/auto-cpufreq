@@ -122,6 +122,52 @@ class ChargePolicySafety(unittest.TestCase):
             dev = battery.get_battery_device()
         self.assertEqual(dev.batteries, ["BAT0", "BAT1"])
 
+    def test_secondary_vendor_battery_never_mixes_partial_threshold_abis(self):
+        # BAT0 selects the vendor backend; BAT1 exposes a fragmented pair
+        # across the standard and legacy names. No BAT1 write is safe.
+        for name in ("BAT0", "BAT1"):
+            (self.root / name / "charge_control_end_threshold").unlink()
+            (self.root / name / "charge_stop_threshold").write_text("100")
+        (self.root / "BAT0" / "charge_start_threshold").write_text("70")
+        (self.root / "BAT1" / "charge_control_start_threshold").write_text("70")
+        self.cfg["battery"]["start_threshold"] = "70"
+        with patch.object(battery, "lsmod",
+                          side_effect=lambda module: module == "asus_wmi"):
+            dev = battery.get_battery_device()
+            self.assertIsInstance(dev, battery.AsusBatteryDevice)
+            self.assertEqual(set(dev.start_paths), {"BAT0"})
+            self.assertEqual(set(dev.stop_paths), {"BAT0"})
+            ctl = battery.BatteryDaemonController()
+            ctl.tick(now=0)
+        self.assertEqual(
+            (self.root / "BAT0" / "charge_stop_threshold").read_text(), "80"
+        )
+        self.assertEqual(
+            (self.root / "BAT1" / "charge_stop_threshold").read_text(), "100"
+        )
+
+    def test_secondary_vendor_complete_standard_pair_is_preserved(self):
+        for name in ("BAT0", "BAT1"):
+            (self.root / name / "charge_control_end_threshold").unlink()
+            (self.root / name / "charge_stop_threshold").write_text("100")
+        (self.root / "BAT0" / "charge_start_threshold").write_text("70")
+        (self.root / "BAT1" / "charge_control_start_threshold").write_text("70")
+        (self.root / "BAT1" / "charge_control_end_threshold").write_text("100")
+        self.cfg["battery"]["start_threshold"] = "70"
+        with patch.object(battery, "lsmod",
+                          side_effect=lambda module: module == "asus_wmi"):
+            dev = battery.get_battery_device()
+        # The selected vendor class remains able to use a *complete* standard
+        # pair on another system battery rather than refusing all attributes.
+        self.assertEqual(
+            dev.start_paths["BAT1"],
+            str(self.root / "BAT1" / "charge_control_start_threshold"),
+        )
+        self.assertEqual(
+            dev.stop_paths["BAT1"],
+            str(self.root / "BAT1" / "charge_control_end_threshold"),
+        )
+
     def test_ignore_list_change_triggers_immediate_new_selection(self):
         ctl = battery.BatteryDaemonController()
         ctl.tick(now=0)
