@@ -8,7 +8,7 @@ from pathlib import Path
 from pickle import dump, load
 from re import search
 from requests import get, exceptions
-from shutil import copy, rmtree
+from shutil import copy, rmtree, which
 from subprocess import call, DEVNULL, getoutput, run
 from tempfile import mkdtemp
 from time import sleep
@@ -414,8 +414,9 @@ def deploy_daemon():
     if install_status != 0:
         # Never restore competing daemons alongside an auto-cpufreq daemon
         # which may have started before the installer reported its failure.
-        if call(["systemctl", "is-active", "--quiet", "auto-cpufreq.service"],
-                stdout=DEVNULL, stderr=DEVNULL) != 0:
+        if (which("systemctl") is None or
+                call(["systemctl", "is-active", "--quiet", "auto-cpufreq.service"],
+                     stdout=DEVNULL, stderr=DEVNULL) != 0):
             restore_conflicting_services()
         else:
             print("Service state retained; remove the daemon before restoring competing services.")
