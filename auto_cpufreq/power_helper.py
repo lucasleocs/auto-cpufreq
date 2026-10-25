@@ -277,10 +277,6 @@ def gnome_power_rm_reminder_snap():
     print("python3 -m auto_cpufreq.power_helper --gnome_power_enable")
     print(f"\nReference: {GITHUB}#configuring-auto-cpufreq")
 
-def valid_options():
-    print("--gnome_power_enable\t\tEnable GNOME Power Profiles daemon")
-    print("--gnome_power_disable\t\tDisable GNOME Power Profiles daemon\n")
-
 def disable_power_profiles_daemon():
     # always disable power-profiles-daemon
     try:

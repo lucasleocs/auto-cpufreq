@@ -22,10 +22,6 @@ class DisplayValue:
     availability: Availability
     text: str
 
-    @property
-    def is_available(self):
-        return self.availability is Availability.AVAILABLE
-
 
 @dataclass(frozen=True)
 class BatteryPresentation:
