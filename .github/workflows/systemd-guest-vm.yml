@@ -1,0 +1,88 @@
+name: Systemd Guest VM Integration (Lab Only)
+
+on:
+  push:
+    branches: [lab/pr985-dead-code-cleanup]
+    paths:
+      - "tests/guest_systemd_e2e.sh"
+      - ".github/workflows/systemd-guest-vm.yml"
+      - "scripts/auto-cpufreq-install.sh"
+      - "scripts/auto-cpufreq-remove.sh"
+      - "scripts/auto-cpufreq.service"
+      - "auto-cpufreq-installer"
+  workflow_dispatch:
+
+jobs:
+  ubuntu-systemd-vm:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install QEMU VM and cloud-init image tooling on disposable CI runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash -n tests/guest_systemd_e2e.sh
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq qemu-system-x86 qemu-utils cloud-image-utils genisoimage curl
+      - name: Fetch and verify official Ubuntu 24.04 cloud image
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/autocpu-vm"
+          cd "$RUNNER_TEMP/autocpu-vm"
+          curl --fail --location --retry 3 --silent --show-error \
+            https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img \
+            -o ubuntu.img
+          curl --fail --location --retry 3 --silent --show-error \
+            https://cloud-images.ubuntu.com/noble/current/SHA256SUMS -o SHA256SUMS
+          expected=$(awk '$2 == "*noble-server-cloudimg-amd64.img" || $2 == "noble-server-cloudimg-amd64.img" {print $1}' SHA256SUMS)
+          test -n "$expected"
+          printf '%s  ubuntu.img\n' "$expected" | sha256sum -c -
+      - name: Boot disposable VM with systemd and check service ownership lifecycle
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/autocpu-vm"
+          cat > user-data <<'CLOUD'
+          #cloud-config
+          package_update: false
+          runcmd:
+            - [ bash, -lc, "mkdir -p /mnt/src; mount -o ro /dev/disk/by-label/AUTOSRC /mnt/src; rc=98; if test -f /mnt/src/source/tests/guest_systemd_e2e.sh; then bash /mnt/src/source/tests/guest_systemd_e2e.sh && rc=0 || rc=$?; fi; printf '\\nAUTOCFREQ_VM_RESULT=%s\\n' \"$rc\" >/dev/ttyS0; sync; systemctl poweroff --force" ]
+          CLOUD
+          cat > meta-data <<'META'
+          instance-id: autocpufreq-lab-systemd-vm
+          local-hostname: autocpufreq-lab-vm
+          META
+          cloud-localds seed.iso user-data meta-data
+          genisoimage -quiet -R -V AUTOSRC -o source.iso -graft-points \
+            "source=$GITHUB_WORKSPACE"
+          qemu-img create -q -f qcow2 -F qcow2 -b ubuntu.img testvm.qcow2 12G
+          accel=tcg
+          if test -c /dev/kvm && test -r /dev/kvm && test -w /dev/kvm; then
+            accel=kvm
+          fi
+          echo "Guest VM accelerator: $accel"
+          set +e
+          timeout --signal=TERM --kill-after=10s 1100 \
+            qemu-system-x86_64 \
+            -machine "accel=$accel" \
+            -cpu max -smp 2 -m 3072 \
+            -drive "file=testvm.qcow2,if=virtio,format=qcow2" \
+            -drive "file=seed.iso,media=cdrom,readonly=on" \
+            -drive "file=source.iso,media=cdrom,readonly=on" \
+            -nic user,model=virtio-net-pci \
+            -device virtio-rng-pci \
+            -nographic -no-reboot -monitor none \
+            > vm-serial.log 2>&1
+          vm_exit=$?
+          set -e
+          tail -n 180 vm-serial.log
+          echo "QEMU exit status: $vm_exit"
+          grep -Fq AUTOCFREQ_GUEST_ALL_PASS vm-serial.log \
+            || { echo "Guest service lifecycle incomplete"; exit 1; }
+          grep -Fq AUTOCFREQ_VM_RESULT=0 vm-serial.log \
+            || { echo "VM did not report test success"; exit 1; }
+          test "$vm_exit" -eq 0
