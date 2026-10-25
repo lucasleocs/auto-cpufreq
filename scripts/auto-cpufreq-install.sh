@@ -140,18 +140,35 @@ function s6_bundle_entry_is_managed {
 
 # Read-only preflight before changing Bluetooth, competing services or helpers.
 function daemon_install_preflight {
-    local init_system service_file managed_file service_dir active_link required_command
+    local init_system service_file managed_file service_dir active_link required_command service_parent
     init_system="$(ps h -o comm 1)" || return 1
     case "$init_system" in
       dinit|init|systemd)
         case "$init_system" in
-          dinit) service_file=/etc/dinit.d/auto-cpufreq
+          dinit) required_command=dinitctl
+                 service_file=/etc/dinit.d/auto-cpufreq
                  managed_file="$SHARE_DIR/scripts/auto-cpufreq-dinit" ;;
-          init) service_file=/etc/init.d/auto-cpufreq
+          init) required_command=rc-service
+                service_file=/etc/init.d/auto-cpufreq
                 managed_file="$SHARE_DIR/scripts/auto-cpufreq-openrc" ;;
-          systemd) service_file=/etc/systemd/system/auto-cpufreq.service
+          systemd) required_command=systemctl
+                   service_file=/etc/systemd/system/auto-cpufreq.service
                    managed_file="$SHARE_DIR/scripts/auto-cpufreq.service" ;;
         esac
+        command -v "$required_command" >/dev/null 2>&1 || {
+          echo "Error: Missing $init_system command: $required_command" >&2
+          return 1
+        }
+        if [ "$init_system" = init ]; then
+          command -v rc-update >/dev/null 2>&1 || {
+            echo "Error: Missing OpenRC command: rc-update" >&2
+            return 1
+          }
+        fi
+        if [ ! -d "$(dirname "$service_file")" ]; then
+          echo "Error: Missing $init_system service directory: $(dirname "$service_file")" >&2
+          return 1
+        fi
         if [ ! -f "$managed_file" ]; then
           echo "Error: Missing managed $init_system service template: $managed_file" >&2
           return 1
@@ -176,6 +193,16 @@ function daemon_install_preflight {
           *) echo "Error: Unsupported runit distribution: $ID" >&2
              return 1 ;;
         esac
+        command -v sv >/dev/null 2>&1 || {
+          echo "Error: Missing runit command: sv" >&2
+          return 1
+        }
+        for service_parent in "$(dirname "$service_dir")" "$(dirname "$active_link")"; do
+          if [ ! -d "$service_parent" ]; then
+            echo "Error: Missing runit directory: $service_parent" >&2
+            return 1
+          fi
+        done
         if [ ! -f "$SHARE_DIR/scripts/auto-cpufreq-runit" ]; then
           echo "Error: Missing runit service template." >&2
           return 1
@@ -200,6 +227,12 @@ function daemon_install_preflight {
             echo "Error: Missing s6 command: $required_command" >&2
             return 1
           }
+        done
+        for service_parent in /etc/s6/sv /etc/s6/adminsv/default/contents.d; do
+          if [ ! -d "$service_parent" ]; then
+            echo "Error: Missing s6 service directory: $service_parent" >&2
+            return 1
+          fi
         done
         if [ -e /etc/s6/sv/.auto-cpufreq-removing ] ||
            [ -L /etc/s6/sv/.auto-cpufreq-removing ]; then
@@ -374,6 +407,9 @@ case "$(ps h -o comm 1)" in
         trap 'rm -rf -- "$staged_dir"' EXIT
         cp -r "$SHARE_DIR/scripts/auto-cpufreq-s6/." "$staged_dir/" || exit $?
         chmod 755 "$staged_dir" || exit $?
+        # Git stores the s6 run template as data (0644); supervisors need
+        # an executable run script. Set the mode on the staged file.
+        chmod 755 "$staged_dir/run" || exit $?
         # s6-rc-compile ignores dot directories. Publish a new definition as
         # one rename, so another database build never sees half a service.
         if [ ! -e "$s6_service_dir" ]; then
@@ -388,6 +424,14 @@ case "$(ps h -o comm 1)" in
         fi
       ) || exit $?
     fi
+
+    # Repair a previously deployed 0644 run script (including partial
+    # installs), but only while its contents still match our template.
+    if ! s6_service_is_managed "$s6_service_dir"; then
+      echo "Error: Refusing to modify a changed s6 service definition." >&2
+      exit 1
+    fi
+    chmod 755 "$s6_service_dir/run" || exit $?
 
     if ! s6_bundle_entry_is_managed "$s6_bundle_entry"; then
       echo "Error: Refusing an unmanaged s6 bundle entry: $s6_bundle_entry" >&2
