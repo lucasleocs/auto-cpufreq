@@ -25,7 +25,7 @@ diff --git a/auto_cpufreq/core.py b/auto_cpufreq/core.py
  
  def footer(l=79): print("\n" + "-" * l + "\n")
  
-@@ -387,76 +380,10 @@
+@@ -387,77 +380,10 @@
      footer()
  
  def deploy_daemon():
@@ -56,8 +56,9 @@ diff --git a/auto_cpufreq/core.py b/auto_cpufreq/core.py
 -    if install_status != 0:
 -        # Never restore competing daemons alongside an auto-cpufreq daemon
 -        # which may have started before the installer reported its failure.
--        if call(["systemctl", "is-active", "--quiet", "auto-cpufreq.service"],
--                stdout=DEVNULL, stderr=DEVNULL) != 0:
+-        if (which("systemctl") is None or
+-                call(["systemctl", "is-active", "--quiet", "auto-cpufreq.service"],
+-                     stdout=DEVNULL, stderr=DEVNULL) != 0):
 -            restore_conflicting_services()
 -        else:
 -            print("Service state retained; remove the daemon before restoring competing services.")
