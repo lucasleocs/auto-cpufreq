@@ -26,8 +26,24 @@ function auto_cpufreq_remove {
     [ -z "${2:-}" ] || $2 || return $?
     echo -e "\n* Disabling auto-cpufreq daemon ($1) at boot"
     [ -z "${3:-}" ] || $3 || return $?
+    # A replacement made while stopping/disabling must not be deleted.
+    if ! service_file_is_managed "$4" "$5"; then
+      echo "Error: Refusing to remove an unmanaged $1 unit: $4"
+      return 1
+    fi
     echo -e "\n* Removing auto-cpufreq daemon ($1) unit file"
     rm -f -- "$4" || return $?
+}
+
+function service_file_is_managed {
+    local target="$1" template="$2"
+    # Missing paths are legitimate partial-install/removal retry states.
+    if [ ! -e "$target" ] && [ ! -L "$target" ]; then
+      return 0
+    fi
+    [ -f "$target" ] && [ ! -L "$target" ] \
+      && [ -f "$template" ] \
+      && cmp -s -- "$template" "$target"
 }
 
 function directory_contains_only {
@@ -129,15 +145,27 @@ function openrc_disable {
 
 case "$(ps h -o comm 1)" in
   dinit)
-    if [ -e /etc/dinit.d/auto-cpufreq ] || [ -L /etc/dinit.d/auto-cpufreq ]; then
-      auto_cpufreq_remove "dinit" "dinitctl stop --ignore-unstarted auto-cpufreq" "dinitctl disable auto-cpufreq" "/etc/dinit.d/auto-cpufreq" || exit $?
+    service_file=/etc/dinit.d/auto-cpufreq
+    managed_file="$SHARE_DIR/scripts/auto-cpufreq-dinit"
+    if [ -e "$service_file" ] || [ -L "$service_file" ]; then
+      if ! service_file_is_managed "$service_file" "$managed_file"; then
+        echo "Error: Refusing to remove an unmanaged dinit unit: $service_file"
+        exit 1
+      fi
+      auto_cpufreq_remove "dinit" "dinitctl stop --ignore-unstarted auto-cpufreq" "dinitctl disable auto-cpufreq" "$service_file" "$managed_file" || exit $?
     else
       echo -e "\n* auto-cpufreq dinit service is already removed"
     fi
   ;;
   init)
-    if [ -e /etc/init.d/auto-cpufreq ] || [ -L /etc/init.d/auto-cpufreq ]; then
-      auto_cpufreq_remove "openrc" "rc-service --ifexists --ifstarted auto-cpufreq stop" "openrc_disable" "/etc/init.d/auto-cpufreq" || exit $?
+    service_file=/etc/init.d/auto-cpufreq
+    managed_file="$SHARE_DIR/scripts/auto-cpufreq-openrc"
+    if [ -e "$service_file" ] || [ -L "$service_file" ]; then
+      if ! service_file_is_managed "$service_file" "$managed_file"; then
+        echo "Error: Refusing to remove an unmanaged OpenRC unit: $service_file"
+        exit 1
+      fi
+      auto_cpufreq_remove "openrc" "rc-service --ifexists --ifstarted auto-cpufreq stop" "openrc_disable" "$service_file" "$managed_file" || exit $?
     else
       echo -e "\n* auto-cpufreq OpenRC service is already removed"
     fi

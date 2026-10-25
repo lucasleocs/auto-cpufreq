@@ -43,6 +43,17 @@ function publish_service_file {
     )
 }
 
+function service_file_is_managed {
+    local target="$1" template="$2"
+    # Missing paths are legitimate partial-install/removal retry states.
+    if [ ! -e "$target" ] && [ ! -L "$target" ]; then
+      return 0
+    fi
+    [ -f "$target" ] && [ ! -L "$target" ] \
+      && [ -f "$template" ] \
+      && cmp -s -- "$template" "$target"
+}
+
 function directory_contains_only {
     local allowed allowed_name entry
     local directory="$1"
@@ -106,16 +117,32 @@ function s6_service_is_managed {
 }
 
 case "$(ps h -o comm 1)" in
-  dinit) 
-    echo -e "\n* Deploying auto-cpufreq (dinit) unit file"
-    cp "$SHARE_DIR/scripts/auto-cpufreq-dinit" /etc/dinit.d/auto-cpufreq || exit $?
+  dinit)
+    service_file=/etc/dinit.d/auto-cpufreq
+    managed_file="$SHARE_DIR/scripts/auto-cpufreq-dinit"
+    if ! service_file_is_managed "$service_file" "$managed_file"; then
+      echo "Error: Refusing to replace an unmanaged dinit unit: $service_file"
+      exit 1
+    fi
+    if [ ! -e "$service_file" ]; then
+      echo -e "\n* Deploying auto-cpufreq (dinit) unit file"
+      publish_service_file "$managed_file" "$service_file" 644 "$(dirname "$service_file")" || exit $?
+    fi
 
     auto_cpufreq_install "dinit" "dinitctl start auto-cpufreq" "dinitctl enable auto-cpufreq" || exit $?
   ;;
-  init) 
-    echo -e "\n* Deploying auto-cpufreq openrc unit file"
-    cp "$SHARE_DIR/scripts/auto-cpufreq-openrc" /etc/init.d/auto-cpufreq || exit $?
-    chmod +x /etc/init.d/auto-cpufreq || exit $?
+  init)
+    service_file=/etc/init.d/auto-cpufreq
+    managed_file="$SHARE_DIR/scripts/auto-cpufreq-openrc"
+    if ! service_file_is_managed "$service_file" "$managed_file"; then
+      echo "Error: Refusing to replace an unmanaged OpenRC unit: $service_file"
+      exit 1
+    fi
+    if [ ! -e "$service_file" ]; then
+      echo -e "\n* Deploying auto-cpufreq OpenRC unit file"
+      publish_service_file "$managed_file" "$service_file" 755 "$(dirname "$service_file")" || exit $?
+    fi
+    chmod +x "$service_file" || exit $?
 
     auto_cpufreq_install "openrc" "rc-service auto-cpufreq start" "rc-update add auto-cpufreq" || exit $?
   ;;
