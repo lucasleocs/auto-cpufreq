@@ -135,7 +135,7 @@ Only devices with an Intel, AMD, or ARM CPU are supported. This tool was develop
 
 ## Installing auto-cpufreq
 
-**For a normal installation, you do not need to install Python libraries manually.** Choose one of the methods below. On supported distributions, the source installer obtains the required system packages and installs the project's Python dependencies automatically. Distribution packages manage their dependencies through their respective package managers. The manual Python and Poetry commands further down are intended for development or the separate Snap-specific helper, not for regular installation.
+**You don't need to install Python dependencies manually for a regular installation.** Choose one of the methods below: the source installer handles system and Python dependencies, while distribution packages use their package managers. The Python and Poetry instructions further down are for development or the Snap-only helper.
 
 ### auto-cpufreq-installer
 
@@ -143,7 +143,7 @@ The source installer automatically handles several major Linux distribution fami
 
 The installer installs Python through the distribution's package manager when needed and checks for Python 3.9 or newer. If the distribution cannot provide a compatible Python version, installation stops with an error. Enterprise Linux 8 uses its Python 3.9 stream; newer Enterprise Linux releases use the distribution's default Python 3.
 
-It also installs system dependencies, creates a dedicated virtual environment under `/opt/auto-cpufreq/releases`, and installs the Python dependencies there. It verifies a new installation before atomically selecting it through `/opt/auto-cpufreq/current`; an incomplete installation does not replace the working one.
+Each source installation gets its own virtual environment under `/opt/auto-cpufreq/releases`. The installer verifies the new release before switching `/opt/auto-cpufreq/current` to it, so a failed installation does not replace the working one.
 
 NixOS uses the native Nix integration described below instead of the source installer.
 
@@ -185,10 +185,7 @@ auto-cpufreq is available on the [Snap Store](https://snapcraft.io/auto-cpufreq)
 sudo snap install auto-cpufreq
 ```
 
-**Please note:**
-- Make sure [snapd](https://snapcraft.io/docs/installing-snapd) is installed and `snap version` is >= 2.44 for `auto-cpufreq` to fully work due to [recent snapd changes](https://github.com/snapcore/snapd/pull/8127).
-
-- Fedora users will [encounter the following error](https://twitter.com/killyourfm/status/1291697985236144130) due to `cgroups v2` [being in development](https://github.com/snapcore/snapd/pull/7825). This problem can be resolved by either running `sudo snap run auto-cpufreq` after the snap installation or by using the [auto-cpufreq-installer](#auto-cpufreq-installer) which doesn't have this issue.
+**Please note:** Install [snapd](https://snapcraft.io/docs/installing-snapd) first. For distribution-specific setup and troubleshooting, see the [Snap installation documentation](https://snapcraft.io/docs/installing-snapd).
 
 ### AUR package (Arch based distributions)
 
@@ -200,36 +197,44 @@ The AUR [Release Package](https://aur.archlinux.org/packages/auto-cpufreq) is cu
 
 - The [Git Package](https://aur.archlinux.org/packages/auto-cpufreq-git) is separately maintained and may differ from the stable release package.
 - The build process links to `/usr/share/` instead of `/usr/local/share/`
-- The daemon installer provided does not work, instead start the daemon with 
+- The daemon installer provided by the project is not used for AUR packages. Enable and start the service with:
 
-``` 
-# systemctl enable --now auto-cpufreq 
+```bash
+sudo systemctl enable --now auto-cpufreq
 ```
-- The GNOME Power Profiles daemon is [automatically disabled by auto-cpufreq-installer](https://github.com/AdnanHodzic/auto-cpufreq#1-power_helperpy-script-snap-package-install-only) due to it's conflict with auto-cpufreq.service. However, this doesn't happen with AUR installs, which can lead to problems (e.g., [#463](https://github.com/AdnanHodzic/auto-cpufreq/issues/463)) if not masked manually.
+- The [source installer's daemon setup](#auto-cpufreq-installer) disables GNOME Power Profiles to avoid conflicts. AUR installations do not do this automatically, which may cause issues (see [#463](https://github.com/AdnanHodzic/auto-cpufreq/issues/463)).
   - Open a terminal and run `sudo systemctl mask power-profiles-daemon.service` (then `enable` and `start` the auto-cpufreq.service if you haven't already).
-- The TuneD daemon(enabled by default with Fedora 41) is [automatically disabled by auto-cpufreq-installer](https://github.com/AdnanHodzic/auto-cpufreq#1-power_helperpy-script-snap-package-install-only) due to it's conflict with auto-cpufreq.service.
+- The [source installer's daemon setup](#auto-cpufreq-installer) also disables TuneD to avoid conflicts with auto-cpufreq.
 
 ### Gentoo Linux (GURU Repository)
 
-New versions of auto-cpufreq were recently added to GURU, Gentoo's official community-maintained ebuild repository. The [ebuild](https://github.com/gentoo-mirror/guru/tree/master/sys-power/auto-cpufreq) is maintaned by [S41G0N](https://github.com/S41G0N) and other [GURU contributors](https://bugs.gentoo.org), who can respond in case of issues.
+auto-cpufreq is available through GURU, Gentoo's community-maintained ebuild repository. The [ebuild](https://github.com/gentoo-mirror/guru/tree/master/sys-power/auto-cpufreq) is maintained by [S41G0N](https://github.com/S41G0N) and other [GURU contributors](https://bugs.gentoo.org).
 
-In order to build auto-cpufreq, it is necessary to add & sync GURU repository first. Adding ~amd64 keyword is also needed to unmask the package.
+Enable and sync GURU, then install the package. Run these commands as root:
 
-``` 
-# echo "sys-power/auto-cpufreq ~amd64" >> /etc/portage/package.accept_keywords
-# eselect repository enable guru
-# emaint sync -r guru
-# emerge --ask auto-cpufreq
+```bash
+eselect repository enable guru
+emaint sync -r guru
+emerge --ask sys-power/auto-cpufreq
 ```
+
+If Portage requires the `~amd64` keyword, add `sys-power/auto-cpufreq ~amd64` to `/etc/portage/package.accept_keywords` (if it is a file), or to a file inside that directory, then rerun `emerge`. The path can be either a file or a directory.
 
 **Notices**
 
 - The build process links to `/usr/share/` instead of `/usr/local/share/`
 - The build works on both systemd/OpenRC systems (both systemd and OpenRC will have a service called auto-cpufreq which can be started automatically)
-- The daemon installer provided does work, but it is RECOMMENDED to install the daemon with:
-``` 
-# systemctl enable --now auto-cpufreq 
-# rc-update add auto-cpufreq default && rc-service auto-cpufreq start
+- The daemon can be enabled and started through your init system. On systemd (as root):
+
+```bash
+systemctl enable --now auto-cpufreq
+```
+
+  On OpenRC (as root):
+
+```bash
+rc-update add auto-cpufreq default
+rc-service auto-cpufreq start
 ```
 
 ### NixOS
@@ -293,7 +298,7 @@ Then you can enable the program in your `configuration.nix` file:
 <summary>Nixpkgs</summary>
 <br>
 
-A package is also available through nixpkgs. Its version follows the selected nixpkgs revision; a flake input is pinned by the consuming project's `flake.lock` and can be updated independently. To use the nixpkgs package, add it to your `configuration.nix` and enable its system service:
+You can also install auto-cpufreq from nixpkgs. Its version depends on your nixpkgs revision, while a flake input follows the revision pinned in `flake.lock`. Add the package to `configuration.nix` and enable its service:
 ```nix
 # configuration.nix
 
@@ -331,7 +336,7 @@ services.auto-cpufreq.enable = true;
   pip3 install -e .
   auto-cpufreq
   ```
-- If `poetry install` reports a lockfile mismatch, check that `pyproject.toml` and `poetry.lock` are from the same revision. Regenerate the lockfile only when intentionally changing dependencies; avoid using `poetry update` as a routine workaround.
+- If `poetry install` reports a lockfile mismatch, check that `pyproject.toml` and `poetry.lock` come from the same revision. Don't run `poetry update` just to fix that mismatch.
 
 ## Post-installation
 
@@ -343,11 +348,9 @@ auto-cpufreq makes all decisions automatically based on various factors such as 
 
 ### 1: power_helper.py script (Snap package install **only**)
 
-**This is a manual workaround for Snap installations, not a prerequisite for installing auto-cpufreq.** The regular [source installer](#auto-cpufreq-installer) handles conflicts with GNOME Power Profiles when setting up the daemon, so source-install users do not need to run this helper or install its Python dependencies separately.
+The [source installer](#auto-cpufreq-installer) handles GNOME Power Profiles conflicts when installing the daemon. **The following manual steps are only for Snap installations**, where confinement prevents auto-cpufreq from managing host services.
 
-Snap confinement limits changes to host services. If GNOME Power Profiles needs to be disabled for a Snap installation, the [`power_helper.py`](https://github.com/AdnanHodzic/auto-cpufreq/blob/master/auto_cpufreq/power_helper.py) script can be run manually **outside the Snap**.
-
-For this advanced procedure, use a source checkout and an isolated Poetry environment rather than installing Python packages globally. With Git and Poetry available, run:
+To disable GNOME Power Profiles, run [`power_helper.py`](https://github.com/AdnanHodzic/auto-cpufreq/blob/master/auto_cpufreq/power_helper.py) outside the Snap from an isolated Poetry environment. With Git and Poetry installed:
 
 ```bash
 git clone https://github.com/AdnanHodzic/auto-cpufreq.git
@@ -502,7 +505,7 @@ turbo = always
 # battery charging threshold
 # reference: https://github.com/AdnanHodzic/auto-cpufreq/#battery-charging-thresholds
 #enable_thresholds = true
-#start_threshold = end_threshold-1
+#start_threshold = 20
 #stop_threshold = 80
 ```
 
@@ -647,7 +650,7 @@ Please note that any set override will persist even after reboot.
 
 ### Install - auto-cpufreq daemon
 
-Necessary changes are made automatically over time and continue across reboots. The daemon is installed and started using the supported init system (such as systemd, OpenRC, dinit, runit, or s6). Live stats are generated for monitoring.
+The daemon applies CPU optimizations automatically in the background and starts at boot. It is managed by your init system (such as systemd, OpenRC, dinit, runit, or s6), and provides live stats for monitoring.
 
 **Install the daemon using CLI ([after installing auto-cpufreq](#installing-auto-cpufreq)):**
 
@@ -825,7 +828,7 @@ Additionally, **you should make sure that you have no other software running tha
 
 ### Battery config
 
-Edit the configuration file selected by auto-cpufreq (see [configuration precedence](#4-auto-cpufreq-config-file)); for a system-wide configuration, this is typically `/etc/auto-cpufreq.conf`.
+Edit the configuration file used by auto-cpufreq (see [configuration precedence](#4-auto-cpufreq-config-file)). For system-wide settings, this is usually `/etc/auto-cpufreq.conf`.
 
 Example config for battery ([already part of example config file](https://github.com/AdnanHodzic/auto-cpufreq/#example-config-file-contents))
 
@@ -837,7 +840,7 @@ stop_threshold = 80
 ```
 
 You will need to specify both `start_threshold` AND `stop_threshold` in most cases.
-To apply threshold changes immediately, restart the daemon through your init system (systemd example below). The battery worker also reapplies the configured thresholds periodically, currently once per hour.
+To apply threshold changes immediately, restart the daemon (systemd example below). It also reapplies the thresholds every hour while running.
 
 ```shell
 sudo systemctl restart auto-cpufreq.service
@@ -847,7 +850,7 @@ See more here on the kernel doc pages: [docs.kernel.org](https://docs.kernel.org
 
 ### A few notes about these battery config options
 
-Removing the auto-cpufreq daemon may leave the last battery charge thresholds in effect. Reset values and sysfs paths vary by hardware; consult your device's documentation before changing them. For devices where 0 and 100 are the supported reset values and these files are writable, an example is:
+Removing the daemon may leave the last battery charge thresholds in effect. Reset values and sysfs paths depend on the hardware, so check your device's documentation before changing them. If your device supports resetting these thresholds to 0 and 100, for example:
 
 ```shell
 printf '0\n' | sudo tee /sys/class/power_supply/BAT0/charge_start_threshold
@@ -901,9 +904,9 @@ peripheral = power_supply_name
 - suboptimal CPU performance
 - turbo mode not available
 
-**A:** If you're using the `intel_pstate` or `amd-pstate` CPU management driver, an alternative driver may be worth investigating for some hardware. Switching to `acpi-cpufreq` is an advanced, hardware-dependent troubleshooting step, not a general fix; check whether your kernel and hardware support it before changing boot parameters.
+**A:** Switching from `intel_pstate` or `amd-pstate` to `acpi-cpufreq` may help on some hardware, but it is not a general fix. Check kernel and hardware support before changing boot parameters.
 
-The following commands are bootloader- and distribution-specific examples. Back up the current boot configuration and consult your distribution's documentation before applying changes. For GRUB systems, the kernel command line can be edited in `/etc/default/grub`, for example:
+These commands depend on your distribution and bootloader. Back up the current boot configuration and check your distribution's instructions first. On GRUB systems, edit `/etc/default/grub`, for example:
 
 ```shell
     sudo nano /etc/default/grub
