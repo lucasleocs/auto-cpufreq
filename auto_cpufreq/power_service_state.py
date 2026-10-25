@@ -76,7 +76,8 @@ class PowerServiceState:
         for unit, saved in records.items():
             if (unit not in UNITS or not isinstance(saved, dict)
                     or saved.get("unit_file") not in SUPPORTED_STATES
-                    or type(saved.get("active")) is not bool):
+                    or type(saved.get("active")) is not bool
+                    or type(saved.get("restoring", False)) is not bool):
                 raise RuntimeError("Invalid power-service state entry")
         return records
 
@@ -108,6 +109,9 @@ class PowerServiceState:
             return True
         try:
             records = self._read()
+            if any(item.get("restoring") for item in records.values()):
+                print("A previous power-service restoration is incomplete; resolve it first.")
+                return False
             for unit in UNITS:
                 if unit in records:
                     continue  # Preserve the first installation's snapshot.
@@ -143,9 +147,15 @@ class PowerServiceState:
                 current = self._inspect(unit)
                 if current is None:
                     raise RuntimeError("service state is no longer readable")
-                if not force and (current["unit_file"] != "masked" or current["active"]):
+                if not force and not original.get("restoring") and (
+                    current["unit_file"] != "masked" or current["active"]
+                ):
                     # A different actor modified this unit after installation.
                     raise RuntimeError("service changed since installation; review manually")
+                # Persist the restoration phase so interrupted restores can resume
+                # even after the mask has already been removed.
+                original["restoring"] = True
+                self._save(records)
                 if current["unit_file"] == "masked":
                     self._command("unmask", unit)
                 if original["unit_file"] == "enabled":
