@@ -16,6 +16,26 @@ from test_generic_kernel_threshold import GenericBatteryFixture
 
 
 class TestDaemonReload(GenericBatteryFixture):
+    def test_tick_uses_one_config_snapshot_during_selection_and_write(self):
+        """An intervening publication must not mix percent and device policies."""
+        initial = self.set_config(enabled=True, stop="80")
+        before = configparser.ConfigParser()
+        before.read_dict({section: dict(initial[section])
+                          for section in initial.sections()})
+        after = configparser.ConfigParser()
+        after.read_dict({"battery": {
+            "enable_thresholds": "false",
+            "stop_threshold": "100",
+            "battery_device": "BAT0",
+        }})
+        ctl = battery.BatteryDaemonController()
+        with patch.object(
+            battery.config, "get_config", side_effect=[before, after]
+        ) as snapshot_read:
+            ctl.tick(now=0)
+        snapshot_read.assert_called_once()
+        self.assertEqual(self.read_stop(), 80)
+
     def test_change_numeric_stop_applies_next_tick_without_daemon_restart(self):
         cfg=self.set_config(enabled=True,stop="80")
         controller=battery.BatteryDaemonController()
@@ -153,10 +173,9 @@ class TestDaemonReload(GenericBatteryFixture):
             ctl.tick(now=1)
         select.assert_called_once()
 
-    def test_real_config_event_reload_updates_stop_and_optout(self):
-        """Exercise the production inotify handler and config parser, not mocks."""
+    def test_config_callback_reload_updates_stop_and_optout(self):
+        """Exercise PR #985's production parser publication callback."""
         from auto_cpufreq.config.config import _Config
-        from types import SimpleNamespace
 
         path = Path(self.dir.name) / "battery-policy.conf"
         path.write_text("""[battery]
@@ -176,8 +195,7 @@ stop_threshold = 80
 enable_thresholds = true
 stop_threshold = 75
 """)
-            local_config.config_handler.process_IN_MODIFY(
-                SimpleNamespace(pathname=str(path)))
+            local_config.update_config()
             controller.tick(now=1)
             self.assertEqual(self.read_stop(), 75)
 
@@ -185,8 +203,7 @@ stop_threshold = 75
 enable_thresholds = false
 stop_threshold = 100
 """)
-            local_config.config_handler.process_IN_MODIFY(
-                SimpleNamespace(pathname=str(path)))
+            local_config.update_config()
             controller.tick(now=2)
             self.assertEqual(self.read_stop(), 75)
 
