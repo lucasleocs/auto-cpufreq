@@ -32,6 +32,7 @@ def _kernel_threshold(battery_path: str, names: tuple[str, ...]) -> int | None:
 def resolve_charge_control(
     battery_path: str, requested_stop: int, requested_start: int | None = None,
     *, firmware_operation: bool = False,
+    observed_paths: tuple[str | None, str | None] | None = None,
 ) -> ChargeControlDecision:
     """Preflight an explicitly enabled charge request, without side effects.
 
@@ -84,12 +85,29 @@ def resolve_charge_control(
             "blocked", "Active firmware-managed protection has no numeric stop threshold"
         )
 
-    actual_stop = _kernel_threshold(
-        battery_path, ("charge_control_end_threshold", "charge_stop_threshold")
-    )
-    actual_start = _kernel_threshold(
-        battery_path, ("charge_control_start_threshold", "charge_start_threshold")
-    )
+    if observed_paths is None:
+        # Preserve standalone read-only calls without a selected writer.
+        actual_stop = _kernel_threshold(
+            battery_path, ("charge_control_end_threshold", "charge_stop_threshold")
+        )
+        actual_start = _kernel_threshold(
+            battery_path, ("charge_control_start_threshold", "charge_start_threshold")
+        )
+    else:
+        # A chosen backend must verify its *own* attributes. Combining a
+        # standard stop with a legacy start could falsely report satisfaction.
+        def observed(path):
+            if path is None:
+                return None
+            raw = SystemInfo.read_file(path)
+            if raw is not None and raw.strip().isdecimal():
+                value = int(raw.strip())
+                if 0 <= value <= 100:
+                    return value
+            return None
+
+        actual_start = observed(observed_paths[0])
+        actual_stop = observed(observed_paths[1])
 
     if (info.configured_end_threshold == requested_stop
             and actual_stop == requested_stop

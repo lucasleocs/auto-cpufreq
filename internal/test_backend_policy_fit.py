@@ -102,6 +102,43 @@ class BackendFitTests(unittest.TestCase):
         self.assertIn("BAT1", dev.stop_paths)
         self.assertNotIn("BAT1", dev.start_paths)
 
+    def test_active_upower_does_not_conflate_legacy_and_standard_readbacks(self):
+        # Writer selects the complete legacy pair. The standard end-only
+        # attribute happens to match UPower, but the legacy stop does not.
+        (self.bat / "charge_control_end_threshold").write_text("80")
+        with patch(
+            "auto_cpufreq.battery_scripts.priority.probe_charge_service",
+            return_value=ChargeServiceProbe("ready", ChargeCapabilities(
+                True, True, ("Start threshold", "End threshold"),
+                configured_start_threshold=70, configured_end_threshold=80,
+            )),
+        ):
+            dev = battery.get_battery_device()
+            self.assertIsInstance(dev, AsusBatteryDevice)
+            with patch.object(dev, "_write_value_to_file",
+                              side_effect=AssertionError("UPower owns policy")):
+                outcome = dev.apply_threshold_settings(self.config)
+        self.assertEqual(outcome.value, "blocked")
+        self.assertEqual((self.bat / "charge_stop_threshold").read_text(), "100")
+
+    def test_active_upower_satisfied_by_selected_legacy_pair(self):
+        # A matching legacy pair should count even if a leftover standard
+        # stop attribute disagrees: only the selected paths are authoritative.
+        (self.bat / "charge_stop_threshold").write_text("80")
+        with patch(
+            "auto_cpufreq.battery_scripts.priority.probe_charge_service",
+            return_value=ChargeServiceProbe("ready", ChargeCapabilities(
+                True, True, ("Start threshold", "End threshold"),
+                configured_start_threshold=70, configured_end_threshold=80,
+            )),
+        ):
+            dev = battery.get_battery_device()
+            self.assertIsInstance(dev, AsusBatteryDevice)
+            with patch.object(dev, "_write_value_to_file",
+                              side_effect=AssertionError("already satisfied")):
+                outcome = dev.apply_threshold_settings(self.config)
+        self.assertEqual(outcome.value, "satisfied")
+
     def test_battery_state_five_preserved_from_upower(self):
         value = _decode({
             "Type": 2, "PowerSupply": True, "IsPresent": True,
