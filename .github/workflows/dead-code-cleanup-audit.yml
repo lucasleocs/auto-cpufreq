@@ -26,6 +26,8 @@ jobs:
         run: python3 -m compileall -q auto_cpufreq
       - name: Validate single installer rollback across injected failure modes
         run: python3 -m unittest discover -s tests -p test_installer_rollback.py -v
+      - name: Check legacy and versioned source removal with sandboxed paths
+        run: python -m unittest discover -s tests -p test_source_removal.py -v
       - name: Check versioned source release lifecycle in a temporary root
         run: python -m unittest discover -s tests -p test_versioned_install_lifecycle.py -v
       - name: Verify removed helper contracts and retained dataclasses
