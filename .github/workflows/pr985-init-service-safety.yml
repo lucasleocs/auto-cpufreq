@@ -13,5 +13,7 @@ jobs:
         run: python3 -m unittest discover -s tests -p test_init_service_safety.py -v
       - name: Run runit ownership parity regression suite
         run: python3 -m unittest discover -s tests -p test_pr975_runit_audit.py -v
+      - name: Run systemd removal race regression suite
+        run: python3 -m unittest discover -s tests -p test_systemd_removal_race.py -v
       - name: Check shell syntax
         run: bash -n scripts/auto-cpufreq-install.sh scripts/auto-cpufreq-remove.sh
