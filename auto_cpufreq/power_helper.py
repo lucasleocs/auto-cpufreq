@@ -64,8 +64,9 @@ def gnome_power_detect():
         print("disabled when auto-cpufreq daemon is installed and")
         print("it will be re-enabled after auto-cpufreq is removed.")
         
-        print("\nManual service changes are only needed for Snap installations.")
-        print(f"See: {GITHUB}#1-power_helperpy-script-snap-package-install-only")
+        print("\nThe source daemon installer handles this conflict automatically.")
+        print("Other package formats may require manual service management.")
+        print(f"See: {GITHUB}#configuring-auto-cpufreq")
 
 # automatically disable gnome power profile service in case it's running during install
 def gnome_power_detect_install():
@@ -93,7 +94,7 @@ def gnome_power_detect_snap():
     print()
     print("Unable to detect state of GNOME Power Profiles daemon service!")
     print("This daemon might interfere with auto-cpufreq and should be disabled!")
-    print(f"\nFor the Snap-only helper instructions, see: {GITHUB}#1-power_helperpy-script-snap-package-install-only")
+    print(f"\nRun the host-side helper with --gnome_power_disable; see: {GITHUB}#1-power_helperpy-script-snap-package-install-only")
 
 # stops gnome >= 40 power profiles (live)
 def gnome_power_stop_live():
@@ -242,12 +243,12 @@ def bluetooth_enable():
 # turn off bluetooth on snap message
 def bluetooth_notif_snap():
     print("\n* Unable to turn off bluetooth on boot due to Snap package restrictions!")
-    print(f"\nFor the host-side --bluetooth_boot_off helper option, see: {GITHUB}#1-power_helperpy-script-snap-package-install-only")
+    print(f"\nRun the host-side helper with --bluetooth_boot_off; see: {GITHUB}#1-power_helperpy-script-snap-package-install-only")
 
 # turn off bluetooth on snap message
 def bluetooth_on_notif_snap():
     print("\n* Unable to turn on bluetooth on boot due to Snap package restrictions!")
-    print(f"\nFor the host-side --bluetooth_boot_on helper option, see: {GITHUB}#1-power_helperpy-script-snap-package-install-only")
+    print(f"\nRun the host-side helper with --bluetooth_boot_on; see: {GITHUB}#1-power_helperpy-script-snap-package-install-only")
 
 # gnome power removal reminder
 def gnome_power_rm_reminder():
@@ -261,7 +262,7 @@ def gnome_power_rm_reminder_snap():
     warning()
     print("Unable to detect state of GNOME Power Profiles daemon service!")
     print("Now it's recommended to enable this service.")
-    print(f"\nFor the host-side --gnome_power_enable helper option, see: {GITHUB}#1-power_helperpy-script-snap-package-install-only")
+    print(f"\nRun the host-side helper with --gnome_power_enable; see: {GITHUB}#1-power_helperpy-script-snap-package-install-only")
 
 def valid_options():
     print("--gnome_power_enable\t\tEnable GNOME Power Profiles daemon")
