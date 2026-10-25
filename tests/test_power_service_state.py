@@ -83,6 +83,24 @@ class PowerServiceStateTests(unittest.TestCase):
         self.assertEqual(self.sim.commands, [])
         self.assertEqual(self.sim.units["tuned.service"]["unit_file"], "disabled")
 
+    def test_dependent_services_snapshotted_before_first_stop(self):
+        self.sim.units["tuned.service"] = {"unit_file": "enabled", "active": True}
+        self.sim.units["tuned-ppd.service"] = {"unit_file": "enabled", "active": True}
+        original_runner = self.sim
+
+        def cascading_stop(command, **kwargs):
+            result = original_runner(command, **kwargs)
+            if command[1:3] == ["stop", "tuned.service"]:
+                self.sim.units["tuned-ppd.service"]["active"] = False
+            return result
+
+        self.manager.runner = cascading_stop
+        self.assertTrue(self.manager.disable())
+        snapshot = json.loads(self.file.read_text())["services"]
+        self.assertTrue(snapshot["tuned-ppd.service"]["active"])
+        self.assertTrue(self.manager.restore())
+        self.assertTrue(self.sim.units["tuned-ppd.service"]["active"])
+
     def test_preexisting_mask_is_not_managed(self):
         self.sim.units["tuned.service"]["unit_file"] = "masked"
         self.assertTrue(self.manager.disable())
