@@ -1,0 +1,46 @@
+name: Dead Code Cleanup Audit
+on:
+  push:
+    branches: [lab/pr985-dead-code-cleanup]
+  workflow_dispatch:
+jobs:
+  static-regression:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate Bash scripts
+        run: |
+          bash -n auto-cpufreq-installer
+          bash -n scripts/auto-cpufreq-install.sh
+          bash -n scripts/auto-cpufreq-remove.sh
+          bash -n scripts/start_app
+      - name: Validate Python modules without importing runtime dependencies
+        run: python3 -m compileall -q auto_cpufreq
+      - name: Verify active entrypoints and no legacy tray
+        shell: bash
+        run: |
+          set -euo pipefail
+          test ! -e auto_cpufreq/gui/tray.py
+          grep -Fq 'auto_cpufreq.bin.auto_cpufreq_gtk:main' pyproject.toml
+          grep -Fq 'auto_cpufreq.gui.app import ToolWindow' auto_cpufreq/bin/auto_cpufreq_gtk.py
+          if grep -R -E 'auto_cpufreq\.gui\.tray|AppIndicator3' auto_cpufreq scripts snap nix pyproject.toml; then
+            echo "Disused tray reference still exists" >&2
+            exit 1
+          fi
+          if grep -Fq 'SHARE_DIR="$CURRENT_PATH/share"' auto-cpufreq-installer; then
+            echo "Unused source installer variable still exists" >&2
+            exit 1
+          fi
+          grep -Fq '. /etc/os-release' scripts/auto-cpufreq-install.sh
+          grep -Fq 'CURRENT_PATH="$INSTALL_ROOT/current"' auto-cpufreq-installer
+          grep -Fq 'activate_release "$PREPARED_RELEASE"' auto-cpufreq-installer
+      - name: Verify service and packaging integrations were retained
+        shell: bash
+        run: |
+          set -euo pipefail
+          for file in scripts/auto-cpufreq-openrc scripts/auto-cpufreq-dinit scripts/auto-cpufreq-runit scripts/auto-cpufreq.service scripts/auto-cpufreq-s6/run scripts/auto-cpufreq-s6/type scripts/auto-cpufreq-venv-wrapper; do
+            test -f "$file"
+          done
+          test -x auto-cpufreq-installer
+          test -x scripts/auto-cpufreq-install.sh
+          test -x scripts/auto-cpufreq-remove.sh
