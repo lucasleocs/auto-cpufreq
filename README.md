@@ -833,7 +833,7 @@ attribute may also use the generic kernel backend, including laptops with no
 manufacturer-specific threshold implementation. Support depends on the
 attributes actually exported by the kernel, not on the laptop brand alone.
 
-**Please note, your laptop must have an installed ACPI kernel driver specific to the manufacturer.** To check if you have the correct module installed and loaded run `lsmod [module]`
+**Manufacturer-specific backends require the appropriate kernel driver.** Check whether the relevant module is loaded with `lsmod`. The generic backend instead requires the standard writable charging-threshold sysfs attribute on a physical system battery.
 
 Additionally, **you should make sure that you have no other software running that may conflict with auto-cpufreq's battery threshold management** (e.g., GNOME's *Preserve Battery Health* option). Using both at the same time will lead to conflicts and to your battery potentially never charging.
 
