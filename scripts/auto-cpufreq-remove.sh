@@ -237,6 +237,12 @@ case "$(ps h -o comm 1)" in
       # stop already clears its failed state, so no reset-failed is needed.
       echo -e "\n* Disabling auto-cpufreq daemon (systemd) at boot"
       systemctl disable auto-cpufreq || exit $?
+      # The service unit can be replaced while stop/disable is running.
+      # Do not unlink a new administrator-owned unit after the preflight.
+      if ! service_file_is_managed "$systemd_unit" "$managed_systemd_unit"; then
+        echo "Error: Refusing to remove a replaced or unmanaged systemd unit: $systemd_unit"
+        exit 1
+      fi
       echo -e "\n* Removing auto-cpufreq daemon (systemd) unit file"
       rm -f -- "$systemd_unit" || exit $?
     else
