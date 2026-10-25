@@ -1,7 +1,7 @@
 name: PR 985 Final Recovery Audit
 on:
   push:
-    branches: [lab/pr985-final-recovery]
+    branches: [lab/pr985-final-recovery, lab/pr985-lifecycle-final-validation]
   workflow_dispatch:
 jobs:
   recovery-regression:
@@ -19,6 +19,8 @@ jobs:
         run: python3 -m unittest discover -s tests -p test_dinit_retries.py -v
       - name: Test read-only shell preflight and missing template handling
         run: python3 -m unittest discover -s tests -p test_install_preflight.py -v
+      - name: Test runit replacement and s6 foreign bundle protection
+        run: python3 -m unittest discover -s tests -p test_service_poststop_and_s6_bundle.py -v
       - name: Shell syntax
         run: bash -n scripts/auto-cpufreq-install.sh scripts/auto-cpufreq-remove.sh
 
