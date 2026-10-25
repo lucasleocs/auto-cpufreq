@@ -37,7 +37,7 @@ def run_case(kind):
         (service / "run").write_text(data)
         if kind == "empty_supervise":
             (service / "supervise").mkdir()
-        if kind == "stale_fifos":
+        if kind in ("stale_fifos", "shutdown_failure"):
             (service / "supervise").mkdir()
             os.mkfifo(service / "supervise/ok")
             os.mkfifo(service / "supervise/control")
@@ -45,13 +45,16 @@ def run_case(kind):
             (service / "supervise").mkdir()
             (service / "supervise/ok").write_text("foreign state\n")
         env = {**os.environ, "ROOT": str(root), "SHARE_DIR": str(root / "share")}
+        run_code = code
+        if kind == "shutdown_failure":
+            run_code = 'sv() { return 71; }\n' + code
         result = subprocess.run(
-            ["bash", "-c", code], capture_output=True, text=True, env=env,
+            ["bash", "-c", run_code], capture_output=True, text=True, env=env,
             timeout=20)
         print(f"RUNIT_BASELINE kind={kind} status={result.returncode} "
               f"remaining={service.exists()} stderr={result.stderr.strip()} "
               f"stdout={result.stdout.strip()}", flush=True)
-        expected_success = kind != "unexpected_ok"
+        expected_success = kind not in ("unexpected_ok", "shutdown_failure")
         assert (result.returncode == 0) == expected_success, (
             f"Incorrect remove status for {kind}: {result.stdout} {result.stderr}")
         assert service.exists() != expected_success, (
@@ -64,12 +67,16 @@ def run_case(kind):
                 f"Removal retry not idempotent for {kind}: {second.stdout} {second.stderr}")
         else:
             assert (service / "run").exists()
-            assert (service / "supervise/ok").read_text() == "foreign state\n"
+            if kind == "unexpected_ok":
+                assert (service / "supervise/ok").read_text() == "foreign state\n"
+            else:
+                assert (service / "supervise/ok").exists()
+                assert "Removing" not in result.stdout
         return result.returncode
 
 
 if __name__ == "__main__":
     if not shutil.which("sv"):
         raise RuntimeError("Real runit sv executable not on PATH")
-    for kind in ("no_supervise", "empty_supervise", "stale_fifos", "unexpected_ok"):
+    for kind in ("no_supervise", "empty_supervise", "stale_fifos", "unexpected_ok", "shutdown_failure"):
         run_case(kind)
