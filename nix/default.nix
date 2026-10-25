@@ -9,6 +9,7 @@
   setuptools,
   poetry-dynamic-versioning,
   inotify-simple,
+  dbus-next,
   urwid,
   requests,
   pkgs,
@@ -57,6 +58,7 @@ buildPythonPackage rec {
     setuptools
     poetry-dynamic-versioning
     inotify-simple
+    dbus-next
     urwid
     pkgs.getent
     pkgs.kmod
