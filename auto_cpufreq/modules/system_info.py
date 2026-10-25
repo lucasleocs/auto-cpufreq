@@ -609,11 +609,12 @@ class SystemInfo:
             return None
 
     @staticmethod
-    def get_battery_path() -> Optional[str]:
+    def get_battery_path(snapshot=None) -> Optional[str]:
 
-        # Check if user has specified a custom battery device in config
-        if config.has_config():
-            conf = config.get_config()
+        # Callers applying battery policy may pass the same immutable
+        # ConfigParser snapshot used for backend selection and validation.
+        if snapshot is not None or config.has_config():
+            conf = config.get_config() if snapshot is None else snapshot
             if conf.has_option("battery", "battery_device"):
                 battery_device = conf.get("battery", "battery_device").strip()
                 if battery_device:
