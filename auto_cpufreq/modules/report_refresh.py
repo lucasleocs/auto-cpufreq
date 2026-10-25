@@ -4,6 +4,8 @@ An adapter decides *when* to request refresh and *how* to deliver results
 onto GTK/GLib or Urwid's event loop. This module never touches widgets,
 system policy, or privileged APIs.
 """
+from __future__ import annotations
+
 from collections import deque
 from dataclasses import dataclass
 import logging
