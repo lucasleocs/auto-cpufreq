@@ -1,7 +1,7 @@
 name: PR 985 Final Recovery Audit
 on:
   push:
-    branches: [lab/pr985-final-recovery, lab/pr985-lifecycle-final-validation]
+    branches: [lab/pr985-final-recovery, lab/pr985-lifecycle-final-validation, lab/pr985-init-recovery-final-audit]
   workflow_dispatch:
 jobs:
   recovery-regression:
@@ -23,6 +23,10 @@ jobs:
         run: python3 -m unittest discover -s tests -p test_service_poststop_and_s6_bundle.py -v
       - name: Executable script permissions
         run: test -x scripts/auto-cpufreq-install.sh && test -x scripts/auto-cpufreq-remove.sh
+      - name: Run isolated s6 execution and prerequisite regressions
+        run: |
+          python3 -m unittest discover -s tests -p test_install_preflight.py -v
+          python3 -m unittest discover -s tests -p test_service_poststop_and_s6_bundle.py -v
       - name: Shell syntax
         run: bash -n scripts/auto-cpufreq-install.sh scripts/auto-cpufreq-remove.sh
 
@@ -48,3 +52,23 @@ jobs:
             echo "DINIT_OFFLINE_RESULT operation=$op status=$status"
           done
           set -e
+
+  runit-offline-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download runit binaries into an isolated directory
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP"
+          apt download runit
+          mkdir -p "$RUNNER_TEMP/runit-bin"
+          dpkg-deb -x runit_*.deb "$RUNNER_TEMP/runit-bin"
+          find "$RUNNER_TEMP/runit-bin" -type f \( -name runsv -o -name runsvdir -o -name sv \) -print
+      - name: Exercise a real runsvdir service in a disposable process group
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="$RUNNER_TEMP/runit-bin/usr/bin:$RUNNER_TEMP/runit-bin/usr/sbin:$RUNNER_TEMP/runit-bin/bin:$PATH"
+          python3 tests/test_runit_live_isolated.py
