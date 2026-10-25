@@ -4,5 +4,5 @@ from auto_cpufreq.battery_scripts.shared import BatteryDevice
 
 
 class AsusBatteryDevice(BatteryDevice):
-    def __init__(self):
-        super().__init__()
+    def __init__(self, snapshot=None):
+        super().__init__(snapshot)

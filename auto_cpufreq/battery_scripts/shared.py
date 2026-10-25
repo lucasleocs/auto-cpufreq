@@ -21,7 +21,8 @@ CHARGE_STOP_THRESHOLD_FILES = [
 
 
 class BatteryDevice:
-    def __init__(self):
+    def __init__(self, snapshot=None):
+        self._config_snapshot = snapshot
         self._drift_guard = ChargeDriftGuard()
         self._reported_conflicts = set()
         self.batteries = self._get_batteries()
@@ -46,7 +47,36 @@ class BatteryDevice:
         if not os.path.isdir(POWER_SUPPLY_DIR):
             print(f"WARNING: {POWER_SUPPLY_DIR} does NOT exist")
             return []
-        return [name for name in os.listdir(POWER_SUPPLY_DIR) if name.startswith("BAT")]
+        snapshot = self._config_snapshot
+        if snapshot is not None:
+            # The legacy vendor writer may address several BAT* supplies.
+            # An explicitly selected battery must instead be the only target.
+            if snapshot.has_option("battery", "battery_device"):
+                from auto_cpufreq.modules.system_info import SystemInfo
+                selected = SystemInfo.get_battery_path(
+                    snapshot, strict_configured=True
+                )
+                if selected is None:
+                    return []
+                name = os.path.basename(selected)
+                return [name] if name.startswith("BAT") else []
+
+            from auto_cpufreq.core import get_power_supply_ignore_list
+            ignore = get_power_supply_ignore_list(snapshot)
+            return [
+                name for name in sorted(os.listdir(POWER_SUPPLY_DIR))
+                if name.startswith("BAT")
+                and not any(item in name for item in ignore)
+                and (self._read_value_from_file(
+                    os.path.join(POWER_SUPPLY_DIR, name, "type")
+                ).lower() == "battery")
+                and self._read_value_from_file(
+                    os.path.join(POWER_SUPPLY_DIR, name, "scope")
+                ).lower() != "device"
+            ]
+        # Preserve direct legacy BatteryDevice() use without a controller.
+        return [name for name in os.listdir(POWER_SUPPLY_DIR)
+                if name.startswith("BAT")]
 
     def _choose_threshold_file(self, bat: str, files: list[str]) -> str | None:
         """
@@ -326,20 +356,26 @@ class BatteryDevice:
         )
 
     def apply_threshold_settings(self, snapshot=None):
+        """Return whether a complete policy check succeeded.
+
+        False schedules a bounded retry by the daemon; it does not authorize
+        bypassing existing ownership, drift or transaction checks.
+        """
         parsed_config = self.get_parsed_config(snapshot)
         if not parsed_config["thresholds_enabled"]:
-            return
+            return False
         if not self.batteries:
             print("WARNING: no batteries found to set thresholds for")
-            return
+            return False
 
         competitor = competing_charge_manager()
         if competitor.blocked:
             if competitor.reason not in self._reported_conflicts:
                 print(f"WARNING: charge control paused: {competitor.reason}")
                 self._reported_conflicts.add(competitor.reason)
-            return
+            return False
 
+        complete = True
         for bat in self.batteries:
             signature = (
                 parsed_config["start_threshold"],
@@ -353,6 +389,7 @@ class BatteryDevice:
                 if key not in self._reported_conflicts:
                     print(f"WARNING: skipping {bat}: {drift.reason}")
                     self._reported_conflicts.add(key)
+                complete = False
                 continue
 
             # All generic and manufacturer writers pass through this single
@@ -369,9 +406,11 @@ class BatteryDevice:
                 continue
             if request.action != "apply":
                 print(f"WARNING: skipping {bat}: {request.reason}")
+                complete = False
                 continue
             if not self.apply_threshold_settings_to_bat(bat, parsed_config):
                 print(f"ERROR: failed to set thresholds for battery {bat}")
+                complete = False
                 after_failure = self.get_current_threshold(bat)
                 if after_failure != current:
                     self._drift_guard.suspend(
@@ -386,3 +425,4 @@ class BatteryDevice:
             if (updated != current and updated[1] is not None
                     and parsed_config.get("ideapad_conservation_mode") is None):
                 self._drift_guard.record(bat, signature, updated)
+        return complete

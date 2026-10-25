@@ -21,7 +21,9 @@ class GenericKernelBatteryDevice(BatteryDevice):
         super().__init__()
 
     def _get_batteries(self) -> list[str]:
-        selected = SystemInfo.get_battery_path(self._config_snapshot)
+        selected = SystemInfo.get_battery_path(
+            self._config_snapshot, strict_configured=True
+        )
         if not selected:
             return []
         selected = os.path.normpath(selected)

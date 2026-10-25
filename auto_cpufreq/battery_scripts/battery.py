@@ -15,6 +15,7 @@ from auto_cpufreq.config.config import config
 
 BATTERY_APPLY_INTERVAL = 3600  # 1 hour
 BATTERY_CONFIG_POLL_INTERVAL = 15  # detect reloaded configuration without busy polling
+BATTERY_RETRY_INTERVAL = 300  # bounded retry of unavailable battery/UPower
 
 
 def lsmod(module: str) -> bool:
@@ -45,7 +46,11 @@ def _battery_policy_signature(snapshot=None):
     reuses exactly one snapshot for signature, selection and application.
     """
     conf = config.get_config() if snapshot is None else snapshot
-    return tuple(sorted(conf.items("battery"))) if conf.has_section("battery") else ()
+    return (
+        tuple(sorted(conf.items("battery"))) if conf.has_section("battery") else (),
+        tuple(sorted(conf.items("power_supply_ignore_list")))
+        if conf.has_section("power_supply_ignore_list") else (),
+    )
 
 
 def _device_identity(dev):
@@ -73,6 +78,7 @@ class BatteryDaemonController:
         self._identity = None
         self._policy_signature = None
         self._last_run = None
+        self._retry_at = None
         self._drift_guard = ChargeDriftGuard()
         self._reported_conflicts = set()
         self._warned_missing = False
@@ -86,35 +92,42 @@ class BatteryDaemonController:
         policy_changed = policy != self._policy_signature
         due = (self._last_run is None
                or now - self._last_run >= BATTERY_APPLY_INTERVAL)
-        if not (policy_changed or due):
+        retry_due = self._retry_at is not None and now >= self._retry_at
+        if not (policy_changed or due or retry_due):
             return
 
         self._policy_signature = policy
         self._last_run = now
+        self._retry_at = None
         # No write and no UPower/TLP probe when the feature is disabled.
         if (not snapshot.has_section("battery")
                 or snapshot.get("battery", "enable_thresholds", fallback="false") != "true"):
             return
 
-        candidate = get_battery_device(snapshot)
-        if candidate is None:
-            if not self._warned_missing:
-                print("WARNING: No compatible charge-threshold device available")
-                self._warned_missing = True
-            self.device = None
-            self._identity = None
-            return
+        try:
+            candidate = get_battery_device(snapshot)
+            if candidate is None:
+                if not self._warned_missing:
+                    print("WARNING: No compatible charge-threshold device available")
+                    self._warned_missing = True
+                self.device = None
+                self._identity = None
+                self._retry_at = now + BATTERY_RETRY_INTERVAL
+                return
 
-        self._warned_missing = False
-        identity = _device_identity(candidate)
-        if self.device is None or self._identity != identity:
-            candidate._drift_guard = self._drift_guard
-            candidate._reported_conflicts = self._reported_conflicts
-            self.device = candidate
-            self._identity = identity
-        # Reuse the prior instance when selection has not changed. This keeps
-        # per-driver confirmed readbacks and its rounding cache.
-        self.device.apply_threshold_settings(snapshot)
+            self._warned_missing = False
+            identity = _device_identity(candidate)
+            if self.device is None or self._identity != identity:
+                candidate._drift_guard = self._drift_guard
+                candidate._reported_conflicts = self._reported_conflicts
+                self.device = candidate
+                self._identity = identity
+            # Reuse the prior instance when selection has not changed.
+            if self.device.apply_threshold_settings(snapshot) is False:
+                self._retry_at = now + BATTERY_RETRY_INTERVAL
+        except Exception:
+            self._retry_at = now + BATTERY_RETRY_INTERVAL
+            raise
 
 
 def start_battery_daemon():
@@ -146,11 +159,19 @@ def get_battery_device(snapshot=None):
         settings.has_section("battery")
         and settings.has_option("battery", "ideapad_laptop_conservation_mode")
     )
+    explicitly_selected = settings.has_option("battery", "battery_device")
+    # A configured target must never silently fall back to another battery,
+    # including manufacturer backends or firmware conservation controls.
+    battery_path = SystemInfo.get_battery_path(
+        settings, strict_configured=True
+    )
+    if explicitly_selected and battery_path is None:
+        return None
+
     if explicitly_conservation and lsmod("ideapad_laptop"):
-        return IdeapadBatteryDevice()
+        return IdeapadBatteryDevice(settings)
 
     if not explicitly_conservation:
-        battery_path = SystemInfo.get_battery_path(settings)
         if (battery_path
                 and os.path.isfile(os.path.join(
                     battery_path, "charge_control_end_threshold"))):
@@ -159,11 +180,11 @@ def get_battery_device(snapshot=None):
                 return dev
 
     if lsmod("ideapad_acpi"):
-        return BatteryDevice()
+        return BatteryDevice(settings)
     if lsmod("ideapad_laptop"):
-        return IdeapadBatteryDevice()
+        return IdeapadBatteryDevice(settings)
     if lsmod("thinkpad_acpi"):
-        return BatteryDevice()
+        return BatteryDevice(settings)
     if lsmod("asus_wmi"):
-        return AsusBatteryDevice()
+        return AsusBatteryDevice(settings)
     return None

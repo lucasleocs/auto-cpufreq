@@ -609,7 +609,8 @@ class SystemInfo:
             return None
 
     @staticmethod
-    def get_battery_path(snapshot=None) -> Optional[str]:
+    def get_battery_path(snapshot=None, *, strict_configured=False) -> Optional[str]:
+        """Resolve system battery; explicit policy targets may fail closed."""
 
         # Callers applying battery policy may pass the same immutable
         # ConfigParser snapshot used for backend selection and validation.
@@ -617,16 +618,27 @@ class SystemInfo:
             conf = config.get_config() if snapshot is None else snapshot
             if conf.has_option("battery", "battery_device"):
                 battery_device = conf.get("battery", "battery_device").strip()
-                if battery_device:
+                # An explicit write target must be an individual supply name,
+                # never a traversal, absolute path or peripheral battery.
+                if (battery_device not in ("", ".", "..")
+                        and os.path.basename(battery_device) == battery_device
+                        and "/" not in battery_device
+                        and "\\" not in battery_device):
                     custom_path = os.path.join(POWER_SUPPLY_DIR, battery_device)
                     type_path = os.path.join(custom_path, "type")
-                    # Validate that the specified device exists and is a battery
                     if os.path.isfile(type_path):
                         content = SystemInfo.read_file(type_path)
-                        if content and content.lower() == "battery":
+                        scope = SystemInfo.read_file(
+                            os.path.join(custom_path, "scope")
+                        )
+                        if (content and content.lower() == "battery"
+                                and (not scope or scope.lower() != "device")):
                             return custom_path
+                if strict_configured:
+                    # No silent BAT1 -> BAT0 fallback during policy writes.
+                    return None
 
-        # Fall back to auto-detection if no custom device specified or if it's invalid
+        # Read-only callers may retain historical auto-detection fallback.
         try:
             ignore_list = get_power_supply_ignore_list(snapshot)
             batteries = []

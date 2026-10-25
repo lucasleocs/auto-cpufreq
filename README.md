@@ -884,10 +884,22 @@ Threshold management is opt-in: without `enable_thresholds = true`, it
 performs no writes. Disabling it does not reset existing kernel or firmware
 thresholds to 100%.
 
+An explicitly configured `battery_device` is a strict target for writes:
+if it is absent or invalid, the daemon will not apply the limits to a different
+battery. Configuration changes affecting the selected battery or ignored
+power-supply devices trigger reevaluation. A temporary failure to discover or
+apply a policy is retried periodically without bypassing the existing
+charging-conflict protections.
+
 UPower's `EnableChargeThreshold()` method toggles configured charge
 protection; it cannot set an arbitrary percentage. auto-cpufreq therefore
 uses the available kernel or vendor interfaces for numeric settings and
 avoids competing with active protection or TLP.
+
+The strictly confined Snap requests `upower-observe` for read-only UPower
+status and capability checks. This interface does **not** grant write access
+to arbitrary sysfs charging-threshold attributes; numeric charge-limit
+control in Snap remains subject to the host's confinement policy.
 
 If the daemon is not running, you can start the installed service with:
 
