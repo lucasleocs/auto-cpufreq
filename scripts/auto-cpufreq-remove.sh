@@ -35,6 +35,27 @@ function auto_cpufreq_remove {
     rm -f -- "$4" || return $?
 }
 
+# A repeated disable reports a missing dependency link. Suppress only
+# this already-completed step when the containing directory still exists.
+function dinit_disable {
+    local output status entry
+    output="$(dinitctl disable auto-cpufreq 2>&1)"
+    status=$?
+    [ -z "$output" ] || printf '%s\n' "$output"
+    [ "$status" -eq 0 ] && return 0
+    case "$output" in
+      "dinitctl: could not unlink dependency entry "*": No such file or directory")
+        entry="$(printf '%s\n' "$output" | sed -n 's/^dinitctl: could not unlink dependency entry \(.*\): No such file or directory$/\1/p')"
+        if [ "$(basename "$entry")" = "auto-cpufreq" ] &&
+           [ -d "$(dirname "$entry")" ] &&
+           [ ! -e "$entry" ] && [ ! -L "$entry" ]; then
+          return 0
+        fi
+        ;;
+    esac
+    return "$status"
+}
+
 function service_file_is_managed {
     local target="$1" template="$2"
     # Missing paths are legitimate partial-install/removal retry states.
@@ -152,7 +173,7 @@ case "$(ps h -o comm 1)" in
         echo "Error: Refusing to remove an unmanaged dinit unit: $service_file"
         exit 1
       fi
-      auto_cpufreq_remove "dinit" "dinitctl stop --ignore-unstarted auto-cpufreq" "dinitctl disable auto-cpufreq" "$service_file" "$managed_file" || exit $?
+      auto_cpufreq_remove "dinit" "dinitctl stop --ignore-unstarted auto-cpufreq" "dinit_disable" "$service_file" "$managed_file" || exit $?
     else
       echo -e "\n* auto-cpufreq dinit service is already removed"
     fi

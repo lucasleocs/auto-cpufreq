@@ -43,6 +43,18 @@ function publish_service_file {
     )
 }
 
+# A repeated enable returns an error from dinitctl. Only accept the
+# specific already-enabled result; never suppress other failures.
+function dinit_enable {
+    local output status
+    output="$(dinitctl enable auto-cpufreq 2>&1)"
+    status=$?
+    [ -z "$output" ] || printf '%s\n' "$output"
+    [ "$status" -eq 0 ] && return 0
+    [ "$output" = "dinitctl: service already enabled." ] && return 0
+    return "$status"
+}
+
 function service_file_is_managed {
     local target="$1" template="$2"
     # Missing paths are legitimate partial-install/removal retry states.
@@ -210,7 +222,7 @@ case "$(ps h -o comm 1)" in
       publish_service_file "$managed_file" "$service_file" 644 "$(dirname "$service_file")" || exit $?
     fi
 
-    auto_cpufreq_install "dinit" "dinitctl start auto-cpufreq" "dinitctl enable auto-cpufreq" || exit $?
+    auto_cpufreq_install "dinit" "dinitctl start auto-cpufreq" "dinit_enable" || exit $?
   ;;
   init)
     service_file=/etc/init.d/auto-cpufreq
