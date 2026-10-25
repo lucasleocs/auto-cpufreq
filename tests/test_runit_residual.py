@@ -1,7 +1,7 @@
 """Observe stale runit supervision states with the exact production rm_sv shell.
 
-This diagnostic intentionally reports return codes without asserting success,
-so the baseline v2 behavior can be seen before proposing a fix.
+After a baseline revealed a failed empty-supervise retry, exercise the exact
+production helper and assert both cleanup and a second idempotent attempt.
 """
 import os
 from pathlib import Path
@@ -41,18 +41,35 @@ def run_case(kind):
             (service / "supervise").mkdir()
             os.mkfifo(service / "supervise/ok")
             os.mkfifo(service / "supervise/control")
+        if kind == "unexpected_ok":
+            (service / "supervise").mkdir()
+            (service / "supervise/ok").write_text("foreign state\n")
+        env = {**os.environ, "ROOT": str(root), "SHARE_DIR": str(root / "share")}
         result = subprocess.run(
-            ["bash", "-c", code], capture_output=True, text=True,
-            env={**os.environ, "ROOT": str(root), "SHARE_DIR": str(root / "share")},
+            ["bash", "-c", code], capture_output=True, text=True, env=env,
             timeout=20)
         print(f"RUNIT_BASELINE kind={kind} status={result.returncode} "
               f"remaining={service.exists()} stderr={result.stderr.strip()} "
               f"stdout={result.stdout.strip()}", flush=True)
+        expected_success = kind != "unexpected_ok"
+        assert (result.returncode == 0) == expected_success, (
+            f"Incorrect remove status for {kind}: {result.stdout} {result.stderr}")
+        assert service.exists() != expected_success, (
+            f"Incorrect remaining definition for {kind}")
+        if expected_success:
+            second = subprocess.run(
+                ["bash", "-c", code], capture_output=True, text=True, env=env,
+                timeout=20)
+            assert second.returncode == 0, (
+                f"Removal retry not idempotent for {kind}: {second.stdout} {second.stderr}")
+        else:
+            assert (service / "run").exists()
+            assert (service / "supervise/ok").read_text() == "foreign state\n"
         return result.returncode
 
 
 if __name__ == "__main__":
     if not shutil.which("sv"):
         raise RuntimeError("Real runit sv executable not on PATH")
-    for kind in ("no_supervise", "empty_supervise", "stale_fifos"):
+    for kind in ("no_supervise", "empty_supervise", "stale_fifos", "unexpected_ok"):
         run_case(kind)
