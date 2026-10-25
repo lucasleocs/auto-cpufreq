@@ -5,6 +5,8 @@ remains read-only; this module never installs a service or invokes UPower
 charge-control methods.
 """
 
+from __future__ import annotations
+
 import os
 
 from auto_cpufreq.battery_scripts.shared import BatteryDevice

@@ -4,6 +4,8 @@ This module never samples hardware and never applies a CPU/power policy.
 GTK, Urwid and text frontends own layout and labels, but availability and
 the meaning of observed values must come from the shared presentation rules.
 """
+
+from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any
