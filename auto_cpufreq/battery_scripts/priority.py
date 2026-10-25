@@ -19,13 +19,22 @@ class ChargeControlDecision:
     retryable: bool = False
 
 
+def _read_threshold(path: str | None) -> int | None:
+    if path is None:
+        return None
+    raw = SystemInfo.read_file(path)
+    if raw is not None and raw.strip().isdecimal():
+        value = int(raw.strip())
+        if 0 <= value <= 100:
+            return value
+    return None
+
+
 def _kernel_threshold(battery_path: str, names: tuple[str, ...]) -> int | None:
     for name in names:
-        raw = SystemInfo.read_file(os.path.join(battery_path, name))
-        if raw is not None and raw.strip().isdecimal():
-            value = int(raw.strip())
-            if 0 <= value <= 100:
-                return value
+        value = _read_threshold(os.path.join(battery_path, name))
+        if value is not None:
+            return value
     return None
 
 
@@ -96,18 +105,8 @@ def resolve_charge_control(
     else:
         # A chosen backend must verify its *own* attributes. Combining a
         # standard stop with a legacy start could falsely report satisfaction.
-        def observed(path):
-            if path is None:
-                return None
-            raw = SystemInfo.read_file(path)
-            if raw is not None and raw.strip().isdecimal():
-                value = int(raw.strip())
-                if 0 <= value <= 100:
-                    return value
-            return None
-
-        actual_start = observed(observed_paths[0])
-        actual_stop = observed(observed_paths[1])
+        actual_start = _read_threshold(observed_paths[0])
+        actual_stop = _read_threshold(observed_paths[1])
 
     if (info.configured_end_threshold == requested_stop
             and actual_stop == requested_stop
