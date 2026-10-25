@@ -35,6 +35,8 @@ class ServiceOwnershipTests(unittest.TestCase):
             "type = scripted\ncommand = /usr/local/bin/auto-cpufreq --daemon\n"
         )
         self.events = self.root / "commands.log"
+        self.replace_on_stop = None
+        self.fail_copy = False
         self.openrc = self.root / "etc" / "init.d" / "auto-cpufreq"
         self.dinit = self.root / "etc" / "dinit.d" / "auto-cpufreq"
         for path in (self.openrc, self.dinit):
@@ -66,8 +68,23 @@ class ServiceOwnershipTests(unittest.TestCase):
         # executes. Other init systems are left unchanged.
         prelude = r'''
 ps() { printf '%s\n' "$FAKE_INIT"; }
-dinitctl() { printf 'dinitctl:%s\n' "$*" >> "$COMMAND_LOG"; return 0; }
-rc-service() { printf 'rc-service:%s\n' "$*" >> "$COMMAND_LOG"; return 0; }
+replace_on_stop() {
+  [ -z "${REPLACE_ON_STOP:-}" ] || printf 'foreign replacement\n' > "$REPLACE_ON_STOP"
+}
+dinitctl() {
+  printf 'dinitctl:%s\n' "$*" >> "$COMMAND_LOG"
+  [ "$1" != stop ] || replace_on_stop
+  return 0
+}
+rc-service() {
+  printf 'rc-service:%s\n' "$*" >> "$COMMAND_LOG"
+  [ "${*: -1}" != stop ] || replace_on_stop
+  return 0
+}
+cp() {
+  [ "${FAIL_COPY:-0}" != 1 ] || return 9
+  command cp "$@"
+}
 rc-update() {
   printf 'rc-update:%s\n' "$*" >> "$COMMAND_LOG"
   [ "$1" = show ] && printf 'auto-cpufreq | default\n'
@@ -84,7 +101,9 @@ rc-update() {
         return subprocess.run(
             ["bash", "-c", shell],
             env={**os.environ, "FAKE_INIT": "init" if init_name == "openrc" else "dinit",
-                 "COMMAND_LOG": str(self.events), "SHARE_DIR": str(self.share)},
+                 "COMMAND_LOG": str(self.events), "SHARE_DIR": str(self.share),
+                 "REPLACE_ON_STOP": str(self.replace_on_stop) if self.replace_on_stop else "",
+                 "FAIL_COPY": "1" if self.fail_copy else "0"},
             capture_output=True, text=True,
         )
 
@@ -165,6 +184,38 @@ rc-update() {
                 self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
                 self.assertFalse(target.exists())
                 self.assertTrue(self.events.exists())
+
+
+    def test_remove_does_not_delete_service_replaced_during_stop(self):
+        for init_name in ("openrc", "dinit"):
+            with self.subTest(init_name=init_name):
+                self.events.unlink(missing_ok=True)
+                target = self.target(init_name)
+                target.write_bytes(self.managed_file(init_name).read_bytes())
+                self.replace_on_stop = target
+                try:
+                    result = self.run_script("remove", init_name)
+                finally:
+                    self.replace_on_stop = None
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(target.read_text(), "foreign replacement\n")
+                self.assertIn("stop", self.events.read_text())
+
+    def test_failed_publish_leaves_no_partial_service(self):
+        for init_name in ("openrc", "dinit"):
+            with self.subTest(init_name=init_name):
+                self.events.unlink(missing_ok=True)
+                target = self.target(init_name)
+                target.unlink(missing_ok=True)
+                self.fail_copy = True
+                try:
+                    result = self.run_script("install", init_name)
+                finally:
+                    self.fail_copy = False
+                self.assertNotEqual(result.returncode, 0)
+                self.assertFalse(target.exists())
+                self.assertFalse(list(target.parent.glob(".auto-cpufreq.*")))
+                self.assert_no_commands()
 
     def test_remove_missing_definition_is_retryable(self):
         for init_name in ("openrc", "dinit"):
