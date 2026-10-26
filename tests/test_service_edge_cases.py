@@ -71,6 +71,21 @@ case "$BOOT" in
     mkdir -p "$ROOT/etc/dinit.d/boot.d"
     link="$ROOT/etc/dinit.d/boot.d/auto-cpufreq"
     ;;
+  relative_colon)
+    printf 'waits-for.d: boot.d\n' > "$ROOT/etc/dinit.d/boot"
+    mkdir -p "$ROOT/etc/dinit.d/boot.d"
+    link="$ROOT/etc/dinit.d/boot.d/auto-cpufreq"
+    ;;
+  relative_colon_spaces)
+    printf '  waits-for.d  :   boot.d  # real Dinit directory syntax\n' > "$ROOT/etc/dinit.d/boot"
+    mkdir -p "$ROOT/etc/dinit.d/boot.d"
+    link="$ROOT/etc/dinit.d/boot.d/auto-cpufreq"
+    ;;
+  absolute_colon)
+    printf 'waits-for.d: %s\n' "$ROOT/links" > "$ROOT/etc/dinit.d/boot"
+    mkdir -p "$ROOT/links"
+    link="$ROOT/links/auto-cpufreq"
+    ;;
   absolute)
     printf 'waits-for.d = %s\n' "$ROOT/links" > "$ROOT/etc/dinit.d/boot"
     mkdir -p "$ROOT/links"
@@ -80,14 +95,35 @@ case "$BOOT" in
     link="$ROOT/other/auto-cpufreq"
     ;;
   ambiguous)
-    printf 'waits-for.d = boot.d\nwaits-for.d = other.d\n' > "$ROOT/etc/dinit.d/boot"
+    printf 'waits-for.d = boot.d\nwaits-for.d: other.d\n' > "$ROOT/etc/dinit.d/boot"
+    mkdir -p "$ROOT/etc/dinit.d/boot.d"
+    link="$ROOT/etc/dinit.d/boot.d/auto-cpufreq"
+    ;;
+  included)
+    printf 'waits-for.d: boot.d\n@include extra.conf\n' > "$ROOT/etc/dinit.d/boot"
+    printf 'waits-for.d: other.d\n' > "$ROOT/etc/dinit.d/extra.conf"
+    mkdir -p "$ROOT/etc/dinit.d/boot.d"
+    link="$ROOT/etc/dinit.d/boot.d/auto-cpufreq"
+    ;;
+  included_optional)
+    printf 'waits-for.d: boot.d\n@include-opt optional.conf\n' > "$ROOT/etc/dinit.d/boot"
+    mkdir -p "$ROOT/etc/dinit.d/boot.d"
+    link="$ROOT/etc/dinit.d/boot.d/auto-cpufreq"
+    ;;
+  malformed_suffix)
+    printf 'waits-for.d: boot.d unrelated-argument\n' > "$ROOT/etc/dinit.d/boot"
+    mkdir -p "$ROOT/etc/dinit.d/boot.d"
+    link="$ROOT/etc/dinit.d/boot.d/auto-cpufreq"
+    ;;
+  wrong_setting)
+    printf 'waits-forXd: boot.d\n' > "$ROOT/etc/dinit.d/boot"
     mkdir -p "$ROOT/etc/dinit.d/boot.d"
     link="$ROOT/etc/dinit.d/boot.d/auto-cpufreq"
     ;;
 esac
 case "$TARGET" in
   managed)
-    if [ "$BOOT" = absolute ]; then
+    if [ "$BOOT" = absolute ] || [ "$BOOT" = absolute_colon ]; then
       ln -s "$ROOT/etc/dinit.d/auto-cpufreq" "$link"
     else
       ln -s ../auto-cpufreq "$link"
@@ -106,7 +142,10 @@ dinit_enable
         return proc
 
     def test_managed_link_allows_repeat_enable(self):
-        for boot in ("relative", "absolute"):
+        for boot in (
+            "relative", "relative_colon", "relative_colon_spaces",
+            "absolute", "absolute_colon",
+        ):
             with self.subTest(boot=boot):
                 p = self.run_enable(boot=boot)
                 self.assertEqual(p.returncode, 0, p.stderr)
@@ -116,6 +155,8 @@ dinit_enable
             ("foreign", "relative"), ("regular", "relative"),
             ("absent", "relative"), ("managed", "ambiguous"),
             ("managed", "missing"),
+            ("managed", "included"), ("managed", "included_optional"),
+            ("managed", "malformed_suffix"), ("managed", "wrong_setting"),
         ):
             with self.subTest(target=target, boot=boot):
                 p = self.run_enable(target=target, boot=boot)
