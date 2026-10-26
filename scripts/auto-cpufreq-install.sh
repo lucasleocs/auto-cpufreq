@@ -43,15 +43,46 @@ function publish_service_file {
     )
 }
 
-# A repeated enable returns an error from dinitctl. Only accept the
-# specific already-enabled result; never suppress other failures.
+# Dinit reports "already enabled" when ANY dependency entry exists, even
+# an entry unrelated to auto-cpufreq. Verify boot's actual waits-for.d link.
+function dinit_enable_link_is_managed {
+    local boot_file="" candidate waits_dir link service_file
+    service_file=/etc/dinit.d/auto-cpufreq
+
+    # auto-cpufreq does not specify @meta enable-via; Dinit defaults to boot.
+    # Unrecognized boot definitions are not proof of a managed dependency.
+    for candidate in /etc/dinit.d/boot /usr/local/lib/dinit.d/boot /usr/lib/dinit.d/boot; do
+        if [ -f "$candidate" ] && [ ! -L "$candidate" ]; then
+            boot_file="$candidate"
+            break
+        fi
+    done
+    [ -n "$boot_file" ] || return 1
+    waits_dir="$(sed -nE 's/^[[:space:]]*waits-for\.d[[:space:]]*=[[:space:]]*([^[:space:]#]+).*$/\1/p' "$boot_file")"
+    [ -n "$waits_dir" ] || return 1
+    case "$waits_dir" in
+        *$'\n'*) return 1 ;;
+        /*) link="$waits_dir/auto-cpufreq" ;;
+        *) link="$(dirname "$boot_file")/$waits_dir/auto-cpufreq" ;;
+    esac
+
+    [ -f "$service_file" ] && [ ! -L "$service_file" ] \
+        && [ -L "$link" ] \
+        && [ "$(readlink -f -- "$link")" = "$(readlink -f -- "$service_file")" ]
+}
+
 function dinit_enable {
     local output status
     output="$(dinitctl enable auto-cpufreq 2>&1)"
     status=$?
     [ -z "$output" ] || printf '%s\n' "$output"
     [ "$status" -eq 0 ] && return 0
-    [ "$output" = "dinitctl: service already enabled." ] && return 0
+    if [ "$output" = "dinitctl: service already enabled." ]; then
+        if dinit_enable_link_is_managed; then
+            return 0
+        fi
+        echo "Error: Dinit has an existing, unverified auto-cpufreq boot dependency." >&2
+    fi
     return "$status"
 }
 
@@ -141,6 +172,14 @@ function s6_bundle_entry_is_managed {
 # Read-only preflight before changing Bluetooth, competing services or helpers.
 function daemon_install_preflight {
     local init_system service_file managed_file service_dir active_link required_command service_parent
+    # A planted helper symlink would redirect deploy_daemon's later copy
+    # outside the installation. Preserve normal regular-file reinstall retries.
+    if [ -L /usr/local/bin/auto-cpufreq-remove ] \
+        || { [ -e /usr/local/bin/auto-cpufreq-remove ] \
+             && [ ! -f /usr/local/bin/auto-cpufreq-remove ]; }; then
+        echo "Error: Refusing an unexpected daemon-removal helper path." >&2
+        return 1
+    fi
     init_system="$(ps h -o comm 1)" || return 1
     case "$init_system" in
       dinit|init|systemd)
