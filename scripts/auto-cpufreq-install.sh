@@ -58,7 +58,15 @@ function dinit_enable_link_is_managed {
         fi
     done
     [ -n "$boot_file" ] || return 1
-    waits_dir="$(sed -nE 's/^[[:space:]]*waits-for\.d[[:space:]]*=[[:space:]]*([^[:space:]#]+).*$/\1/p' "$boot_file")"
+    # The Dinit service-file syntax uses ':' for directory dependencies.
+    # Also accept '=' for compatible simple definitions, but reject includes
+    # that could override the setting from another service-file fragment.
+    # Do not approximate Dinit's include or variable-substitution parser:
+    # unverified configurations must remain errors, not false positives.
+    if grep -Eq '^[[:space:]]*@(include|include-opt)[[:space:]]' "$boot_file"; then
+        return 1
+    fi
+    waits_dir="$(sed -nE 's/^[[:space:]]*waits-for[.]d[[:space:]]*[:=][[:space:]]*([^[:space:]#]+)[[:space:]]*(#.*)?$/\1/p' "$boot_file")"
     [ -n "$waits_dir" ] || return 1
     case "$waits_dir" in
         *$'\n'*) return 1 ;;
