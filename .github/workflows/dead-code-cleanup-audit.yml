@@ -54,6 +54,8 @@ jobs:
           grep -Fq '. /etc/os-release' scripts/auto-cpufreq-install.sh
           grep -Fq 'CURRENT_PATH="$INSTALL_ROOT/current"' auto-cpufreq-installer
           grep -Fq 'activate_release "$PREPARED_RELEASE"' auto-cpufreq-installer
+      - name: Test isolated Dinit, Runit and daemon marker recovery edge cases
+        run: python -m unittest discover -s tests -p test_service_edge_cases.py -v
       - name: Verify service and packaging integrations were retained
         shell: bash
         run: |

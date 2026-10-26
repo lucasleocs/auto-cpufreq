@@ -35,21 +35,29 @@ function auto_cpufreq_remove {
     rm -f -- "$4" || return $?
 }
 
-# A repeated disable reports a missing dependency link. Suppress only
-# this already-completed step when the containing directory still exists.
+# Dinit may append "disabled for now; persistent disable failed." after
+# an ENOENT diagnostic. Accept that exact text only if the link is truly
+# absent; preserve all other failures as errors.
 function dinit_disable {
-    local output status entry
+    local output status entry primary note=""
     output="$(dinitctl disable auto-cpufreq 2>&1)"
     status=$?
     [ -z "$output" ] || printf '%s\n' "$output"
     [ "$status" -eq 0 ] && return 0
-    case "$output" in
+    primary="${output%%$'\n'*}"
+    if [ "$primary" != "$output" ]; then
+        note="${output#*$'\n'}"
+        [ "$note" = "dinitctl: note: service was disabled for now; persistent disable failed." ] \
+            || return "$status"
+    fi
+    case "$primary" in
       "dinitctl: could not unlink dependency entry "*": No such file or directory")
-        entry="$(printf '%s\n' "$output" | sed -n 's/^dinitctl: could not unlink dependency entry \(.*\): No such file or directory$/\1/p')"
-        if [ "$(basename "$entry")" = "auto-cpufreq" ] &&
-           [ -d "$(dirname "$entry")" ] &&
-           [ ! -e "$entry" ] && [ ! -L "$entry" ]; then
-          return 0
+        entry="${primary#dinitctl: could not unlink dependency entry }"
+        entry="${entry%: No such file or directory}"
+        if [ "$(basename "$entry")" = "auto-cpufreq" ] \
+            && [ -d "$(dirname "$entry")" ] \
+            && [ ! -e "$entry" ] && [ ! -L "$entry" ]; then
+            return 0
         fi
         ;;
     esac
@@ -238,7 +246,17 @@ case "$(ps h -o comm 1)" in
         # its FIFO: sv shutdown cannot address that state and returns 1.
         if [ -e "$service_dir/supervise" ] || [ -L "$service_dir/supervise" ]; then
           if [ -p "$service_dir/supervise/ok" ]; then
-            sv shutdown "$service_dir" || return $?
+            if ! sv shutdown "$service_dir"; then
+              # runsvdir can retire the supervisor after the FIFO check.
+              # Continue only if both the activation link and FIFO are gone;
+              # do not suppress errors while supervision remains reachable.
+              if [ -e "$active_link" ] || [ -L "$active_link" ] \
+                  || [ -e "$service_dir/supervise/ok" ] \
+                  || [ -L "$service_dir/supervise/ok" ]; then
+                echo "Error: Runit supervisor shutdown failed while supervision remains." >&2
+                return 1
+              fi
+            fi
           elif [ -e "$service_dir/supervise/ok" ] || [ -L "$service_dir/supervise/ok" ]; then
             echo "Error: Unexpected runit supervisor state: $service_dir/supervise/ok" >&2
             return 1
