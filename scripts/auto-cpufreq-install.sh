@@ -178,14 +178,39 @@ function s6_bundle_entry_is_managed {
 }
 
 # Read-only preflight before changing Bluetooth, competing services or helpers.
+# Historical installs may contain an older but legitimate helper script.
+# Recognize its stable source signature; do not overwrite an unrelated regular
+# file merely because its file type is safe. A missing file is a retry state.
+function daemon_helper_is_managed {
+    local path="$1" kind="$2" function_name
+
+    if [ ! -e "$path" ] && [ ! -L "$path" ]; then
+        return 0
+    fi
+    [ -f "$path" ] && [ ! -L "$path" ] || return 1
+    [ "$(stat -c '%u' -- "$path" 2>/dev/null)" = 0 ] || return 1
+
+    case "$kind" in
+        install) function_name=install; kind="install" ;;
+        remove) function_name=remove; kind="removal" ;;
+        *) return 1 ;;
+    esac
+    [ "$(sed -n '1p' "$path")" = '#!/usr/bin/env bash' ] \
+        && [ "$(sed -n '3p' "$path")" = "# auto-cpufreq daemon $kind script" ] \
+        && [ "$(sed -n '4p' "$path")" = '# reference: https://github.com/AdnanHodzic/auto-cpufreq' ] \
+        && grep -Fqx "function auto_cpufreq_$function_name {" "$path"
+}
+
 function daemon_install_preflight {
     local init_system service_file managed_file service_dir active_link required_command service_parent
-    # A planted helper symlink would redirect deploy_daemon's later copy
-    # outside the installation. Preserve normal regular-file reinstall retries.
-    if [ -L /usr/local/bin/auto-cpufreq-remove ] \
-        || { [ -e /usr/local/bin/auto-cpufreq-remove ] \
-             && [ ! -f /usr/local/bin/auto-cpufreq-remove ]; }; then
-        echo "Error: Refusing an unexpected daemon-removal helper path." >&2
+    # Both helper paths are subsequently copied by deploy_daemon().
+    # Check provenance as well as file type before any host state is changed.
+    if ! daemon_helper_is_managed /usr/local/bin/auto-cpufreq-install install; then
+        echo "Error: Refusing to overwrite an unrecognized auto-cpufreq-install helper." >&2
+        return 1
+    fi
+    if ! daemon_helper_is_managed /usr/local/bin/auto-cpufreq-remove remove; then
+        echo "Error: Refusing to overwrite an unrecognized auto-cpufreq-remove helper." >&2
         return 1
     fi
     init_system="$(ps h -o comm 1)" || return 1

@@ -46,9 +46,16 @@ for old, new in [
     ENABLE = ENABLE.replace(old, new)
 
 DISABLE = function(REMOVE, "function dinit_disable {")
-PREFLIGHT = function(INSTALL, "function daemon_install_preflight {")
-assert "/usr/local/bin/auto-cpufreq-remove" in PREFLIGHT
-PREFLIGHT = PREFLIGHT.replace("/usr/local/bin/auto-cpufreq-remove", "$ROOT/daemon-remove")
+PREFLIGHT = (
+    function(INSTALL, "function daemon_helper_is_managed {") + "\n"
+    + function(INSTALL, "function daemon_install_preflight {")
+)
+for original, fixture in (
+    ("/usr/local/bin/auto-cpufreq-install", "$ROOT/daemon-install"),
+    ("/usr/local/bin/auto-cpufreq-remove", "$ROOT/daemon-remove"),
+):
+    assert original in PREFLIGHT, original
+    PREFLIGHT = PREFLIGHT.replace(original, fixture)
 
 RUNIT = "\n".join([
     function(REMOVE, "function directory_contains_only {"),
@@ -269,34 +276,74 @@ test -p "$service_dir/supervise/ok" && echo "FIFO_RETAINED=1" || echo "FIFO_RETA
 
 
 class MarkerPreflightTests(unittest.TestCase):
-    def run_preflight(self, marker):
+    def run_preflight(self, install="absent", remove="absent", owner="0"):
         script = PREFLIGHT + r'''
 set -u
 ROOT="$1"
-case "$MARKER" in
-  symlink) ln -s "$ROOT/foreign-file" "$ROOT/daemon-remove" ;;
-  directory) mkdir "$ROOT/daemon-remove" ;;
-  regular) printf '#!/bin/sh\n' > "$ROOT/daemon-remove" ;;
-  absent) ;;
-esac
+
+# Exact stable headers and named entrypoints from older upstream releases,
+# not the current file content. These must remain eligible for upgrade.
+make_legacy() {
+    local role="$1" target="$2" heading="$3"
+    printf '#!/usr/bin/env bash\n#\n# auto-cpufreq daemon %s script\n# reference: https://github.com/AdnanHodzic/auto-cpufreq\nfunction auto_cpufreq_%s {\n  :\n}\n' \
+       "$heading" "$role" > "$target"
+}
+make_case() {
+    local kind="$1" path="$2" heading="$3" entry="$4"
+    case "$kind" in
+      absent) ;;
+      symlink) ln -s "$ROOT/foreign-file" "$path" ;;
+      directory) mkdir "$path" ;;
+      foreign) printf '#!/bin/sh\nexit 0\n' > "$path" ;;
+      misleading)
+        printf '#!/usr/bin/env bash\n#\n# auto-cpufreq daemon %s script\n# reference: https://github.com/AdnanHodzic/auto-cpufreq\nfunction unrelated {\n:\n}\n' "$heading" > "$path"
+        ;;
+      legacy) make_legacy "$entry" "$path" "$heading" ;;
+      *) exit 89 ;;
+    esac
+}
+make_case "$INSTALL_CASE" "$ROOT/daemon-install" install install
+make_case "$REMOVE_CASE" "$ROOT/daemon-remove" removal remove
+
+# unittest runs unprivileged, while real preflight is root-only. Stub only
+# the UID query and PID-1 identification, never the file-signature checks.
+stat() { printf '%s\n' "$OWNER"; }
 ps() { echo unsupported-init; }
 daemon_install_preflight
 '''
-        return sandbox(script, "", {"MARKER": marker})[0]
+        p, _ = sandbox(script, "", {
+            "INSTALL_CASE": install, "REMOVE_CASE": remove, "OWNER": owner,
+        })
+        return p
 
-    def test_symlink_and_nonfile_marker_are_rejected_before_host_changes(self):
-        for marker in ("symlink", "directory"):
-            with self.subTest(marker=marker):
-                p = self.run_preflight(marker)
-                self.assertEqual(p.returncode, 1)
-                self.assertIn("unexpected daemon-removal helper", p.stderr)
+    def test_missing_and_historical_helpers_reach_normal_preflight(self):
+        for installed, removed in (
+            ("absent", "absent"),
+            ("legacy", "absent"),
+            ("absent", "legacy"),
+            ("legacy", "legacy"),
+        ):
+            with self.subTest(install=installed, remove=removed):
+                p = self.run_preflight(install=installed, remove=removed)
+                self.assertEqual(p.returncode, 1, p.stderr)
+                self.assertIn("Unsupported init system", p.stderr)
+                self.assertNotIn("unrecognized", p.stderr)
 
-    def test_existing_regular_marker_reaches_normal_preflight(self):
-        p = self.run_preflight("regular")
-        self.assertEqual(p.returncode, 1)
-        self.assertIn("Unsupported init system", p.stderr)
-        self.assertNotIn("unexpected daemon-removal helper", p.stderr)
+    def test_symlink_directory_and_unrelated_regular_helpers_are_rejected(self):
+        for kind in ("symlink", "directory", "foreign", "misleading"):
+            for role in ("install", "remove"):
+                with self.subTest(kind=kind, role=role):
+                    p = self.run_preflight(**{role: kind})
+                    self.assertEqual(p.returncode, 1, p.stderr)
+                    self.assertIn("Refusing to overwrite an unrecognized", p.stderr)
+                    self.assertNotIn("Unsupported init system", p.stderr)
 
+    def test_non_root_owned_existing_helper_is_rejected(self):
+        for role in ("install", "remove"):
+            with self.subTest(role=role):
+                p = self.run_preflight(owner="1001", **{role: "legacy"})
+                self.assertEqual(p.returncode, 1, p.stderr)
+                self.assertIn("Refusing to overwrite an unrecognized", p.stderr)
 
 if __name__ == "__main__":
     unittest.main()
