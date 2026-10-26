@@ -86,7 +86,13 @@ case "$BOOT" in
     ;;
 esac
 case "$TARGET" in
-  managed) ln -s ../auto-cpufreq "$link" ;;
+  managed)
+    if [ "$BOOT" = absolute ]; then
+      ln -s "$ROOT/etc/dinit.d/auto-cpufreq" "$link"
+    else
+      ln -s ../auto-cpufreq "$link"
+    fi
+    ;;
   foreign) printf 'foreign\n' > "$ROOT/other/alien"; ln -s "$ROOT/other/alien" "$link" ;;
   regular) printf 'foreign\n' > "$link" ;;
   absent) ;;
