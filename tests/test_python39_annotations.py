@@ -1,5 +1,6 @@
 """Import annotated modules on Python 3.9 without reading host telemetry."""
 
+import ast
 import importlib
 import platform
 import subprocess
@@ -79,6 +80,9 @@ class Python39AnnotationImportTests(unittest.TestCase):
             "auto_cpufreq.battery_scripts.shared",
             "auto_cpufreq.battery_scripts.ideapad_laptop",
             "auto_cpufreq.modules.system_monitor",
+            "auto_cpufreq.modules.process_health",
+            "auto_cpufreq.modules.report_refresh",
+            "auto_cpufreq.modules.report_recommendations",
         )
 
         with ExitStack() as stack:
@@ -123,6 +127,60 @@ class Python39AnnotationImportTests(unittest.TestCase):
             imported["auto_cpufreq.modules.system_info"].system_info.processor_model,
             "synthetic",
         )
+
+
+    def test_gtk_selection_methods_keep_python39_compatible_behaviour(self):
+        # Extract only the methods: GTK should not be imported on a headless
+        # CI runner, but the complete module must parse on Python 3.9.
+        tree = ast.parse((ROOT / "auto_cpufreq/gui/objects.py").read_text())
+        cases = (
+            ("RadioButtonView", "get_override",
+             ("powersave", "performance", "default"),
+             {"powersave": "powersave", "performance": "performance",
+              "default": "default", "unknown": None}, "default"),
+            ("CPUTurboOverride", "get_turbo_override",
+             ("never", "always", "auto"),
+             {"never": "never", "always": "always", "auto": "auto",
+              "unknown": None}, "auto"),
+            ("BluetoothBootControl", "get_bluetooth_boot_status",
+             ("off_btn", "on_btn"),
+             {"off": "off_btn", "on": "on_btn", "unknown": "on_btn"},
+             "on_btn"),
+        )
+        for class_name, getter, buttons, values, default_button in cases:
+            cls = next(node for node in tree.body
+                       if isinstance(node, ast.ClassDef)
+                       and node.name == class_name)
+            method = next(node for node in cls.body
+                          if isinstance(node, ast.FunctionDef)
+                          and node.name == "set_selected")
+            code = compile(
+                ast.fix_missing_locations(
+                    ast.Module(body=[method], type_ignores=[])
+                ),
+                str(ROOT / "auto_cpufreq/gui/objects.py"), "exec",
+            )
+            for value, expected in values.items():
+                with self.subTest(cls=class_name, value=value):
+                    namespace = {getter: lambda value=value: value}
+                    exec(code, namespace)
+                    called = []
+                    widget = types.SimpleNamespace(set_by_app=True)
+                    for button in buttons:
+                        setattr(
+                            widget, button,
+                            types.SimpleNamespace(
+                                set_active=lambda active, button=button:
+                                    called.append((button, active))
+                            ),
+                        )
+                    namespace["set_selected"](widget)
+                    self.assertEqual(
+                        called, [] if expected is None else [(expected, True)]
+                    )
+                    self.assertEqual(
+                        widget.set_by_app, expected != default_button
+                    )
 
 
 if __name__ == "__main__":

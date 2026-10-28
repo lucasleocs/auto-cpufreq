@@ -1,0 +1,34 @@
+name: Python 3.9 Compatibility
+
+on:
+  push:
+    paths:
+      - "auto_cpufreq/gui/objects.py"
+      - "auto_cpufreq/modules/process_health.py"
+      - "auto_cpufreq/modules/report_refresh.py"
+      - "auto_cpufreq/modules/report_recommendations.py"
+      - "tests/test_python39_annotations.py"
+      - ".github/workflows/python39-compatibility.yml"
+  pull_request:
+    paths:
+      - "auto_cpufreq/gui/objects.py"
+      - "auto_cpufreq/modules/process_health.py"
+      - "auto_cpufreq/modules/report_refresh.py"
+      - "auto_cpufreq/modules/report_recommendations.py"
+      - "tests/test_python39_annotations.py"
+      - ".github/workflows/python39-compatibility.yml"
+
+jobs:
+  imports:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.9", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Verify Python syntax, annotation imports and GUI selections
+        run: python -m unittest discover -s tests -p 'test_python39_annotations.py' -v
