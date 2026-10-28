@@ -49,6 +49,21 @@ class DaemonScriptPathTests(unittest.TestCase):
             second / "auto-cpufreq-remove.sh",
         )
 
+    def test_both_helpers_remain_in_one_source_generation(self):
+        first = self.make_release("first", "first")
+        self.make_release("second", "second")
+        current = self.root / "current"
+        current.symlink_to(self.releases / "first", target_is_directory=True)
+        scripts_dir = (current / "share" / "scripts").resolve(strict=True)
+        install = resolve_daemon_script(scripts_dir, "install")
+        remove = resolve_daemon_script(scripts_dir, "remove")
+
+        current.unlink()
+        current.symlink_to(self.releases / "second", target_is_directory=True)
+        self.assertEqual(install, first / "auto-cpufreq-install.sh")
+        self.assertEqual(remove, first / "auto-cpufreq-remove.sh")
+        self.assertEqual(install.parent, remove.parent)
+
     def test_unversioned_local_install_remains_supported(self):
         local = self.root / "usr" / "local" / "share" / "auto-cpufreq" / "scripts"
         local.mkdir(parents=True)
@@ -81,8 +96,11 @@ class DaemonScriptPathTests(unittest.TestCase):
         self.assertIn('os.path.exists("/usr/local/bin/auto-cpufreq-remove")', cli)
         self.assertIn('$AUTO_CPUFREQ_FILE-remove', installer)
         self.assertIn('os.remove("/usr/local/bin/auto-cpufreq-remove")', core)
-        self.assertIn('resolve_daemon_script(SCRIPTS_DIR, "install")', core)
-        self.assertIn('resolve_daemon_script(SCRIPTS_DIR, "remove")', core)
+        self.assertIn('scripts_dir = SCRIPTS_DIR.resolve(strict=True)', core)
+        self.assertIn('resolve_daemon_script(scripts_dir, "install")', core)
+        self.assertIn('resolve_daemon_script(scripts_dir, "remove")', core)
+        self.assertIn('copy(install_script, "/usr/local/bin/auto-cpufreq-install")', core)
+        self.assertIn('copy(remove_script, "/usr/local/bin/auto-cpufreq-remove")', core)
 
 
 if __name__ == "__main__":

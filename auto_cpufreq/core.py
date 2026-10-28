@@ -388,12 +388,15 @@ def remove_complete_msg():
 def deploy_daemon():
     print("\n" + "-" * 21 + " Deploying auto-cpufreq as a daemon " + "-" * 22 + "\n")
 
-    # Pin the script to one installed generation before changing host state.
+    # Pin both lifecycle scripts to the same source generation before any
+    # files or host state are changed, including the public legacy helpers.
     from auto_cpufreq.modules.daemon_script_paths import resolve_daemon_script
     try:
-        install_script = resolve_daemon_script(SCRIPTS_DIR, "install")
+        scripts_dir = SCRIPTS_DIR.resolve(strict=True)
+        install_script = resolve_daemon_script(scripts_dir, "install")
+        remove_script = resolve_daemon_script(scripts_dir, "remove")
     except (OSError, RuntimeError) as error:
-        print(f"Cannot locate auto-cpufreq install script: {error}")
+        print(f"Cannot locate auto-cpufreq lifecycle scripts: {error}")
         return 1
 
     cpufreqctl() # deploy cpufreqctl script func call
@@ -403,11 +406,11 @@ def deploy_daemon():
     auto_cpufreq_stats_path.touch(exist_ok=True)
 
     print("\n* Deploy auto-cpufreq install script")
-    copy(SCRIPTS_DIR / "auto-cpufreq-install.sh", "/usr/local/bin/auto-cpufreq-install")
+    copy(install_script, "/usr/local/bin/auto-cpufreq-install")
     call(["chmod", "a+x", "/usr/local/bin/auto-cpufreq-install"])
 
     print("\n* Deploy auto-cpufreq remove script")
-    copy(SCRIPTS_DIR / "auto-cpufreq-remove.sh", "/usr/local/bin/auto-cpufreq-remove")
+    copy(remove_script, "/usr/local/bin/auto-cpufreq-remove")
     call(["chmod", "a+x", "/usr/local/bin/auto-cpufreq-remove"])
 
     # output warning if gnome power profile is running
