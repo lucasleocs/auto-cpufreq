@@ -5,6 +5,8 @@ on:
     paths:
       - "auto-cpufreq-installer"
       - "tests/test_installer_failure_paths.py"
+      - "tests/test_daemon_install_failures.py"
+      - "tests/test_daemon_update_flow.py"
       - ".github/workflows/pr975-failure-audit.yml"
   workflow_dispatch:
 
@@ -20,3 +22,5 @@ jobs:
         run: |
           bash -n auto-cpufreq-installer
           python -m unittest discover -s tests -p 'test_installer_failure_paths.py' -v
+          python -m unittest discover -s tests -p 'test_daemon_install_failures.py' -v
+          python -m unittest discover -s tests -p 'test_daemon_update_flow.py' -v
