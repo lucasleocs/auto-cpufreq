@@ -94,6 +94,19 @@ function directory_contains_only {
     return 0
 }
 
+# Limit external Runit supervision to service-specific ramdisk names.
+# Never trust a path solely because its parents contain the service name.
+function runit_supervise_target_is_managed {
+    case "$1" in
+      /run/*) ;;
+      *) return 1 ;;
+    esac
+    case "${1##*/}" in
+      auto-cpufreq|sv.auto-cpufreq|auto-cpufreq-supervise) return 0 ;;
+      *) return 1 ;;
+    esac
+}
+
 function runit_supervise_is_managed {
     local supervise="$1" resolved entry name
     if [ ! -e "$supervise" ] && [ ! -L "$supervise" ]; then
@@ -104,10 +117,7 @@ function runit_supervise_is_managed {
       # root-owned, service-specific destination under /run; never touch it
       # recursively when removing the service's symlink.
       resolved="$(readlink -f -- "$supervise")" || return 1
-      case "$resolved" in
-        /run/*auto-cpufreq*|/var/run/*auto-cpufreq*) ;;
-        *) return 1 ;;
-      esac
+      runit_supervise_target_is_managed "$resolved" || return 1
       [ -d "$resolved" ] || return 1
       [ "$(stat -c '%u' -- "$resolved" 2>/dev/null)" = 0 ] || return 1
     fi

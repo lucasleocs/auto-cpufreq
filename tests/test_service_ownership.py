@@ -108,6 +108,44 @@ class HelpersTest(unittest.TestCase):
                 self.assertEqual(self.validate(target, kind).returncode, 0)
 
 
+class RunitDestinationTest(unittest.TestCase):
+    def test_only_service_specific_run_paths_are_accepted(self):
+        allowed = (
+            "/run/auto-cpufreq",
+            "/run/runit/supervise/auto-cpufreq",
+            "/run/sv.auto-cpufreq",
+            "/run/auto-cpufreq-supervise",
+        )
+        refused = (
+            "/run/sv.other-auto-cpufreq",
+            "/run/auto-cpufreq-other/supervise",
+            "/run/other-auto-cpufreq-service",
+            "/tmp/auto-cpufreq",
+            "/etc/auto-cpufreq",
+        )
+        for source in (INSTALL, REMOVE):
+            predicate = extract(
+                source,
+                "function runit_supervise_target_is_managed {",
+                "function runit_supervise_is_managed {",
+            )
+            for path in allowed:
+                with self.subTest(path=path, expected=True):
+                    result = bash(
+                        predicate + '\nrunit_supervise_target_is_managed "$1"\n',
+                        path,
+                    )
+                    self.assertEqual(result.returncode, 0, result.stderr)
+            for path in refused:
+                with self.subTest(path=path, expected=False):
+                    result = bash(
+                        predicate + '\nrunit_supervise_target_is_managed "$1"\n',
+                        path,
+                    )
+                    self.assertNotEqual(result.returncode, 0)
+
+
+
 class RunitSuperviseTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()

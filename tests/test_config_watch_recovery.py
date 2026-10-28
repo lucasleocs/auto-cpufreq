@@ -3,10 +3,13 @@
 Run with: python -m unittest discover -s tests -p 'test_config_watch_recovery.py' -v
 Uses temporary files and does not modify system power settings.
 """
+import errno
+import fcntl
 import time
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from auto_cpufreq.config.config import _Config
 from auto_cpufreq.config.file_watcher import ConfigFileWatcher
@@ -77,6 +80,38 @@ class ConfigWatchRecoveryTests(unittest.TestCase):
                     writer.write("[profile]\nvalue = finished\n")
                 self.assertTrue(self.until(
                     lambda: self.value(config) == "finished"
+                ))
+            finally:
+                watcher.stop()
+                self.assertFalse(watcher.is_alive())
+
+    def test_lease_permission_failure_does_not_publish_unchecked_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            watched = root / "watched"
+            target = watched / "auto-cpufreq.conf"
+            prepared = root / "prepared"
+            prepared.mkdir()
+            (prepared / target.name).write_text("[profile]\nvalue = complete\n")
+            config, watcher = self.create_watcher(target)
+            try:
+                real_fcntl = fcntl.fcntl
+
+                def fail_lease(fd, command, *args):
+                    if command == fcntl.F_SETLEASE:
+                        raise PermissionError(errno.EACCES, "Lease not permitted")
+                    return real_fcntl(fd, command, *args)
+
+                with patch(
+                    "auto_cpufreq.config.file_watcher.fcntl.fcntl",
+                    side_effect=fail_lease,
+                ):
+                    prepared.rename(watched)
+                    time.sleep(1.6)
+                    self.assertIsNone(self.value(config))
+                # Once permissions permit a lease, bounded recovery succeeds.
+                self.assertTrue(self.until(
+                    lambda: self.value(config) == "complete"
                 ))
             finally:
                 watcher.stop()
