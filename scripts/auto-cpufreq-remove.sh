@@ -62,6 +62,9 @@ function runit_service_is_managed {
         && [ ! -L "$service_dir/run" ] \
         && cmp -s -- "$managed_run" "$service_dir/run" \
         || return 1
+    elif [ -e "$service_dir/supervise" ] || [ -L "$service_dir/supervise" ]; then
+        # Supervision state alone cannot identify an auto-cpufreq service.
+        return 1
     fi
 
     [ ! -e "$service_dir/supervise" ] \
