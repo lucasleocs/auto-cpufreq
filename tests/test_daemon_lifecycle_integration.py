@@ -72,8 +72,12 @@ exit 0
                 "if ((EUID != 0)); then", "if ((0 != 0)); then", 1
             )
             source = source.replace(
-                "/etc/systemd/system/auto-cpufreq.service", str(self.unit)
-            ).replace("/etc/systemd/system", str(self.systemd_dir))
+                "systemd_unit=/etc/systemd/system/auto-cpufreq.service",
+                'systemd_unit="' + str(self.unit) + '"',
+            ).replace(
+                "644 /etc/systemd/system ||",
+                '644 "' + str(self.systemd_dir) + '" ||',
+            )
             (scripts / ("auto-cpufreq-" + action + ".sh")).write_text(source)
         return scripts
 
