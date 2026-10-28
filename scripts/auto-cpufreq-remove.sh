@@ -65,14 +65,27 @@ function dinit_disable {
 }
 
 function service_file_is_managed {
-    local target="$1" template="$2"
-    # Missing paths are legitimate partial-install/removal retry states.
+    local target="$1" template="$2" digest
+    # A missing unit is an expected partial install/removal retry state.
     if [ ! -e "$target" ] && [ ! -L "$target" ]; then
       return 0
     fi
-    [ -f "$target" ] && [ ! -L "$target" ] \
-      && [ -f "$template" ] \
-      && cmp -s -- "$template" "$target"
+    [ -f "$target" ] && [ ! -L "$target" ] && [ -f "$template" ] || return 1
+    cmp -s -- "$template" "$target" && return 0
+
+    # The v1.9-v3.1 systemd units use the old unversioned /opt layout.
+    # Recognize only their complete official content, not a matching header.
+    [ "$template" = "$SHARE_DIR/scripts/auto-cpufreq.service" ] || return 1
+    [ "$(stat -c '%u' -- "$target" 2>/dev/null)" = 0 ] || return 1
+    command -v sha1sum >/dev/null 2>&1 || return 1
+    digest="$(
+      { printf 'blob %s\0' "$(wc -c < "$target")"; cat -- "$target"; } |
+        sha1sum
+    )" || return 1
+    case "${digest%% *}" in
+      196bae318ebf79cf9264ecd4fae1bcca912ab8ae|3362723156058579b70316aa16dd0440fcd090b2) return 0 ;;
+      *) return 1 ;;
+    esac
 }
 
 function directory_contains_only {

@@ -43,6 +43,53 @@ function publish_service_file {
     )
 }
 
+# Migrate an official pre-v3.2 unit without silently overwriting another
+# file that appears during installation. The legacy unit must move to a
+# private backup before we link a complete new file into its place.
+function replace_legacy_systemd_unit {
+    (
+      local source="$1" target="$2" dir staged backup
+      local cleanup_backup=true
+      dir="$(dirname "$target")"
+      staged="$(mktemp "$dir/.auto-cpufreq-unit.XXXXXXXX")" || exit $?
+      backup="$(mktemp "$dir/.auto-cpufreq-previous.XXXXXXXX")" || exit $?
+      trap 'rm -f -- "$staged"; if $cleanup_backup; then rm -f -- "$backup"; fi' EXIT
+
+      cp -- "$source" "$staged" || exit $?
+      chmod 644 "$staged" || exit $?
+      service_file_is_managed "$target" "$source" || exit 1
+      [ -f "$target" ] && [ ! -L "$target" ] || exit 1
+      # RENAME overwrites only the empty private placeholder we created.
+      # The old unit is retained even if a foreign file raced into target.
+      mv -T -- "$target" "$backup" || exit $?
+      cleanup_backup=false
+      if ! service_file_is_managed "$backup" "$source"; then
+        [ -e "$target" ] || [ -L "$target" ] || ln -T -- "$backup" "$target"
+        echo "Error: Unit changed during migration; preserved at $backup" >&2
+        exit 1
+      fi
+      if ! ln -T -- "$staged" "$target"; then
+        if [ ! -e "$target" ] && [ ! -L "$target" ]; then
+          ln -T -- "$backup" "$target" || {
+            echo "Error: Previous unit preserved at $backup" >&2
+            exit 1
+          }
+          cleanup_backup=true
+        else
+          echo "Error: Unit path changed; previous unit preserved at $backup" >&2
+        fi
+        exit 1
+      fi
+      # Do not discard the old unit if a concurrent actor replaced our link.
+      [ -f "$target" ] && [ ! -L "$target" ] \
+        && cmp -s -- "$source" "$target" || {
+          echo "Error: Unit changed; previous unit preserved at $backup" >&2
+          exit 1
+        }
+      cleanup_backup=true
+    )
+}
+
 # Dinit reports "already enabled" when ANY dependency entry exists, even
 # an entry unrelated to auto-cpufreq. Verify boot's actual waits-for.d link.
 function dinit_enable_link_is_managed {
@@ -97,14 +144,27 @@ function dinit_enable {
 }
 
 function service_file_is_managed {
-    local target="$1" template="$2"
-    # Missing paths are legitimate partial-install/removal retry states.
+    local target="$1" template="$2" digest
+    # A missing unit is an expected partial install/removal retry state.
     if [ ! -e "$target" ] && [ ! -L "$target" ]; then
       return 0
     fi
-    [ -f "$target" ] && [ ! -L "$target" ] \
-      && [ -f "$template" ] \
-      && cmp -s -- "$template" "$target"
+    [ -f "$target" ] && [ ! -L "$target" ] && [ -f "$template" ] || return 1
+    cmp -s -- "$template" "$target" && return 0
+
+    # The v1.9-v3.1 systemd units use the old unversioned /opt layout.
+    # Recognize only their complete official content, not a matching header.
+    [ "$template" = "$SHARE_DIR/scripts/auto-cpufreq.service" ] || return 1
+    [ "$(stat -c '%u' -- "$target" 2>/dev/null)" = 0 ] || return 1
+    command -v sha1sum >/dev/null 2>&1 || return 1
+    digest="$(
+      { printf 'blob %s\0' "$(wc -c < "$target")"; cat -- "$target"; } |
+        sha1sum
+    )" || return 1
+    case "${digest%% *}" in
+      196bae318ebf79cf9264ecd4fae1bcca912ab8ae|3362723156058579b70316aa16dd0440fcd090b2) return 0 ;;
+      *) return 1 ;;
+    esac
 }
 
 function directory_contains_only {
@@ -498,6 +558,9 @@ case "$(ps h -o comm 1)" in
       echo -e "Deploying auto-cpufreq systemd unit file"
       publish_service_file "$managed_systemd_unit" "$systemd_unit" \
         644 /etc/systemd/system || exit $?
+    elif ! cmp -s -- "$managed_systemd_unit" "$systemd_unit"; then
+      echo "Migrating an official legacy auto-cpufreq systemd unit"
+      replace_legacy_systemd_unit "$managed_systemd_unit" "$systemd_unit" || exit $?
     fi
 
     echo -e "\n* Reloading systemd manager configuration"

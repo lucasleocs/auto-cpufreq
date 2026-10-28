@@ -47,6 +47,82 @@ def bash(script, *args):
     )
 
 
+LEGACY_SYSTEMD_31 = """[Unit]
+Description=auto-cpufreq - Automatic CPU speed & power optimizer for Linux
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/auto-cpufreq/venv
+Environment=PYTHONPATH=/opt/auto-cpufreq
+ExecStart=/opt/auto-cpufreq/venv/bin/python /opt/auto-cpufreq/venv/bin/auto-cpufreq --daemon
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
+"""
+
+
+class LegacySystemdUnitTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        self.share = self.root / "share" / "scripts"
+        self.share.mkdir(parents=True)
+        self.template = self.share / "auto-cpufreq.service"
+        shutil.copyfile(ROOT / "scripts/auto-cpufreq.service", self.template)
+        self.target = self.root / "auto-cpufreq.service"
+        self.target.write_text(LEGACY_SYSTEMD_31)
+
+    def shell(self, code):
+        # The fixtures are unprivileged, while real system units belong to root.
+        uid_stub = """stat() {
+            if [ "$1" = "-c" ] && [ "$2" = "%u" ]; then
+              echo 0
+              return 0
+            fi
+            command stat "$@"
+        }
+        """
+        start = extract(
+            INSTALL, "function replace_legacy_systemd_unit {",
+            "# Dinit reports",
+        )
+        predicate = extract(
+            INSTALL, "function service_file_is_managed {",
+            "function directory_contains_only {",
+        )
+        return bash(
+            'SHARE_DIR="$1"\n' + uid_stub + start + predicate
+            + '\n' + code + '\n',
+            self.share.parent, self.target, self.template,
+        )
+
+    def test_v31_unit_has_verified_official_identity(self):
+        import hashlib
+        data = LEGACY_SYSTEMD_31.encode()
+        digest = hashlib.sha1(
+            ("blob %d\0" % len(data)).encode() + data
+        ).hexdigest()
+        self.assertEqual(digest, "196bae318ebf79cf9264ecd4fae1bcca912ab8ae")
+        self.assertEqual(
+            self.shell('service_file_is_managed "$2" "$3"').returncode, 0,
+        )
+
+    def test_legacy_unit_is_migrated_to_current_paths(self):
+        result = self.shell('replace_legacy_systemd_unit "$3" "$2"')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.target.read_bytes(), self.template.read_bytes())
+        self.assertEqual(list(self.root.glob(".auto-cpufreq-previous.*")), [])
+
+    def test_custom_unit_is_preserved(self):
+        self.target.write_text(LEGACY_SYSTEMD_31 + "# administrator edit\n")
+        result = self.shell('replace_legacy_systemd_unit "$3" "$2"')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("# administrator edit", self.target.read_text())
+
+
 class DinitEnabledDependencyTest(unittest.TestCase):
     def test_documented_system_service_directories_are_considered(self):
         for path in ("/etc/dinit.d/boot", "/run/dinit.d/boot",
