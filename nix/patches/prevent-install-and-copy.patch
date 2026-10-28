@@ -25,11 +25,19 @@ diff --git a/auto_cpufreq/core.py b/auto_cpufreq/core.py
  
  def footer(l=79): print("\n" + "-" * l + "\n")
  
-@@ -386,68 +379,10 @@
+@@ -386,86 +379,10 @@
      footer()
  
- def deploy_daemon():
+-def deploy_daemon():
 -    print("\n" + "-" * 21 + " Deploying auto-cpufreq as a daemon " + "-" * 22 + "\n")
+-
+-    # Pin the script to one installed generation before changing host state.
+-    from auto_cpufreq.modules.daemon_script_paths import resolve_daemon_script
+-    try:
+-        install_script = resolve_daemon_script(SCRIPTS_DIR, "install")
+-    except (OSError, RuntimeError) as error:
+-        print(f"Cannot locate auto-cpufreq install script: {error}")
+-        return 1
 -
 -    cpufreqctl() # deploy cpufreqctl script func call
 -
@@ -53,11 +61,9 @@ diff --git a/auto_cpufreq/core.py b/auto_cpufreq/core.py
 -
 -    tlp_service_detect() # output warning if TLP service is detected
 -
--    return call("/usr/local/bin/auto-cpufreq-install", shell=True)
-+    # prevent needless copying and system changes
-+    return 0
- 
- def remove_daemon():
+-    return call(["bash", str(install_script)])
+-
+-def remove_daemon():
 -    # check if auto-cpufreq is installed
 -    if not os.path.exists("/usr/local/bin/auto-cpufreq-remove"):
 -        print("\nauto-cpufreq daemon is not installed.\n")
@@ -69,7 +75,17 @@ diff --git a/auto_cpufreq/core.py b/auto_cpufreq/core.py
 -    # system cleanup succeeds. Restoring competing services before that point
 -    # could leave them running alongside an auto-cpufreq daemon that failed to
 -    # stop, and would make a failed removal unsafe to retry.
--    remove_status = call("/usr/local/bin/auto-cpufreq-remove", shell=True)
+-    # Prefer the script from the active generation. A missing source tree
+-    # may be an incomplete legacy uninstall: keep the original removal helper
+-    # as a recovery path so an existing daemon is not stranded.
+-    from auto_cpufreq.modules.daemon_script_paths import resolve_daemon_script
+-    try:
+-        remove_script = resolve_daemon_script(SCRIPTS_DIR, "remove")
+-    except (OSError, RuntimeError) as error:
+-        print(f"Source remove script unavailable ({error}); using installed helper.")
+-        remove_script = Path("/usr/local/bin/auto-cpufreq-remove")
+-
+-    remove_status = call(["bash", str(remove_script)])
 -    if remove_status != 0:
 -        return remove_status
 -
@@ -93,6 +109,13 @@ diff --git a/auto_cpufreq/core.py b/auto_cpufreq/core.py
 -        auto_cpufreq_stats_path.unlink()
 -
 -    cpufreqctl_restore() # restore original cpufrectl script
-     return 0
- 
+-    return 0
+-
++def deploy_daemon():
++    # prevent needless copying and system changes
++    return 0
++
++def remove_daemon():
++    return 0
++
  def gov_check():
