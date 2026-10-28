@@ -94,12 +94,15 @@ function directory_contains_only {
     return 0
 }
 
-# runit allows custom ramdisk locations for the supervise symlink.
-# The location alone cannot establish ownership: also require the managed
-# service run script, root ownership and recognized runsv state.
+# Runit supports ramdisk supervise symlinks, but an arbitrary /run
+# directory with the right FIFO names could belong to a different service.
+# Recognize common service-specific layouts; leave other custom supervisors
+# untouched rather than risk sending a shutdown to the wrong runsv process.
 function runit_supervise_target_is_managed {
     case "$1" in
-      /run/*) return 0 ;;
+      /run/auto-cpufreq|/run/sv.auto-cpufreq|/run/auto-cpufreq-supervise|\
+      /run/*/auto-cpufreq|/run/*/sv.auto-cpufreq|\
+      /run/*/auto-cpufreq/supervise) return 0 ;;
       *) return 1 ;;
     esac
 }

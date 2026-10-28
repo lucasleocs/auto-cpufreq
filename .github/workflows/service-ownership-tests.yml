@@ -5,12 +5,16 @@ on:
     paths:
       - "scripts/auto-cpufreq-install.sh"
       - "scripts/auto-cpufreq-remove.sh"
+      - "auto_cpufreq/core.py"
+      - "auto_cpufreq/modules/daemon_helper_publish.py"
       - "tests/test_service_ownership.py"
       - ".github/workflows/service-ownership-tests.yml"
   pull_request:
     paths:
       - "scripts/auto-cpufreq-install.sh"
       - "scripts/auto-cpufreq-remove.sh"
+      - "auto_cpufreq/core.py"
+      - "auto_cpufreq/modules/daemon_helper_publish.py"
       - "tests/test_service_ownership.py"
       - ".github/workflows/service-ownership-tests.yml"
 

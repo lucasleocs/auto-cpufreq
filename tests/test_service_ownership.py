@@ -96,6 +96,48 @@ class HelpersTest(unittest.TestCase):
                 )
                 self.assertNotEqual(self.validate(target, kind).returncode, 0)
 
+    def test_verified_release_history_is_recognized(self):
+        # checkout@v4 with fetch-depth: 0 includes the official release tags.
+        # Exercise both the shell preflight and the Python publication guard.
+        history = (
+            ("v3.1.0", "install", "1e962aadb949cda33f0f1a26f3af036821150b65"),
+            ("v3.1.0", "remove", "66636a1ee289d24c51fb2b0298791e3e37862286"),
+            ("v2.3.0", "install", "a19232084061bf01d04a560a739b401b612bd33d"),
+            ("v2.3.0", "remove", "659e7ab2d3a4526a51b6d11af1d951644c62c3a0"),
+            ("v1.9.9", "install", "119f51541c582fe9b9834de3d72b62c14ee209e4"),
+            ("v1.9.9", "remove", "659e7ab2d3a4526a51b6d11af1d951644c62c3a0"),
+            ("v1.8.2", "install", "1bae02ede93501b283061fc977ae40886134dfb4"),
+            ("v1.8.2", "remove", "293fa48be0fd6b52e82f6ff528bdaff1c5cb986e"),
+        )
+        core = (ROOT / "auto_cpufreq/core.py").read_text()
+        for tag, kind, digest in history:
+            with self.subTest(tag=tag, kind=kind):
+                data = subprocess.run(
+                    ["git", "show", tag + ":scripts/auto-cpufreq-" + kind + ".sh"],
+                    cwd=ROOT, capture_output=True, check=True,
+                ).stdout
+                target = self.root / (kind + "-" + tag)
+                target.write_bytes(data)
+                self.assertEqual(self.validate(target, kind).returncode, 0)
+                self.assertIn(digest, core)
+                with mock.patch.object(
+                    publishing, "_root_owned_regular", return_value=True
+                ):
+                    self.assertTrue(publishing._owned_helper(
+                        target,
+                        self.templates / ("auto-cpufreq-" + kind + ".sh"),
+                        (digest,),
+                    ))
+                target.write_bytes(data + b"\necho changed\n")
+                with mock.patch.object(
+                    publishing, "_root_owned_regular", return_value=True
+                ):
+                    self.assertFalse(publishing._owned_helper(
+                        target,
+                        self.templates / ("auto-cpufreq-" + kind + ".sh"),
+                        (digest,),
+                    ))
+
     def test_verified_previous_generation_is_recognized(self):
         # The Git blob identity is from upstream before the review branch.
         for kind in ("install", "remove"):
@@ -126,6 +168,38 @@ class AtomicHelperPublishTest(unittest.TestCase):
             publishing.publish_daemon_helper(
                 self.template, self.target, "deadbeef",
             )
+
+    def test_identical_helper_does_not_require_rename_exchange(self):
+        self.target.write_bytes(b"new trusted helper")
+        self.target.chmod(0o755)
+        with mock.patch.object(
+            publishing, "_exchange",
+            side_effect=OSError("RENAME_EXCHANGE unavailable"),
+        ):
+            self.publish()
+        self.assertEqual(self.target.read_bytes(), b"new trusted helper")
+
+    def test_unsupported_exchange_preserves_existing_helper(self):
+        import errno
+        self.target.write_bytes(b"old legitimate helper")
+        self.target.chmod(0o755)
+        old_blob = publishing.hashlib.sha1(
+            b"blob 21\0old legitimate helper"
+        ).hexdigest()
+        with mock.patch.object(
+            publishing, "_root_owned_regular", return_value=True
+        ), mock.patch.object(
+            publishing, "_exchange",
+            side_effect=OSError(errno.EOPNOTSUPP, "Not supported"),
+        ):
+            with self.assertRaises(OSError):
+                publishing.publish_daemon_helper(
+                    self.template, self.target, (old_blob,),
+                )
+        self.assertEqual(self.target.read_bytes(), b"old legitimate helper")
+        self.assertEqual(
+            list(self.root.glob(".auto-cpufreq-install.*")), [],
+        )
 
     def test_first_install_refuses_to_clobber_racing_file(self):
         original = publishing.os.link
@@ -182,13 +256,15 @@ class RunitDestinationTest(unittest.TestCase):
             "/run/runit/supervise/auto-cpufreq",
             "/run/sv.auto-cpufreq",
             "/run/auto-cpufreq-supervise",
-            "/run/sv.other-auto-cpufreq",
-            "/run/auto-cpufreq-other/supervise",
-            "/run/custom-runit-supervisor",
+            "/run/team/auto-cpufreq/supervise",
         )
         refused = (
             "/tmp/auto-cpufreq",
             "/etc/auto-cpufreq",
+            "/run/sv.other-auto-cpufreq",
+            "/run/auto-cpufreq-other/supervise",
+            "/run/custom-runit-supervisor",
+            "/run/other-service",
         )
         for source in (INSTALL, REMOVE):
             predicate = extract(

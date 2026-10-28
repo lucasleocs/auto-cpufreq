@@ -124,12 +124,15 @@ function directory_contains_only {
     return 0
 }
 
-# runit allows custom ramdisk locations for the supervise symlink.
-# The location alone cannot establish ownership: also require the managed
-# service run script, root ownership and recognized runsv state.
+# Runit supports ramdisk supervise symlinks, but an arbitrary /run
+# directory with the right FIFO names could belong to a different service.
+# Recognize common service-specific layouts; leave other custom supervisors
+# untouched rather than risk sending a shutdown to the wrong runsv process.
 function runit_supervise_target_is_managed {
     case "$1" in
-      /run/*) return 0 ;;
+      /run/auto-cpufreq|/run/sv.auto-cpufreq|/run/auto-cpufreq-supervise|\
+      /run/*/auto-cpufreq|/run/*/sv.auto-cpufreq|\
+      /run/*/auto-cpufreq/supervise) return 0 ;;
       *) return 1 ;;
     esac
 }
@@ -216,7 +219,7 @@ function s6_bundle_entry_is_managed {
 # Recognize its stable source signature; do not overwrite an unrelated regular
 # file merely because its file type is safe. A missing file is a retry state.
 function daemon_helper_is_managed {
-    local path="$1" kind="$2" template legacy_blob digest
+    local path="$1" kind="$2" template known_blobs digest
 
     if [ ! -e "$path" ] && [ ! -L "$path" ]; then
         return 0
@@ -228,11 +231,12 @@ function daemon_helper_is_managed {
       install)
         template="$SHARE_DIR/scripts/auto-cpufreq-install.sh"
         # Verified upstream helper in the merged PR #975/#985 generation.
-        legacy_blob=ed088b544b5d4e36a4ae45105e9f16d32dd12ac0
+        # Exact blobs of official v3.2, v3.1-v2.4, v2.3-v2.0 and v1.9-v1.8 releases.
+        known_blobs="ed088b544b5d4e36a4ae45105e9f16d32dd12ac0 1e962aadb949cda33f0f1a26f3af036821150b65 a19232084061bf01d04a560a739b401b612bd33d 119f51541c582fe9b9834de3d72b62c14ee209e4 b85811b6e97d3257bfa56e558a0df40bbcbc3a08 1bae02ede93501b283061fc977ae40886134dfb4"
         ;;
       remove)
         template="$SHARE_DIR/scripts/auto-cpufreq-remove.sh"
-        legacy_blob=3004e13b49c0dc71f5c91a253280a0467134a2c0
+        known_blobs="3004e13b49c0dc71f5c91a253280a0467134a2c0 66636a1ee289d24c51fb2b0298791e3e37862286 659e7ab2d3a4526a51b6d11af1d951644c62c3a0 293fa48be0fd6b52e82f6ff528bdaff1c5cb986e 73dfc1cf8d32ea170f2712fbf23fbc9a652b3812"
         ;;
       *) return 1 ;;
     esac
@@ -247,7 +251,10 @@ function daemon_helper_is_managed {
       { printf 'blob %s\0' "$(wc -c < "$path")"; cat -- "$path"; } |
         sha1sum
     )" || return 1
-    [ "${digest%% *}" = "$legacy_blob" ]
+    case " $known_blobs " in
+      *" ${digest%% *} "*) return 0 ;;
+      *) return 1 ;;
+    esac
 }
 
 function daemon_install_preflight {

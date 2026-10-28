@@ -35,8 +35,9 @@ def _owned_helper(path, template, historical_blob):
         return False
     if data == current:
         return True
-    header = ("blob %d\\0" % len(data)).encode("ascii")
-    return hashlib.sha1(header + data).hexdigest() == historical_blob
+    header = ("blob %d\0" % len(data)).encode("ascii")
+    known_blobs = (historical_blob,) if isinstance(historical_blob, str) else historical_blob
+    return hashlib.sha1(header + data).hexdigest() in known_blobs
 
 
 def _exchange(left, right):
@@ -56,6 +57,13 @@ def _exchange(left, right):
     )
     if result != 0:
         error = ctypes.get_errno()
+        if error in (22, 38, 95):  # EINVAL, ENOSYS, EOPNOTSUPP
+            raise OSError(
+                error,
+                "Atomic helper exchange is unsupported on this filesystem; "
+                "the existing executable was preserved",
+                os.fspath(right),
+            )
         raise OSError(error, os.strerror(error), os.fspath(right))
 
 
@@ -93,6 +101,13 @@ def publish_daemon_helper(template, target, historical_blob):
 
         if not _owned_helper(target, template, historical_blob):
             raise PermissionError("Refusing an unrecognized daemon helper: %s" % target)
+
+        # A reinstall of an identical official helper does not need a
+        # kernel-specific rename exchange. This matters on filesystems
+        # where RENAME_EXCHANGE is unsupported.
+        if (target.read_bytes() == staged.read_bytes()
+                and os.access(target, os.X_OK)):
+            return
 
         published_inode = os.stat(staged).st_ino
         published_device = os.stat(staged).st_dev
