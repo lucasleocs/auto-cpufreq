@@ -43,6 +43,68 @@ function publish_service_file {
     )
 }
 
+# Dinit reports "already enabled" when ANY dependency entry exists, even
+# an entry unrelated to auto-cpufreq. Verify boot's actual waits-for.d link.
+function dinit_enable_link_is_managed {
+    local boot_file="" candidate waits_dir link service_file
+    service_file=/etc/dinit.d/auto-cpufreq
+
+    # auto-cpufreq does not specify @meta enable-via; Dinit defaults to boot.
+    # Unrecognized boot definitions are not proof of a managed dependency.
+    for candidate in /etc/dinit.d/boot /usr/local/lib/dinit.d/boot /usr/lib/dinit.d/boot; do
+        if [ -f "$candidate" ] && [ ! -L "$candidate" ]; then
+            boot_file="$candidate"
+            break
+        fi
+    done
+    [ -n "$boot_file" ] || return 1
+    # The Dinit service-file syntax uses ':' for directory dependencies.
+    # Also accept '=' for compatible simple definitions, but reject includes
+    # that could override the setting from another service-file fragment.
+    # Do not approximate Dinit's include or variable-substitution parser:
+    # unverified configurations must remain errors, not false positives.
+    if grep -Eq '^[[:space:]]*@(include|include-opt)[[:space:]]' "$boot_file"; then
+        return 1
+    fi
+    waits_dir="$(sed -nE 's/^[[:space:]]*waits-for[.]d[[:space:]]*[:=][[:space:]]*([^[:space:]#]+)[[:space:]]*(#.*)?$/\1/p' "$boot_file")"
+    [ -n "$waits_dir" ] || return 1
+    case "$waits_dir" in
+        *$'\n'*) return 1 ;;
+        /*) link="$waits_dir/auto-cpufreq" ;;
+        *) link="$(dirname "$boot_file")/$waits_dir/auto-cpufreq" ;;
+    esac
+
+    [ -f "$service_file" ] && [ ! -L "$service_file" ] \
+        && [ -L "$link" ] \
+        && [ "$(readlink -f -- "$link")" = "$(readlink -f -- "$service_file")" ]
+}
+
+function dinit_enable {
+    local output status
+    output="$(dinitctl enable auto-cpufreq 2>&1)"
+    status=$?
+    [ -z "$output" ] || printf '%s\n' "$output"
+    [ "$status" -eq 0 ] && return 0
+    if [ "$output" = "dinitctl: service already enabled." ]; then
+        if dinit_enable_link_is_managed; then
+            return 0
+        fi
+        echo "Error: Dinit has an existing, unverified auto-cpufreq boot dependency." >&2
+    fi
+    return "$status"
+}
+
+function service_file_is_managed {
+    local target="$1" template="$2"
+    # Missing paths are legitimate partial-install/removal retry states.
+    if [ ! -e "$target" ] && [ ! -L "$target" ]; then
+      return 0
+    fi
+    [ -f "$target" ] && [ ! -L "$target" ] \
+      && [ -f "$template" ] \
+      && cmp -s -- "$template" "$target"
+}
+
 function directory_contains_only {
     local allowed allowed_name entry
     local directory="$1"
@@ -105,17 +167,207 @@ function s6_service_is_managed {
     return 0
 }
 
-case "$(ps h -o comm 1)" in
-  dinit) 
-    echo -e "\n* Deploying auto-cpufreq (dinit) unit file"
-    cp "$SHARE_DIR/scripts/auto-cpufreq-dinit" /etc/dinit.d/auto-cpufreq || exit $?
+function s6_bundle_entry_is_managed {
+    local entry="$1"
+    # Artix s6-service stores bundle membership as an empty regular file.
+    # Never remove or reuse a symlink, directory or administrative contents.
+    if [ ! -e "$entry" ] && [ ! -L "$entry" ]; then
+      return 0
+    fi
+    [ -f "$entry" ] && [ ! -L "$entry" ] && [ ! -s "$entry" ]
+}
 
-    auto_cpufreq_install "dinit" "dinitctl start auto-cpufreq" "dinitctl enable auto-cpufreq" || exit $?
+# Read-only preflight before changing Bluetooth, competing services or helpers.
+# Historical installs may contain an older but legitimate helper script.
+# Recognize its stable source signature; do not overwrite an unrelated regular
+# file merely because its file type is safe. A missing file is a retry state.
+function daemon_helper_is_managed {
+    local path="$1" kind="$2" function_name
+
+    if [ ! -e "$path" ] && [ ! -L "$path" ]; then
+        return 0
+    fi
+    [ -f "$path" ] && [ ! -L "$path" ] || return 1
+    [ "$(stat -c '%u' -- "$path" 2>/dev/null)" = 0 ] || return 1
+
+    case "$kind" in
+        install) function_name=install; kind="install" ;;
+        remove) function_name=remove; kind="removal" ;;
+        *) return 1 ;;
+    esac
+    [ "$(sed -n '1p' "$path")" = '#!/usr/bin/env bash' ] \
+        && [ "$(sed -n '3p' "$path")" = "# auto-cpufreq daemon $kind script" ] \
+        && [ "$(sed -n '4p' "$path")" = '# reference: https://github.com/AdnanHodzic/auto-cpufreq' ] \
+        && grep -Fqx "function auto_cpufreq_$function_name {" "$path"
+}
+
+function daemon_install_preflight {
+    local init_system service_file managed_file service_dir active_link required_command service_parent
+    # Both helper paths are subsequently copied by deploy_daemon().
+    # Check provenance as well as file type before any host state is changed.
+    if ! daemon_helper_is_managed /usr/local/bin/auto-cpufreq-install install; then
+        echo "Error: Refusing to overwrite an unrecognized auto-cpufreq-install helper." >&2
+        return 1
+    fi
+    if ! daemon_helper_is_managed /usr/local/bin/auto-cpufreq-remove remove; then
+        echo "Error: Refusing to overwrite an unrecognized auto-cpufreq-remove helper." >&2
+        return 1
+    fi
+    init_system="$(ps h -o comm 1)" || return 1
+    case "$init_system" in
+      dinit|init|systemd)
+        case "$init_system" in
+          dinit) required_command=dinitctl
+                 service_file=/etc/dinit.d/auto-cpufreq
+                 managed_file="$SHARE_DIR/scripts/auto-cpufreq-dinit" ;;
+          init) required_command=rc-service
+                service_file=/etc/init.d/auto-cpufreq
+                managed_file="$SHARE_DIR/scripts/auto-cpufreq-openrc" ;;
+          systemd) required_command=systemctl
+                   service_file=/etc/systemd/system/auto-cpufreq.service
+                   managed_file="$SHARE_DIR/scripts/auto-cpufreq.service" ;;
+        esac
+        command -v "$required_command" >/dev/null 2>&1 || {
+          echo "Error: Missing $init_system command: $required_command" >&2
+          return 1
+        }
+        if [ "$init_system" = init ]; then
+          command -v rc-update >/dev/null 2>&1 || {
+            echo "Error: Missing OpenRC command: rc-update" >&2
+            return 1
+          }
+        fi
+        if [ ! -d "$(dirname "$service_file")" ]; then
+          echo "Error: Missing $init_system service directory: $(dirname "$service_file")" >&2
+          return 1
+        fi
+        if [ ! -f "$managed_file" ]; then
+          echo "Error: Missing managed $init_system service template: $managed_file" >&2
+          return 1
+        fi
+        service_file_is_managed "$service_file" "$managed_file" || {
+          echo "Error: Refusing an unmanaged $init_system service file: $service_file" >&2
+          return 1
+        }
+        ;;
+      runit)
+        if [ ! -f /etc/os-release ]; then
+          echo "Error: Runit distribution could not be determined." >&2
+          return 1
+        fi
+        local ID
+        . /etc/os-release
+        case "$ID" in
+          void) service_dir=/etc/sv/auto-cpufreq
+                active_link=/var/service/auto-cpufreq ;;
+          artix) service_dir=/etc/runit/sv/auto-cpufreq
+                 active_link=/run/runit/service/auto-cpufreq ;;
+          *) echo "Error: Unsupported runit distribution: $ID" >&2
+             return 1 ;;
+        esac
+        command -v sv >/dev/null 2>&1 || {
+          echo "Error: Missing runit command: sv" >&2
+          return 1
+        }
+        for service_parent in "$(dirname "$service_dir")" "$(dirname "$active_link")"; do
+          if [ ! -d "$service_parent" ]; then
+            echo "Error: Missing runit directory: $service_parent" >&2
+            return 1
+          fi
+        done
+        if [ ! -f "$SHARE_DIR/scripts/auto-cpufreq-runit" ]; then
+          echo "Error: Missing runit service template." >&2
+          return 1
+        fi
+        runit_service_is_managed "$service_dir" || {
+          echo "Error: Refusing an unmanaged runit directory: $service_dir" >&2
+          return 1
+        }
+        if [ -L "$active_link" ]; then
+          [ "$(readlink "$active_link")" = "$service_dir" ] || {
+            echo "Error: Refusing an unmanaged runit link: $active_link" >&2
+            return 1
+          }
+        elif [ -e "$active_link" ]; then
+          echo "Error: Refusing an unmanaged runit path: $active_link" >&2
+          return 1
+        fi
+        ;;
+      s6-svscan)
+        for required_command in flock s6-service s6-db-reload s6-rc; do
+          command -v "$required_command" >/dev/null 2>&1 || {
+            echo "Error: Missing s6 command: $required_command" >&2
+            return 1
+          }
+        done
+        for service_parent in /etc/s6/sv /etc/s6/adminsv/default/contents.d; do
+          if [ ! -d "$service_parent" ]; then
+            echo "Error: Missing s6 service directory: $service_parent" >&2
+            return 1
+          fi
+        done
+        if [ -e /etc/s6/sv/.auto-cpufreq-removing ] ||
+           [ -L /etc/s6/sv/.auto-cpufreq-removing ]; then
+          echo "Error: Incomplete s6 removal; retry removal before installing." >&2
+          return 1
+        fi
+        if [ ! -f "$SHARE_DIR/scripts/auto-cpufreq-s6/run" ] ||
+           [ ! -f "$SHARE_DIR/scripts/auto-cpufreq-s6/type" ]; then
+          echo "Error: Missing s6 service templates." >&2
+          return 1
+        fi
+        s6_service_is_managed /etc/s6/sv/auto-cpufreq || {
+          echo "Error: Refusing an unmanaged s6 service definition." >&2
+          return 1
+        }
+        s6_bundle_entry_is_managed /etc/s6/adminsv/default/contents.d/auto-cpufreq || {
+          echo "Error: Refusing an unmanaged s6 bundle entry." >&2
+          return 1
+        }
+        ;;
+      *)
+        echo "Error: Unsupported init system: $init_system" >&2
+        return 1
+        ;;
+    esac
+    return 0
+}
+
+if [ "$1" = "--preflight" ]; then
+  daemon_install_preflight
+  exit $?
+fi
+
+# Re-check during the real install in case state changed after preflight.
+daemon_install_preflight || exit $?
+
+case "$(ps h -o comm 1)" in
+  dinit)
+    service_file=/etc/dinit.d/auto-cpufreq
+    managed_file="$SHARE_DIR/scripts/auto-cpufreq-dinit"
+    if ! service_file_is_managed "$service_file" "$managed_file"; then
+      echo "Error: Refusing to replace an unmanaged dinit unit: $service_file"
+      exit 1
+    fi
+    if [ ! -e "$service_file" ]; then
+      echo -e "\n* Deploying auto-cpufreq (dinit) unit file"
+      publish_service_file "$managed_file" "$service_file" 644 "$(dirname "$service_file")" || exit $?
+    fi
+
+    auto_cpufreq_install "dinit" "dinitctl start auto-cpufreq" "dinit_enable" || exit $?
   ;;
-  init) 
-    echo -e "\n* Deploying auto-cpufreq openrc unit file"
-    cp "$SHARE_DIR/scripts/auto-cpufreq-openrc" /etc/init.d/auto-cpufreq || exit $?
-    chmod +x /etc/init.d/auto-cpufreq || exit $?
+  init)
+    service_file=/etc/init.d/auto-cpufreq
+    managed_file="$SHARE_DIR/scripts/auto-cpufreq-openrc"
+    if ! service_file_is_managed "$service_file" "$managed_file"; then
+      echo "Error: Refusing to replace an unmanaged OpenRC unit: $service_file"
+      exit 1
+    fi
+    if [ ! -e "$service_file" ]; then
+      echo -e "\n* Deploying auto-cpufreq OpenRC unit file"
+      publish_service_file "$managed_file" "$service_file" 755 "$(dirname "$service_file")" || exit $?
+    fi
+    chmod +x "$service_file" || exit $?
 
     auto_cpufreq_install "openrc" "rc-service auto-cpufreq start" "rc-update add auto-cpufreq" || exit $?
   ;;
@@ -161,7 +413,7 @@ case "$(ps h -o comm 1)" in
     }
 
     if [ -f /etc/os-release ];then
-      eval "$(cat /etc/os-release)"
+      . /etc/os-release
       case $ID in
         void) runit_ln /etc /var || exit $?;;
         artix) runit_ln /etc/runit /run/runit || exit $?;;
@@ -227,6 +479,9 @@ case "$(ps h -o comm 1)" in
         trap 'rm -rf -- "$staged_dir"' EXIT
         cp -r "$SHARE_DIR/scripts/auto-cpufreq-s6/." "$staged_dir/" || exit $?
         chmod 755 "$staged_dir" || exit $?
+        # Git stores the s6 run template as data (0644); supervisors need
+        # an executable run script. Set the mode on the staged file.
+        chmod 755 "$staged_dir/run" || exit $?
         # s6-rc-compile ignores dot directories. Publish a new definition as
         # one rename, so another database build never sees half a service.
         if [ ! -e "$s6_service_dir" ]; then
@@ -242,6 +497,20 @@ case "$(ps h -o comm 1)" in
       ) || exit $?
     fi
 
+    # Repair a previously deployed 0644 run script (including partial
+    # installs), but only while its contents still match our template.
+    if ! s6_service_is_managed "$s6_service_dir"; then
+      echo "Error: Refusing to modify a changed s6 service definition." >&2
+      exit 1
+    fi
+    if [ ! -x "$s6_service_dir/run" ]; then
+      chmod 755 "$s6_service_dir/run" || exit $?
+    fi
+
+    if ! s6_bundle_entry_is_managed "$s6_bundle_entry"; then
+      echo "Error: Refusing an unmanaged s6 bundle entry: $s6_bundle_entry" >&2
+      exit 1
+    fi
     echo -e "\n* Add auto-cpufreq service (s6) to default bundle"
     if [ ! -e "$s6_bundle_entry" ] && [ ! -L "$s6_bundle_entry" ]; then
       s6-service add default auto-cpufreq 8<&- || exit $?

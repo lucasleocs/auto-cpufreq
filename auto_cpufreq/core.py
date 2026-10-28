@@ -388,6 +388,15 @@ def remove_complete_msg():
 def deploy_daemon():
     print("\n" + "-" * 21 + " Deploying auto-cpufreq as a daemon " + "-" * 22 + "\n")
 
+    # Reject install conflicts before modifying host power or Bluetooth state.
+    try:
+        preflight_status = call(["bash", str(SCRIPTS_DIR / "auto-cpufreq-install.sh"), "--preflight"])
+    except OSError as error:
+        print(f"Failed to preflight daemon installation: {error}")
+        return 1
+    if preflight_status != 0:
+        return preflight_status
+
     cpufreqctl() # deploy cpufreqctl script func call
 
     bluetooth_disable() # turn off bluetooth on boot
@@ -1049,26 +1058,6 @@ def set_powersave():
     set_frequencies("battery")
     footer()
 
-def mon_powersave():
-    cpuload, load1m = get_load()
-
-    if psutil.cpu_percent(percpu=False, interval=0.01) >= 30.0 or isclose(
-        max(psutil.cpu_percent(percpu=True, interval=0.01)), 100
-    ): print("High CPU load", end="")
-    elif load1m > powersave_load_threshold: print("High system load", end="")
-    else: print("Load optimal", end="")
-    display_system_load_avg()
-
-    if cpuload >= 20: print("suggesting to set turbo boost: on") # high cpu usage trigger
-    else: # set turbo state based on average of all core temperatures
-        from auto_cpufreq.modules.system_info import SystemInfo
-
-        print(f"Optimal total CPU usage: {cpuload}%, high average core temp: {SystemInfo.avg_temp()}°C")
-        print("suggesting to set turbo boost: off")
-    get_turbo()
-
-    footer()
-
 def set_performance():
     conf = config.get_config()
     override = get_override()
@@ -1186,54 +1175,6 @@ def set_performance():
     set_frequencies("charger")
     footer()
 
-def mon_performance():
-    from auto_cpufreq.modules.system_info import SystemInfo
-    cpuload, load1m = get_load()
-
-    if (
-        psutil.cpu_percent(percpu=False, interval=0.01) >= 20.0
-        or max(psutil.cpu_percent(percpu=True, interval=0.01)) >= 75
-    ):
-        print("High CPU load", end=""), display_system_load_avg()
-        
-
-        if cpuload >= 20: # high cpu usage trigger
-            print("suggesting to set turbo boost: on")
-            get_turbo()
-        # set turbo state based on average of all core temperatures
-        elif cpuload <= 25 and SystemInfo.avg_temp() >= 70:
-            print(f"Optimal total CPU usage: {cpuload}%, high average core temp: {SystemInfo.avg_temp()}°C")
-            print("suggesting to set turbo boost: off")
-            get_turbo()
-        else:
-            print("suggesting to set turbo boost: on")
-            get_turbo()
-    elif load1m > performance_load_threshold:
-        print("High system load", end=""), display_system_load_avg()
-        if cpuload >= 20: # high cpu usage trigger
-            print("suggesting to set turbo boost: on")
-            get_turbo()
-        elif cpuload <= 25 and SystemInfo.avg_temp() >= 65: # set turbo state based on average of all core temperatures
-            print(f"Optimal total CPU usage: {cpuload}%, high average core temp: {SystemInfo.avg_temp()}°C")
-            print("suggesting to set turbo boost: off")
-            get_turbo()
-        else:
-            print("suggesting to set turbo boost: on")
-            get_turbo()
-    else:
-        print("Load optimal", end=""), display_system_load_avg()
-        if cpuload >= 20: # high cpu usage trigger
-            print("suggesting to set turbo boost: on")
-            get_turbo()
-        elif cpuload <= 25 and SystemInfo.avg_temp() >= 60: # set turbo state based on average of all core temperatures
-            print(f"Optimal total CPU usage: {cpuload}%, high average core temp: {SystemInfo.avg_temp()}°C")
-            print("suggesting to set turbo boost: off")
-            get_turbo()
-        else:
-            print("suggesting to set turbo boost: on")
-            get_turbo()
-    footer()
-
 def set_autofreq():
     """
     set cpufreq governor based if device is charging
@@ -1247,25 +1188,6 @@ def set_autofreq():
     else:
         print("Battery is: discharging\n")
         set_powersave()
-
-def mon_autofreq():
-    """
-    make cpufreq suggestions
-    :return:
-    """
-    print("\n" + "-" * 28 + " CPU frequency scaling " + "-" * 28 + "\n")
-
-    # determine which governor should be used
-    if charging():
-        print("Battery is: charging\n")
-        get_current_gov()
-        print(f'Suggesting use of "{AVAILABLE_GOVERNORS_SORTED[0]}" governor')
-        mon_performance()
-    else:
-        print("Battery is: discharging\n")
-        get_current_gov()
-        print(f'Suggesting use of "{AVAILABLE_GOVERNORS_SORTED[-1]}" governor')
-        mon_powersave()
 
 def python_info():
     print("Python:", platform.python_version())
@@ -1301,110 +1223,6 @@ def distro_info():
 
     print("Linux distro: " + dist)
     print("Linux kernel: " + platform.release())
-def sysinfo():
-    """
-    get system information
-    """
-    # processor_info
-    model_name = getoutput("grep -E 'model name' /proc/cpuinfo -m 1").split(":")[-1]
-    print(f"Processor:{model_name}")
-
-    # get core count
-    total_cpu_count = int(getoutput("nproc"))
-    print("Cores:", total_cpu_count)
-
-    # get architecture
-    cpu_arch = platform.machine()
-    print("Architecture:", cpu_arch)
-
-    # get driver
-    driver = getoutput("cpufreqctl.auto-cpufreq --driver")
-    print("Driver: " + driver)
-
-    config_path = config.path if config.has_config() else None
-    if config_path is None:
-        from auto_cpufreq.config.config import find_config_file
-        config_path = find_config_file(None)
-    if os.path.isfile(config_path):
-        print(f"\nUsing settings defined in {config_path}")
-
-    # get usage and freq info of cpus
-    usage_per_cpu = psutil.cpu_percent(interval=1, percpu=True)
-    # psutil current freq not used, gives wrong values with offline cpu's
-    minmax_freq_per_cpu = psutil.cpu_freq(percpu=True)
-
-    # max and min freqs, psutil reports wrong max/min freqs with offline cores with percpu=False
-    max_freq = max([freq.max for freq in minmax_freq_per_cpu])
-    min_freq = min([freq.min for freq in minmax_freq_per_cpu])
-    print("\n" + "-" * 30 + " Current CPU stats " + "-" * 30 + "\n")
-    print(f"CPU max frequency: {max_freq:.0f} MHz")
-    print(f"CPU min frequency: {min_freq:.0f} MHz\n")
-
-    # get coreid's and frequencies of online cpus by parsing /proc/cpuinfo
-    coreid_info = getoutput("grep -E 'processor|cpu MHz|core id' /proc/cpuinfo").split("\n")
-    cpu_core = dict()
-    freq_per_cpu = []
-    for i in range(0, len(coreid_info), 3):
-        # ensure that indices are within the valid range, before accessing the corresponding elements
-        if i + 1 < len(coreid_info): freq_per_cpu.append(float(coreid_info[i + 1].split(":")[-1]))
-        else: continue # handle the case where the index is out of range
-        # ensure that indices are within the valid range, before accessing the corresponding elements
-        cpu = int(coreid_info[i].split(":")[-1])
-        if i + 2 < len(coreid_info):
-            core = int(coreid_info[i + 2].split(":")[-1])
-            cpu_core[cpu] = core
-        else: continue # handle the case where the index is out of range
-
-    online_cpu_count = len(cpu_core)
-    offline_cpus = [str(cpu) for cpu in range(total_cpu_count) if cpu not in cpu_core]
-
-    # temperatures
-    temp_sensors = psutil.sensors_temperatures()
-    temp_per_cpu = [float("nan")] * online_cpu_count
-    try:
-        # the priority for CPU temp is as follows: coretemp sensor -> sensor with CPU in the label -> acpi -> k10temp
-        if "coretemp" in temp_sensors:
-            # list labels in 'coretemp'
-            core_temp_labels = [temp.label for temp in temp_sensors["coretemp"]]
-            for i, cpu in enumerate(cpu_core):
-                # get correct index in temp_sensors
-                core = cpu_core[cpu]
-                cpu_temp_index = core_temp_labels.index(f"Core {core}")
-                temp_per_cpu[i] = temp_sensors["coretemp"][cpu_temp_index].current
-        else:
-            # iterate over all sensors
-            for sensor in temp_sensors:
-                # iterate over all temperatures in the current sensor
-                for temp in temp_sensors[sensor]:
-                    if ('CPU' in temp.label or 'Tctl' in temp.label) and temp.current != 0:
-                        temp_per_cpu = [temp.current] * online_cpu_count
-                        break
-                else: continue
-                break
-            else:
-                for sensor in ["acpitz", "k10temp", "zenpower"]:
-                    if sensor in temp_sensors and temp_sensors[sensor][0].current != 0:
-                        temp_per_cpu = [temp_sensors[sensor][0].current] * online_cpu_count
-                        break
-    except Exception as e: print(repr(e))
-
-    print("Core\tUsage\tTemperature\tFrequency")
-    for (cpu, usage, freq, temp) in zip(cpu_core, usage_per_cpu, freq_per_cpu, temp_per_cpu):
-        print(f"CPU{cpu}    {usage:>5.1f}%       {temp:>3.0f} °C     {freq:>5.0f} MHz")
-
-    if offline_cpus: print(f"\nDisabled CPUs: {','.join(offline_cpus)}")
-
-    # print current fan speed (only if > 0)
-    current_fans = list(psutil.sensors_fans())
-    for current_fan in current_fans:
-        fan_speed = psutil.sensors_fans()[current_fan][0].current
-        if fan_speed:
-            print(f"\nCPU fan speed: {fan_speed} RPM")
-
-def read_stats():
-    if os.path.isfile(auto_cpufreq_stats_path): call(["tail", "-n 50", "-f", str(auto_cpufreq_stats_path)], stderr=DEVNULL)
-    footer()
-
 # check if program (argument) is running
 def is_running(program, argument):
     # iterate over all processes found by psutil

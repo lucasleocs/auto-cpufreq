@@ -18,7 +18,6 @@ PREPARED_RELEASE=""
 PYTHON_BIN="/usr/bin/python3"
 PYGOBJECT_INSTALL="pypi"
 
-SHARE_DIR="$CURRENT_PATH/share"
 LEGACY_SHARE_DIR="/usr/local/share/auto-cpufreq"
 
 AUTO_CPUFREQ_FILE="/usr/local/bin/auto-cpufreq"
@@ -563,8 +562,8 @@ function build_release {
 
 function tool_install {
   local active_version
+  local install_error=""
   local candidate_is_active
-  local integration_files_published=false
   local prepared_share_dir
   local previous_release=""
   local -a PUBLIC_FILE_BACKUPS PUBLIC_FILE_MODES PUBLIC_FILE_TARGETS
@@ -791,43 +790,27 @@ function tool_install {
   fi
 
   # Candidate checks do not exercise the stable command users invoke. Verify
-  # that the published wrapper resolves current before announcing success.
+  # that the published wrapper resolves current before publishing integrations.
   if ! active_version="$("$PREPARED_RELEASE/venv/bin/python" -c \
     'from importlib.metadata import version; print(version("auto-cpufreq"))')" \
     || [ -z "$active_version" ] \
     || ! verify_command_version "$AUTO_CPUFREQ_FILE" "$active_version"; then
-    echo "Error: The installed auto-cpufreq command failed its final version check."
-    candidate_is_active=true
-    if [ -n "$previous_release" ]; then
-      if activate_release "$previous_release"; then
-        candidate_is_active=false
-      else
-        echo "Error: Failed to restore the previous active source release."
-      fi
-    elif rm -f -- "$CURRENT_PATH"; then
-      candidate_is_active=false
-    else
-      echo "Error: Failed to undo the first source release activation."
-    fi
-    restore_public_files || echo "Error: Failed to restore public auto-cpufreq files."
-    $candidate_is_active || discard_release "$PREPARED_RELEASE"
-    return 1
-  fi
-
-  if ! publish_file "$prepared_share_dir/images/icon.png" "$IMG_FILE" 644; then
-    echo "Error: Failed to install auto-cpufreq icon."
+    install_error="The installed auto-cpufreq command failed its final version check."
+  elif ! publish_file "$prepared_share_dir/images/icon.png" "$IMG_FILE" 644; then
+    install_error="Failed to install auto-cpufreq icon."
   elif ! publish_file "$prepared_share_dir/scripts/$(basename "$ORG_FILE")" "$ORG_FILE" 644; then
-    echo "Error: Failed to install auto-cpufreq PolicyKit policy."
+    install_error="Failed to install auto-cpufreq PolicyKit policy."
   elif ! publish_file "$prepared_share_dir/scripts/start_app" "$AUTO_CPUFREQ_GTK_FILE" 755; then
-    echo "Error: Failed to install auto-cpufreq GTK launcher."
+    install_error="Failed to install auto-cpufreq GTK launcher."
   elif command -v desktop-file-install > /dev/null 2>&1 \
     && ! desktop-file-install --dir="$APPLICATIONS_PATH" "$prepared_share_dir/scripts/$AUTO_CPUFREQ_GTK_DESKTOP_FILE"; then
-    echo "Error: Failed to install the auto-cpufreq desktop entry."
-  else
-    integration_files_published=true
+    install_error="Failed to install the auto-cpufreq desktop entry."
   fi
 
-  if [ "$integration_files_published" != true ]; then
+  # The same rollback applies whether version verification or publication of
+  # an integration failed. Never delete a release still selected by current.
+  if [ -n "$install_error" ]; then
+    echo "Error: $install_error"
     candidate_is_active=true
     if [ -n "$previous_release" ]; then
       if activate_release "$previous_release"; then

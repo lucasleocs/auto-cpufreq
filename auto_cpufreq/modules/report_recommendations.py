@@ -3,6 +3,8 @@
 A recommendation is not an instruction to apply a policy. The daemon and
 Live mode continue to own all power-state changes independently.
 """
+from __future__ import annotations
+
 from dataclasses import dataclass
 from enum import Enum
 from math import isfinite
@@ -28,10 +30,6 @@ class Recommendation:
                            RecommendationStatus.NO_CHANGE):
             return self.target
         return None
-
-    @property
-    def needs_change(self):
-        return self.status is RecommendationStatus.CHANGE
 
 
 @dataclass(frozen=True)

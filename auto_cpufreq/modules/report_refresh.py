@@ -4,6 +4,8 @@ An adapter decides *when* to request refresh and *how* to deliver results
 onto GTK/GLib or Urwid's event loop. This module never touches widgets,
 system policy, or privileged APIs.
 """
+from __future__ import annotations
+
 from collections import deque
 from dataclasses import dataclass
 import logging
@@ -77,10 +79,6 @@ class RefreshResult:
     queue_seconds: float = 0.0
     requested_at: float = 0.0
     completed_at: float = 0.0
-
-    @property
-    def succeeded(self):
-        return self.error is None
 
 
 class ReportRefreshCoordinator:
