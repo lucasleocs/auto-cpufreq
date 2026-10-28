@@ -83,7 +83,7 @@ function service_file_is_managed {
         sha1sum
     )" || return 1
     case "${digest%% *}" in
-      196bae318ebf79cf9264ecd4fae1bcca912ab8ae|3362723156058579b70316aa16dd0440fcd090b2) return 0 ;;
+      196bae318ebf79cf9264ecd4fae1bcca912ab8ae|3362723156058579b70316aa16dd0440fcd090b2|024f4eb1daffd1535a9abf4e93ccaa8d42a39f7c) return 0 ;;
       *) return 1 ;;
     esac
 }

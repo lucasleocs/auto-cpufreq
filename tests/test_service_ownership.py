@@ -63,6 +63,19 @@ WantedBy=multi-user.target
 """
 
 
+LEGACY_SYSTEMD_18 = """[Unit]
+Description=auto-cpufreq - Automatic CPU speed & power optimizer for Linux
+After=network.target network-online.target
+
+[Service]
+Type=simple
+User=root
+ExecStart=/usr/local/bin/auto-cpufreq --daemon
+[Install]
+WantedBy=multi-user.target
+"""
+
+
 class LegacySystemdUnitTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -109,6 +122,18 @@ class LegacySystemdUnitTest(unittest.TestCase):
         self.assertEqual(
             self.shell('service_file_is_managed "$2" "$3"').returncode, 0,
         )
+
+    def test_v18_unit_is_migrated_to_current_paths(self):
+        import hashlib
+        self.target.write_text(LEGACY_SYSTEMD_18)
+        data = LEGACY_SYSTEMD_18.encode()
+        digest = hashlib.sha1(
+            ("blob %d\0" % len(data)).encode() + data
+        ).hexdigest()
+        self.assertEqual(digest, "024f4eb1daffd1535a9abf4e93ccaa8d42a39f7c")
+        result = self.shell('replace_legacy_systemd_unit "$3" "$2"')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.target.read_bytes(), self.template.read_bytes())
 
     def test_legacy_unit_is_migrated_to_current_paths(self):
         result = self.shell('replace_legacy_systemd_unit "$3" "$2"')
