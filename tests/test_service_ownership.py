@@ -233,6 +233,8 @@ class LegacySystemdUnitTest(unittest.TestCase):
             + branch + "\nesac\n"
         )
         log_path = self.root / "systemctl-events"
+        if log_path.exists():
+            log_path.unlink()
         result = bash(
             script, self.share.parent, self.target, self.template,
             "true" if active else "false", log_path,
