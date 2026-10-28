@@ -109,29 +109,104 @@ def publish_daemon_helper(template, target, historical_blob):
                 and os.access(target, os.X_OK)):
             return
 
-        published_inode = os.stat(staged).st_ino
-        published_device = os.stat(staged).st_dev
         _exchange(staged, target)
         # The swap can displace a different file than the earlier preflight
         # saw. Never delete that file unless its contents prove ownership.
         if not _owned_helper(staged, template, historical_blob):
-            try:
-                actual = os.lstat(target)
-                if (actual.st_dev, actual.st_ino) != (
-                    published_device, published_inode
-                ):
-                    cleanup_staged = False
-                    raise RuntimeError(
-                        "Helper changed again during rollback; displaced path "
-                        "preserved at %s" % staged
-                    )
-                _exchange(staged, target)
-            except OSError:
-                cleanup_staged = False
-                raise
+            # A second exchange after checking paths is another race. Keep
+            # the displaced inode, including unexpected administrator content.
+            # The newly published helper is still at target and the failed
+            # deployment must be reported for manual recovery.
+            cleanup_staged = False
             raise PermissionError(
-                "Daemon helper changed during publication; original restored"
+                "Unexpected helper displaced during publication; preserved "
+                "at %s; installed path is %s" % (staged, target)
             )
     finally:
         if cleanup_staged:
             staged.unlink(missing_ok=True)
+
+def publish_daemon_helpers(specifications):
+    """Publish a matched helper set, restoring prior known versions on error.
+
+    Each element is (template, target, historical_blobs). The first phase
+    validates *all* existing helpers, before touching either destination.
+    Existing versions are hard-linked to private recovery names on the same
+    filesystem. A failed later publication attempts a guarded rollback; if
+    another actor changed a target, keep its backup and report the location.
+    """
+    specs = [(Path(src), Path(dst), historical)
+             for src, dst, historical in specifications]
+    snapshots = []
+    attempted = []
+    preserve_snapshots = False
+    try:
+        for template, target, historical in specs:
+            if os.path.lexists(target):
+                if not _owned_helper(target, template, historical):
+                    raise PermissionError(
+                        "Refusing an unrecognized daemon helper: %s" % target
+                    )
+                fd, name = tempfile.mkstemp(
+                    prefix="." + target.name + ".recovery.", dir=str(target.parent)
+                )
+                os.close(fd)
+                os.unlink(name)
+                # Hard link retains the old inode without removing target.
+                os.link(target, name, follow_symlinks=False)
+                backup = Path(name)
+                snapshots.append((template, target, backup, historical))
+                if not _owned_helper(backup, template, historical):
+                    preserve_snapshots = True
+                    raise PermissionError(
+                        "Helper changed while snapshotting; recovery at %s" % backup
+                    )
+            else:
+                snapshots.append((template, target, None, historical))
+
+        for entry in snapshots:
+            template, target, _, historical = entry
+            attempted.append(entry)
+            publish_daemon_helper(template, target, historical)
+    except (OSError, RuntimeError) as primary:
+        failures = []
+        for template, target, backup, historical in reversed(attempted):
+            try:
+                if backup is None and not os.path.lexists(target):
+                    continue
+                if not _owned_helper(target, template, historical):
+                    raise PermissionError(
+                        "Helper changed during rollback: %s" % target
+                    )
+                if backup is None:
+                    # New path created by us. Do not delete an unknown file.
+                    if os.path.lexists(target):
+                        os.unlink(target)
+                elif not os.path.samefile(target, backup):
+                    # Restore the official previous inode through the same
+                    # guarded atomic publication, not an unchecked overwrite.
+                    updated = template.read_bytes()
+                    updated_hash = hashlib.sha1(
+                        ("blob %d\0" % len(updated)).encode("ascii") + updated
+                    ).hexdigest()
+                    publish_daemon_helper(backup, target, (updated_hash,))
+            except (OSError, RuntimeError) as error:
+                failures.append("%s: %s" % (target, error))
+        if failures:
+            preserve_snapshots = True
+            raise RuntimeError(
+                "Helper update failed (%s). Recovery snapshots preserved: %s. "
+                "Rollback errors: %s" %
+                (primary, [str(item[2]) for item in snapshots if item[2]],
+                 "; ".join(failures))
+            ) from primary
+        raise
+    finally:
+        # Preserve every snapshot if an automatic rollback was incomplete.
+        if not preserve_snapshots:
+            for _, _, backup, _ in snapshots:
+                if backup is not None:
+                    try:
+                        backup.unlink()
+                    except FileNotFoundError:
+                        pass

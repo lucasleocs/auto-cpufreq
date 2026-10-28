@@ -135,11 +135,53 @@ class LegacySystemdUnitTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(self.target.read_bytes(), self.template.read_bytes())
 
+    def test_legacy_unit_migration_keeps_path_present_during_exchange(self):
+        # The unit must exist at its original path during the only atomic
+        # exchange. A failed exchange must leave the old unit untouched.
+        migration = extract(
+            INSTALL, "function replace_legacy_systemd_unit {", "# Dinit reports",
+        )
+        self.assertIn("renameat2", migration)
+        self.assertNotIn('mv -T -- "$target"', migration)
+        before = self.target.read_bytes()
+        result = self.shell(
+            'python3() { return 1; }\nreplace_legacy_systemd_unit "$3" "$2"'
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(self.target.read_bytes(), before)
+
     def test_legacy_unit_is_migrated_to_current_paths(self):
         result = self.shell('replace_legacy_systemd_unit "$3" "$2"')
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(self.target.read_bytes(), self.template.read_bytes())
         self.assertEqual(list(self.root.glob(".auto-cpufreq-previous.*")), [])
+
+    def test_legacy_guard_is_used_by_install_and_removal(self):
+        # An exact cmp with only the current template would reject every
+        # valid historical unit before its migration function can run.
+        install_block = INSTALL.split('  systemd)\n')[-1].split(
+            '  s6-svscan)')[0]
+        remove_block = REMOVE.split('  systemd)\n')[-1].split(
+            '  s6-svscan)')[0]
+        self.assertIn(
+            'if ! service_file_is_managed "$systemd_unit" "$managed_systemd_unit"; then',
+            install_block,
+        )
+        self.assertIn(
+            'if ! service_file_is_managed "$systemd_unit" "$managed_systemd_unit"; then',
+            remove_block,
+        )
+        self.assertNotIn(
+            '&& ! cmp -s -- "$managed_systemd_unit" "$systemd_unit";',
+            install_block,
+        )
+
+    def test_systemd_active_migration_restarts_running_daemon(self):
+        fragment = INSTALL.split('  systemd)\n')[-1].split(
+            '  s6-svscan)')[0]
+        self.assertIn("systemctl is-active --quiet auto-cpufreq", fragment)
+        self.assertIn("systemctl restart auto-cpufreq", fragment)
+        self.assertIn("systemctl start auto-cpufreq", fragment)
 
     def test_custom_unit_is_preserved(self):
         self.target.write_text(LEGACY_SYSTEMD_31 + "# administrator edit\n")
@@ -372,24 +414,87 @@ class AtomicHelperPublishTest(unittest.TestCase):
             self.publish()
         self.assertEqual(self.target.read_bytes(), b"foreign helper")
 
-    def test_rolls_back_foreign_file_swapped_after_preflight(self):
+    def test_displaced_foreign_entry_is_preserved_without_second_swap(self):
         self.target.write_bytes(b"new trusted helper")
         exchange = publishing._exchange
-        swapped = []
+        calls = []
 
         def race(stage, path):
-            if not swapped:
-                swapped.append(True)
+            calls.append(True)
+            if len(calls) == 1:
                 Path(path).write_bytes(b"foreign concurrent edit")
             return exchange(stage, path)
 
         with mock.patch.object(publishing, "_exchange", side_effect=race):
             with self.assertRaises(PermissionError):
                 self.publish()
-        self.assertEqual(self.target.read_bytes(), b"foreign concurrent edit")
-        self.assertEqual(
-            list(self.root.glob(".auto-cpufreq-install.*")), [],
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(self.target.read_bytes(), b"new trusted helper")
+        recovered = list(self.root.glob(".auto-cpufreq-install.*"))
+        self.assertEqual(len(recovered), 1)
+        self.assertEqual(recovered[0].read_bytes(), b"foreign concurrent edit")
+
+    def test_second_helper_failure_restores_first_helper(self):
+        from hashlib import sha1
+        first_new = self.template
+        second_new = self.root / "second-template"
+        second_new.write_bytes(b"new remove helper")
+        first_target = self.target
+        second_target = self.root / "auto-cpufreq-remove"
+        first_target.write_bytes(b"old install helper")
+        second_target.write_bytes(b"old remove helper")
+
+        def blob(data):
+            return sha1(
+                ("blob %d\0" % len(data)).encode("ascii") + data
+            ).hexdigest()
+
+        originals = [first_target.read_bytes(), second_target.read_bytes()]
+        specs = (
+            (first_new, first_target, (blob(originals[0]),)),
+            (second_new, second_target, (blob(originals[1]),)),
         )
+        actual = publishing.publish_daemon_helper
+        calls = []
+
+        def fail_second(template, target, historical):
+            calls.append(str(target))
+            if len(calls) == 2:
+                raise OSError("simulated second publish failure")
+            return actual(template, target, historical)
+
+        with mock.patch.object(
+            publishing, "_root_owned_regular", return_value=True,
+        ), mock.patch.object(
+            publishing, "publish_daemon_helper", side_effect=fail_second,
+        ):
+            with self.assertRaises(OSError):
+                publishing.publish_daemon_helpers(specs)
+        self.assertEqual(first_target.read_bytes(), originals[0])
+        self.assertEqual(second_target.read_bytes(), originals[1])
+        self.assertFalse(list(self.root.glob("*.recovery.*")))
+
+    def test_second_helper_preflight_rejects_before_first_change(self):
+        from hashlib import sha1
+        self.target.write_bytes(b"old official")
+        other_target = self.root / "auto-cpufreq-remove"
+        other_target.write_bytes(b"administrator owned content")
+        data = self.target.read_bytes()
+        original_blob = sha1(
+            ("blob %d\0" % len(data)).encode() + data
+        ).hexdigest()
+        specs = (
+            (self.template, self.target, (original_blob,)),
+            (self.template, other_target, (original_blob,)),
+        )
+        with mock.patch.object(
+            publishing, "_root_owned_regular", return_value=True,
+        ):
+            with self.assertRaises(PermissionError):
+                publishing.publish_daemon_helpers(specs)
+        self.assertEqual(self.target.read_bytes(), data)
+        self.assertEqual(other_target.read_bytes(), b"administrator owned content")
+
 
 
 class RunitDestinationTest(unittest.TestCase):

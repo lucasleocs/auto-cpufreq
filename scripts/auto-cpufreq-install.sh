@@ -46,47 +46,49 @@ function publish_service_file {
 # Migrate an official pre-v3.2 unit without silently overwriting another
 # file that appears during installation. The legacy unit must move to a
 # private backup before we link a complete new file into its place.
+# Atomically exchange an official legacy unit with a complete new unit.
+# Keep an unexpected displaced entry for recovery instead of risking another
+# exchange that could overwrite or delete a concurrent administrator change.
 function replace_legacy_systemd_unit {
     (
-      local source="$1" target="$2" dir staged backup
-      local cleanup_backup=true
+      local source="$1" target="$2" dir staged cleanup=true
       dir="$(dirname "$target")"
       staged="$(mktemp "$dir/.auto-cpufreq-unit.XXXXXXXX")" || exit $?
-      backup="$(mktemp "$dir/.auto-cpufreq-previous.XXXXXXXX")" || exit $?
-      trap 'rm -f -- "$staged"; if $cleanup_backup; then rm -f -- "$backup"; fi' EXIT
-
+      trap 'if $cleanup; then rm -f -- "$staged"; fi' EXIT
       cp -- "$source" "$staged" || exit $?
       chmod 644 "$staged" || exit $?
       service_file_is_managed "$target" "$source" || exit 1
       [ -f "$target" ] && [ ! -L "$target" ] || exit 1
-      # RENAME overwrites only the empty private placeholder we created.
-      # The old unit is retained even if a foreign file raced into target.
-      mv -T -- "$target" "$backup" || exit $?
-      cleanup_backup=false
-      if ! service_file_is_managed "$backup" "$source"; then
-        [ -e "$target" ] || [ -L "$target" ] || ln -T -- "$backup" "$target"
-        echo "Error: Unit changed during migration; preserved at $backup" >&2
-        exit 1
+
+      # Exchange in one kernel operation; never leave the service path absent.
+      # A missing renameat2 or unsupported filesystem fails without modifying
+      # either file. Python is a required auto-cpufreq runtime dependency.
+      python3 - "$staged" "$target" <<'PYSWAP' || exit $?
+import ctypes
+import os
+import sys
+
+libc = ctypes.CDLL(None, use_errno=True)
+renameat2 = getattr(libc, "renameat2", None)
+if renameat2 is None:
+    sys.exit("Error: Atomic systemd migration requires Linux renameat2")
+renameat2.argtypes = (
+    ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_uint
+)
+renameat2.restype = ctypes.c_int
+if renameat2(-100, os.fsencode(sys.argv[1]), -100,
+             os.fsencode(sys.argv[2]), 2):
+    code = ctypes.get_errno()
+    raise OSError(code, os.strerror(code))
+PYSWAP
+
+      # The previous entry is now at staged. Recheck it after the atomic
+      # exchange: a concurrent change must never be silently discarded.
+      if ! service_file_is_managed "$staged" "$source"; then
+        cleanup=false
+        echo "Error: Unexpected unit encountered; preserved at $staged" >&2
+        return 1
       fi
-      if ! ln -T -- "$staged" "$target"; then
-        if [ ! -e "$target" ] && [ ! -L "$target" ]; then
-          ln -T -- "$backup" "$target" || {
-            echo "Error: Previous unit preserved at $backup" >&2
-            exit 1
-          }
-          cleanup_backup=true
-        else
-          echo "Error: Unit path changed; previous unit preserved at $backup" >&2
-        fi
-        exit 1
-      fi
-      # Do not discard the old unit if a concurrent actor replaced our link.
-      [ -f "$target" ] && [ ! -L "$target" ] \
-        && cmp -s -- "$source" "$target" || {
-          echo "Error: Unit changed; previous unit preserved at $backup" >&2
-          exit 1
-        }
-      cleanup_backup=true
     )
 }
 
@@ -556,12 +558,11 @@ case "$(ps h -o comm 1)" in
   systemd)
     systemd_unit=/etc/systemd/system/auto-cpufreq.service
     managed_systemd_unit="$SHARE_DIR/scripts/auto-cpufreq.service"
-    if [ -L "$systemd_unit" ] \
-      || { [ -e "$systemd_unit" ] \
-        && ! cmp -s -- "$managed_systemd_unit" "$systemd_unit"; }; then
+    if ! service_file_is_managed "$systemd_unit" "$managed_systemd_unit"; then
       echo "Error: Refusing to replace an unmanaged systemd unit: $systemd_unit"
       exit 1
     fi
+    unit_migrated=false
     if [ ! -e "$systemd_unit" ]; then
       echo -e "Deploying auto-cpufreq systemd unit file"
       publish_service_file "$managed_systemd_unit" "$systemd_unit" \
@@ -569,12 +570,19 @@ case "$(ps h -o comm 1)" in
     elif ! cmp -s -- "$managed_systemd_unit" "$systemd_unit"; then
       echo "Migrating an official legacy auto-cpufreq systemd unit"
       replace_legacy_systemd_unit "$managed_systemd_unit" "$systemd_unit" || exit $?
+      unit_migrated=true
     fi
 
     echo -e "\n* Reloading systemd manager configuration"
     systemctl daemon-reload || exit $?
 
-    auto_cpufreq_install "systemd" "systemctl start auto-cpufreq" "systemctl enable auto-cpufreq" || exit $?
+    # A migrated unit may point to a different Python environment. start
+    # leaves an already-running daemon untouched; restart only that case.
+    start_command="systemctl start auto-cpufreq"
+    if $unit_migrated && systemctl is-active --quiet auto-cpufreq; then
+      start_command="systemctl restart auto-cpufreq"
+    fi
+    auto_cpufreq_install "systemd" "$start_command" "systemctl enable auto-cpufreq" || exit $?
   ;;
   s6-svscan)
     for required_command in flock s6-service s6-db-reload s6-rc; do

@@ -399,34 +399,35 @@ def deploy_daemon():
 
     # Stage and atomically validate helpers before changing host power state.
     # The earlier shell preflight is advisory; it cannot close race windows.
-    from auto_cpufreq.modules.daemon_helper_publish import publish_daemon_helper
+    from auto_cpufreq.modules.daemon_helper_publish import publish_daemon_helpers
 
     try:
-        print("\n* Deploy auto-cpufreq install script")
-        publish_daemon_helper(
-            SCRIPTS_DIR / "auto-cpufreq-install.sh",
-            "/usr/local/bin/auto-cpufreq-install",
+        print("\n* Deploy auto-cpufreq lifecycle helpers")
+        publish_daemon_helpers((
             (
-                "ed088b544b5d4e36a4ae45105e9f16d32dd12ac0",
-                "1e962aadb949cda33f0f1a26f3af036821150b65",
-                "a19232084061bf01d04a560a739b401b612bd33d",
-                "119f51541c582fe9b9834de3d72b62c14ee209e4",
-                "b85811b6e97d3257bfa56e558a0df40bbcbc3a08",
-                "1bae02ede93501b283061fc977ae40886134dfb4",
+                SCRIPTS_DIR / "auto-cpufreq-install.sh",
+                "/usr/local/bin/auto-cpufreq-install",
+                (
+                    "ed088b544b5d4e36a4ae45105e9f16d32dd12ac0",
+                    "1e962aadb949cda33f0f1a26f3af036821150b65",
+                    "a19232084061bf01d04a560a739b401b612bd33d",
+                    "119f51541c582fe9b9834de3d72b62c14ee209e4",
+                    "b85811b6e97d3257bfa56e558a0df40bbcbc3a08",
+                    "1bae02ede93501b283061fc977ae40886134dfb4",
+                ),
             ),
-        )
-        print("\n* Deploy auto-cpufreq remove script")
-        publish_daemon_helper(
-            SCRIPTS_DIR / "auto-cpufreq-remove.sh",
-            "/usr/local/bin/auto-cpufreq-remove",
             (
-                "3004e13b49c0dc71f5c91a253280a0467134a2c0",
-                "66636a1ee289d24c51fb2b0298791e3e37862286",
-                "659e7ab2d3a4526a51b6d11af1d951644c62c3a0",
-                "293fa48be0fd6b52e82f6ff528bdaff1c5cb986e",
-                "73dfc1cf8d32ea170f2712fbf23fbc9a652b3812",
+                SCRIPTS_DIR / "auto-cpufreq-remove.sh",
+                "/usr/local/bin/auto-cpufreq-remove",
+                (
+                    "3004e13b49c0dc71f5c91a253280a0467134a2c0",
+                    "66636a1ee289d24c51fb2b0298791e3e37862286",
+                    "659e7ab2d3a4526a51b6d11af1d951644c62c3a0",
+                    "293fa48be0fd6b52e82f6ff528bdaff1c5cb986e",
+                    "73dfc1cf8d32ea170f2712fbf23fbc9a652b3812",
+                ),
             ),
-        )
+        ))
     except (OSError, RuntimeError) as error:
         print(f"Failed to publish daemon helpers: {error}")
         return 1

@@ -375,9 +375,7 @@ case "$(ps h -o comm 1)" in
     systemd_unit=/etc/systemd/system/auto-cpufreq.service
     if [ -e "$systemd_unit" ] || [ -L "$systemd_unit" ]; then
       managed_systemd_unit="$SHARE_DIR/scripts/auto-cpufreq.service"
-      if [ -L "$systemd_unit" ] \
-        || [ ! -f "$managed_systemd_unit" ] \
-        || ! cmp -s -- "$managed_systemd_unit" "$systemd_unit"; then
+      if ! service_file_is_managed "$systemd_unit" "$managed_systemd_unit"; then
         echo "Error: Refusing to remove a replaced or unmanaged systemd unit: $systemd_unit"
         exit 1
       fi
