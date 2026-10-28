@@ -183,6 +183,108 @@ class LegacySystemdUnitTest(unittest.TestCase):
         self.assertIn("systemctl restart auto-cpufreq", fragment)
         self.assertIn("systemctl start auto-cpufreq", fragment)
 
+    def run_systemd_case(self, active):
+        auto_fn = extract(
+            INSTALL, "function auto_cpufreq_install {",
+            "function publish_service_file {",
+        )
+        publish_fn = extract(
+            INSTALL, "function publish_service_file {",
+            "function replace_legacy_systemd_unit {",
+        )
+        migration = extract(
+            INSTALL, "function replace_legacy_systemd_unit {", "# Dinit reports",
+        )
+        predicate = extract(
+            INSTALL, "function service_file_is_managed {",
+            "function directory_contains_only {",
+        )
+        branch = INSTALL.rsplit("\n  systemd)\n", 1)[1].split(
+            "\n  s6-svscan)", 1
+        )[0]
+        branch = branch.replace(
+            "systemd_unit=/etc/systemd/system/auto-cpufreq.service",
+            'systemd_unit="$2"',
+        ).replace(
+            'managed_systemd_unit="$SHARE_DIR/scripts/auto-cpufreq.service"',
+            'managed_systemd_unit="$3"',
+        )
+        uid_stub = """stat() {
+          if [ "$1" = "-c" ] && [ "$2" = "%u" ]; then
+            echo 0
+            return 0
+          fi
+          command stat "$@"
+        }
+        """
+        systemctl_stub = """systemctl() {
+          printf '%s\\n' "$*" >> "$EVENT_LOG"
+          if [ "$1" = "is-active" ]; then
+            [ "$SERVICE_ACTIVE" = "true" ]
+            return $?
+          fi
+          return 0
+        }
+        """
+        script = (
+            'SHARE_DIR="$1"\nSERVICE_ACTIVE="$4"\nEVENT_LOG="$5"\n'
+            + uid_stub + auto_fn + publish_fn + migration + predicate
+            + systemctl_stub + "\ncase systemd in\n  systemd)\n"
+            + branch + "\nesac\n"
+        )
+        log_path = self.root / "systemctl-events"
+        result = bash(
+            script, self.share.parent, self.target, self.template,
+            "true" if active else "false", log_path,
+        )
+        events = log_path.read_text().splitlines() if log_path.exists() else []
+        return result, events
+
+    def test_full_install_migrates_active_and_inactive_units(self):
+        for active in (True, False):
+            with self.subTest(active=active):
+                self.target.write_text(LEGACY_SYSTEMD_31)
+                result, events = self.run_systemd_case(active)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(self.target.read_bytes(), self.template.read_bytes())
+                self.assertIn("daemon-reload", events)
+                self.assertIn("enable auto-cpufreq", events)
+                self.assertIn(
+                    ("restart" if active else "start") + " auto-cpufreq", events
+                )
+                self.assertNotIn(
+                    ("start" if active else "restart") + " auto-cpufreq", events
+                )
+
+    def test_full_install_does_not_restart_unchanged_unit(self):
+        self.target.write_bytes(self.template.read_bytes())
+        result, events = self.run_systemd_case(True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("start auto-cpufreq", events)
+        self.assertNotIn("restart auto-cpufreq", events)
+
+    def test_full_install_rejects_custom_unit_without_service_actions(self):
+        self.target.write_text(LEGACY_SYSTEMD_31 + "# custom\n")
+        result, events = self.run_systemd_case(True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(events)
+        self.assertIn("# custom", self.target.read_text())
+
+    def test_concurrent_foreign_unit_preserved_after_atomic_exchange(self):
+        # A writer replacing the unit immediately before renameat2 cannot
+        # have its bytes discarded, even when the managed path changes.
+        data = b"foreign administrator unit\n"
+        shell_code = (
+            'python3() { printf "foreign administrator unit\\n" > "$3"; '
+            'command python3 "$@"; }\n'
+            'replace_legacy_systemd_unit "$3" "$2"'
+        )
+        result = self.shell(shell_code)
+        self.assertNotEqual(result.returncode, 0)
+        backups = list(self.root.glob(".auto-cpufreq-unit.*"))
+        self.assertEqual(len(backups), 1)
+        self.assertEqual(backups[0].read_bytes(), data)
+
     def test_custom_unit_is_preserved(self):
         self.target.write_text(LEGACY_SYSTEMD_31 + "# administrator edit\n")
         result = self.shell('replace_legacy_systemd_unit "$3" "$2"')
