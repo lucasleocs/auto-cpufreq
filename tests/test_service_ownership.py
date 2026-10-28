@@ -47,6 +47,47 @@ def bash(script, *args):
     )
 
 
+class DinitEnabledDependencyTest(unittest.TestCase):
+    def test_documented_system_service_directories_are_considered(self):
+        for path in ("/etc/dinit.d/boot", "/run/dinit.d/boot",
+                     "/usr/local/lib/dinit.d/boot", "/lib/dinit.d/boot",
+                     "/usr/lib/dinit.d/boot"):
+            with self.subTest(path=path):
+                self.assertIn(path, INSTALL)
+
+    def test_existing_waits_for_link_must_match_managed_service(self):
+        original = extract(
+            INSTALL, "function dinit_enable_link_is_managed {",
+            "function dinit_enable {",
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            service = base / "auto-cpufreq"
+            service.write_text("type = process\ncommand = /bin/true\n")
+            boot = base / "boot"
+            boot.write_text("type = internal\nwaits-for.d: boot.d\n")
+            links = base / "boot.d"
+            links.mkdir()
+            link = links / "auto-cpufreq"
+            link.symlink_to(service)
+            source = original.replace(
+                "service_file=/etc/dinit.d/auto-cpufreq",
+                'service_file="' + str(service) + '"',
+            )
+            begin = source.index("for candidate in ")
+            end = source.index("; do", begin)
+            source = source[:begin] + (
+                'for candidate in "' + str(boot) + '"'
+            ) + source[end:]
+            command = source + "\ndinit_enable_link_is_managed\n"
+            self.assertEqual(bash(command).returncode, 0)
+            link.unlink()
+            foreign = base / "other-service"
+            foreign.write_text("type = internal\n")
+            link.symlink_to(foreign)
+            self.assertNotEqual(bash(command).returncode, 0)
+
+
 class HelpersTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()

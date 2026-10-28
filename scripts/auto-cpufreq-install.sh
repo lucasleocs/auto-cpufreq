@@ -51,7 +51,9 @@ function dinit_enable_link_is_managed {
 
     # auto-cpufreq does not specify @meta enable-via; Dinit defaults to boot.
     # Unrecognized boot definitions are not proof of a managed dependency.
-    for candidate in /etc/dinit.d/boot /usr/local/lib/dinit.d/boot /usr/lib/dinit.d/boot; do
+    for candidate in /etc/dinit.d/boot /run/dinit.d/boot \
+                     /usr/local/lib/dinit.d/boot /lib/dinit.d/boot \
+                     /usr/lib/dinit.d/boot; do
         if [ -f "$candidate" ] && [ ! -L "$candidate" ]; then
             boot_file="$candidate"
             break
