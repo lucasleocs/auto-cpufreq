@@ -388,6 +388,14 @@ def remove_complete_msg():
 def deploy_daemon():
     print("\n" + "-" * 21 + " Deploying auto-cpufreq as a daemon " + "-" * 22 + "\n")
 
+    # Pin the script to one installed generation before changing host state.
+    from auto_cpufreq.modules.daemon_script_paths import resolve_daemon_script
+    try:
+        install_script = resolve_daemon_script(SCRIPTS_DIR, "install")
+    except (OSError, RuntimeError) as error:
+        print(f"Cannot locate auto-cpufreq install script: {error}")
+        return 1
+
     cpufreqctl() # deploy cpufreqctl script func call
 
     bluetooth_disable() # turn off bluetooth on boot
@@ -410,7 +418,7 @@ def deploy_daemon():
 
     tlp_service_detect() # output warning if TLP service is detected
 
-    return call("/usr/local/bin/auto-cpufreq-install", shell=True)
+    return call(["bash", str(install_script)])
 
 def remove_daemon():
     # check if auto-cpufreq is installed
@@ -424,7 +432,17 @@ def remove_daemon():
     # system cleanup succeeds. Restoring competing services before that point
     # could leave them running alongside an auto-cpufreq daemon that failed to
     # stop, and would make a failed removal unsafe to retry.
-    remove_status = call("/usr/local/bin/auto-cpufreq-remove", shell=True)
+    # Prefer the script from the active generation. A missing source tree
+    # may be an incomplete legacy uninstall: keep the original removal helper
+    # as a recovery path so an existing daemon is not stranded.
+    from auto_cpufreq.modules.daemon_script_paths import resolve_daemon_script
+    try:
+        remove_script = resolve_daemon_script(SCRIPTS_DIR, "remove")
+    except (OSError, RuntimeError) as error:
+        print(f"Source remove script unavailable ({error}); using installed helper.")
+        remove_script = Path("/usr/local/bin/auto-cpufreq-remove")
+
+    remove_status = call(["bash", str(remove_script)])
     if remove_status != 0:
         return remove_status
 
