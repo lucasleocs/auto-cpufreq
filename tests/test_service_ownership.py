@@ -96,61 +96,62 @@ class HelpersTest(unittest.TestCase):
                 )
                 self.assertNotEqual(self.validate(target, kind).returncode, 0)
 
-    def test_verified_release_history_is_recognized(self):
-        # checkout@v4 with fetch-depth: 0 includes the official release tags.
-        # Exercise both the shell preflight and the Python publication guard.
+    def test_official_release_blobs_are_allowlisted(self):
+        # Release identities verified against official upstream tags. The
+        # regression suite must not rely on tags in the contributor's fork.
         history = (
-            ("v3.1.0", "install", "1e962aadb949cda33f0f1a26f3af036821150b65"),
-            ("v3.1.0", "remove", "66636a1ee289d24c51fb2b0298791e3e37862286"),
-            ("v2.3.0", "install", "a19232084061bf01d04a560a739b401b612bd33d"),
-            ("v2.3.0", "remove", "659e7ab2d3a4526a51b6d11af1d951644c62c3a0"),
-            ("v1.9.9", "install", "119f51541c582fe9b9834de3d72b62c14ee209e4"),
-            ("v1.9.9", "remove", "659e7ab2d3a4526a51b6d11af1d951644c62c3a0"),
-            ("v1.8.2", "install", "1bae02ede93501b283061fc977ae40886134dfb4"),
-            ("v1.8.2", "remove", "293fa48be0fd6b52e82f6ff528bdaff1c5cb986e"),
+            ("install", "ed088b544b5d4e36a4ae45105e9f16d32dd12ac0"),
+            ("install", "1e962aadb949cda33f0f1a26f3af036821150b65"),
+            ("install", "a19232084061bf01d04a560a739b401b612bd33d"),
+            ("install", "119f51541c582fe9b9834de3d72b62c14ee209e4"),
+            ("install", "b85811b6e97d3257bfa56e558a0df40bbcbc3a08"),
+            ("install", "1bae02ede93501b283061fc977ae40886134dfb4"),
+            ("remove", "3004e13b49c0dc71f5c91a253280a0467134a2c0"),
+            ("remove", "66636a1ee289d24c51fb2b0298791e3e37862286"),
+            ("remove", "659e7ab2d3a4526a51b6d11af1d951644c62c3a0"),
+            ("remove", "293fa48be0fd6b52e82f6ff528bdaff1c5cb986e"),
+            ("remove", "73dfc1cf8d32ea170f2712fbf23fbc9a652b3812"),
         )
         core = (ROOT / "auto_cpufreq/core.py").read_text()
-        for tag, kind, digest in history:
-            with self.subTest(tag=tag, kind=kind):
-                data = subprocess.run(
-                    ["git", "show", tag + ":scripts/auto-cpufreq-" + kind + ".sh"],
-                    cwd=ROOT, capture_output=True, check=True,
-                ).stdout
-                target = self.root / (kind + "-" + tag)
-                target.write_bytes(data)
-                self.assertEqual(self.validate(target, kind).returncode, 0)
+        for kind, digest in history:
+            with self.subTest(kind=kind, digest=digest):
                 self.assertIn(digest, core)
-                with mock.patch.object(
-                    publishing, "_root_owned_regular", return_value=True
-                ):
-                    self.assertTrue(publishing._owned_helper(
-                        target,
-                        self.templates / ("auto-cpufreq-" + kind + ".sh"),
-                        (digest,),
-                    ))
-                target.write_bytes(data + b"\necho changed\n")
-                with mock.patch.object(
-                    publishing, "_root_owned_regular", return_value=True
-                ):
-                    self.assertFalse(publishing._owned_helper(
-                        target,
-                        self.templates / ("auto-cpufreq-" + kind + ".sh"),
-                        (digest,),
-                    ))
+                self.assertIn(digest, INSTALL)
 
-    def test_verified_previous_generation_is_recognized(self):
-        # The Git blob identity is from upstream before the review branch.
-        for kind in ("install", "remove"):
-            with self.subTest(kind=kind):
-                original = subprocess.run(
-                    ["git", "show",
-                     "fe7b13baeca002b368b1261bcc681ca9995055cf:"
-                     "scripts/auto-cpufreq-" + kind + ".sh"],
-                    cwd=ROOT, capture_output=True, check=True,
-                ).stdout
-                target = self.root / (kind + "-previous")
-                target.write_bytes(original)
-                self.assertEqual(self.validate(target, kind).returncode, 0)
+    def test_git_blob_identity_matches_python_and_shell(self):
+        import hashlib
+        data = b"#!/bin/sh\necho official legacy script\n"
+        digest = hashlib.sha1(
+            ("blob %d\0" % len(data)).encode("ascii") + data
+        ).hexdigest()
+        target = self.root / "synthetic-legacy-helper"
+        target.write_bytes(data)
+        template = self.templates / "auto-cpufreq-install.sh"
+        with mock.patch.object(publishing, "_root_owned_regular", return_value=True):
+            self.assertTrue(publishing._owned_helper(target, template, (digest,)))
+            self.assertFalse(publishing._owned_helper(
+                target, template, ("0000000000000000000000000000000000000000",)
+            ))
+        # Inject just the synthetic digest into the allowlist to exercise
+        # the exact shell validation algorithm without a Git checkout.
+        managed = HELPER.replace('known_blobs="', 'known_blobs="' + digest + ' ')
+        stub = """stat() {
+            if [ "$1" = "-c" ] && [ "$2" = "%u" ]; then
+              echo 0
+              return 0
+            fi
+            command stat "$@"
+        }
+        """
+        def run_check():
+            return bash(
+                'SHARE_DIR="$1"\n' + stub + managed
+                + '\ndaemon_helper_is_managed "$2" install\n',
+                self.templates.parent, target,
+            )
+        self.assertEqual(run_check().returncode, 0)
+        target.write_bytes(data + b"\necho extra\n")
+        self.assertNotEqual(run_check().returncode, 0)
 
 
 
