@@ -456,10 +456,35 @@ class RunitSuperviseTest(unittest.TestCase):
     def remove(self):
         script = (
             'SHARE_DIR="$1"\n'
+            + """stat() {
+                if [ "$1" = "-c" ] && [ "$2" = "%u" ]; then
+                  echo 0
+                  return 0
+                fi
+                command stat "$@"
+              }
+              """
             + REMOVE_VALIDATORS + "\n" + REMOVE_RUNIT
             + '\nsv() { return 0; }\nrm_sv "$2" "$3"\n'
         )
         return bash(script, self.share.parent, self.etc, self.var)
+
+    def test_official_legacy_runit_run_script_is_recognized(self):
+        import hashlib
+        old_run = (
+            '#!/bin/sh\n'
+            'export PATH="$PATH:/usr/local/bin"\n'
+            'exec /usr/local/bin/auto-cpufreq --daemon\n'
+        )
+        data = old_run.encode()
+        digest = hashlib.sha1(
+            ("blob %d\0" % len(data)).encode() + data
+        ).hexdigest()
+        self.assertEqual(digest, "01dc25f65637472fca129b01a40146f0fa4ba8f5")
+        (self.service / "run").write_text(old_run)
+        result = self.remove()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(self.service.exists())
 
     def test_known_runit_files_can_be_removed(self):
         supervise = self.service / "supervise"

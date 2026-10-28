@@ -234,10 +234,18 @@ function runit_service_is_managed {
     directory_contains_only "$service_dir" run supervise || return 1
 
     if [ -e "$service_dir/run" ] || [ -L "$service_dir/run" ]; then
-      [ -f "$service_dir/run" ] \
-        && [ ! -L "$service_dir/run" ] \
-        && cmp -s -- "$managed_run" "$service_dir/run" \
-        || return 1
+      [ -f "$service_dir/run" ] && [ ! -L "$service_dir/run" ] || return 1
+      if ! cmp -s -- "$managed_run" "$service_dir/run"; then
+        # Official pre-v2 runit script uses /bin/sh rather than /bin/bash.
+        # The command and environment are otherwise unchanged.
+        [ "$(stat -c '%u' -- "$service_dir/run" 2>/dev/null)" = 0 ] || return 1
+        local digest
+        digest="$(
+          { printf 'blob %s\0' "$(wc -c < "$service_dir/run")"; cat -- "$service_dir/run"; } |
+            sha1sum
+        )" || return 1
+        [ "${digest%% *}" = "01dc25f65637472fca129b01a40146f0fa4ba8f5" ] || return 1
+      fi
     elif [ -e "$service_dir/supervise" ] || [ -L "$service_dir/supervise" ]; then
       return 1
     fi
