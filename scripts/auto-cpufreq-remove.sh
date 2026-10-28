@@ -94,6 +94,38 @@ function directory_contains_only {
     return 0
 }
 
+function runit_supervise_is_managed {
+    local supervise="$1" resolved entry name
+    if [ ! -e "$supervise" ] && [ ! -L "$supervise" ]; then
+      return 0
+    fi
+    if [ -L "$supervise" ]; then
+      # runit supports ramdisk supervision via a symlink. Trust only a
+      # root-owned, service-specific destination under /run; never touch it
+      # recursively when removing the service's symlink.
+      resolved="$(readlink -f -- "$supervise")" || return 1
+      case "$resolved" in
+        /run/*auto-cpufreq*|/var/run/*auto-cpufreq*) ;;
+        *) return 1 ;;
+      esac
+      [ -d "$resolved" ] || return 1
+      [ "$(stat -c '%u' -- "$resolved" 2>/dev/null)" = 0 ] || return 1
+    fi
+    [ -d "$supervise" ] || return 1
+    for entry in "$supervise"/* "$supervise"/.[!.]* "$supervise"/..?*; do
+      [ -e "$entry" ] || [ -L "$entry" ] || continue
+      [ ! -L "$entry" ] || return 1
+      name="${entry##*/}"
+      case "$name" in
+        control|ok) [ -p "$entry" ] || return 1 ;;
+        lock|pid|stat|status|down|pid.new|stat.new|status.new)
+          [ -f "$entry" ] || return 1 ;;
+        *) return 1 ;;
+      esac
+    done
+    return 0
+}
+
 function runit_service_is_managed {
     local managed_run="$SHARE_DIR/scripts/auto-cpufreq-runit"
     local service_dir="$1"
@@ -113,9 +145,7 @@ function runit_service_is_managed {
       return 1
     fi
 
-    [ ! -e "$service_dir/supervise" ] \
-      && [ ! -L "$service_dir/supervise" ] \
-      || [ -d "$service_dir/supervise" ]
+    runit_supervise_is_managed "$service_dir/supervise"
 }
 
 function s6_service_is_managed {
@@ -270,7 +300,25 @@ case "$(ps h -o comm 1)" in
         # Remove only entries owned by this service. If another entry appears
         # after validation, rmdir fails instead of recursively deleting it.
         # Retain the identifying run script if supervise cleanup fails.
-        rm -rf -- "$service_dir/supervise" || return $?
+        if ! runit_supervise_is_managed "$service_dir/supervise"; then
+          echo "Error: Preserving unexpected runit supervision state." >&2
+          return 1
+        fi
+        if [ -L "$service_dir/supervise" ]; then
+          # Never unlink files through a symlink to an external supervisor.
+          rm -f -- "$service_dir/supervise" || return $?
+        elif [ -d "$service_dir/supervise" ]; then
+          # Remove only runsv's known files; an unexpected entry makes
+          # rmdir fail instead of erasing administrator-owned content.
+          local item
+          for item in control lock ok pid stat status down pid.new stat.new status.new; do
+            if [ -e "$service_dir/supervise/$item" ] || [ -L "$service_dir/supervise/$item" ]; then
+              [ ! -L "$service_dir/supervise/$item" ] || return 1
+              rm -f -- "$service_dir/supervise/$item" || return $?
+            fi
+          done
+          rmdir -- "$service_dir/supervise" || return $?
+        fi
         rm -f -- "$service_dir/run" || return $?
         rmdir -- "$service_dir" || return $?
       fi

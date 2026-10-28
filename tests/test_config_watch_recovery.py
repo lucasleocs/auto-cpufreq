@@ -54,6 +54,34 @@ class ConfigWatchRecoveryTests(unittest.TestCase):
                 watcher.stop()
                 self.assertFalse(watcher.is_alive())
 
+    def test_recovered_directory_with_paused_writer_waits_for_close(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            parent = root / "watched"
+            target = parent / "auto-cpufreq.conf"
+            staging = root / "staging"
+            staging.mkdir()
+            prepared = staging / target.name
+            config, watcher = self.create_watcher(target)
+            try:
+                with prepared.open("w") as writer:
+                    writer.write("[profile]\nvalue = incomplete\n")
+                    writer.flush()
+                    staging.rename(parent)
+                    # Longer than recovery_delay, so metadata stability alone
+                    # must not publish the syntactically valid prefix.
+                    time.sleep(1.6)
+                    self.assertIsNone(self.value(config))
+                    writer.seek(0)
+                    writer.truncate()
+                    writer.write("[profile]\nvalue = finished\n")
+                self.assertTrue(self.until(
+                    lambda: self.value(config) == "finished"
+                ))
+            finally:
+                watcher.stop()
+                self.assertFalse(watcher.is_alive())
+
     def test_regular_file_waits_for_close_write(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

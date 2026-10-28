@@ -3,9 +3,11 @@
 File parsing/policy decisions are deliberately outside this module. A missing
 watch is recoverable rather than fatal to a running auto-cpufreq daemon.
 """
+import fcntl
 import logging
 import os
 import select
+import signal
 import stat
 import threading
 import time
@@ -145,6 +147,7 @@ class ConfigFileWatcher:
         pending_deletion = False
         recovery_probe = None
         recovery_delay = max(1.0, self._retry_interval)
+        recovery_deadline = None
         parent = os.path.dirname(self.path)
         basename = os.path.basename(self.path)
         retry_delay = self._retry_interval
@@ -182,6 +185,43 @@ class ConfigFileWatcher:
                 return None
             return (info.st_dev, info.st_ino, info.st_size,
                     info.st_mtime_ns, info.st_ctime_ns)
+
+        def notify_if_closed(signature):
+            """Resync only while the kernel can exclude an open writer.
+
+            A quiet timestamp cannot distinguish a completed config from
+            a writer paused with a syntactically valid prefix. Linux read
+            leases fail with EAGAIN when the inode is open for writing.
+            Unsupported filesystems/permissions fail closed.
+            """
+            try:
+                fd = os.open(self.path, os.O_RDONLY | os.O_CLOEXEC)
+            except OSError:
+                return False
+            leased = False
+            try:
+                info = os.fstat(fd)
+                if (info.st_dev, info.st_ino, info.st_size,
+                        info.st_mtime_ns, info.st_ctime_ns) != signature:
+                    return False
+                # SIGURG is ignored by default. Do not let the kernel send
+                # a default SIGIO while the brief read lease is held.
+                fcntl.fcntl(fd, fcntl.F_SETSIG, signal.SIGURG)
+                fcntl.fcntl(fd, fcntl.F_SETLEASE, fcntl.F_RDLCK)
+                leased = True
+                if config_signature() != signature:
+                    return False
+                notify()
+                return True
+            except (OSError, AttributeError):
+                return False
+            finally:
+                if leased:
+                    try:
+                        fcntl.fcntl(fd, fcntl.F_SETLEASE, fcntl.F_UNLCK)
+                    except OSError:
+                        _LOG.warning("Unable to release config reload read lease")
+                os.close(fd)
 
         def close_notifier():
             nonlocal notifier, wd, watched_dir, watched_identity
@@ -278,6 +318,10 @@ class ConfigFileWatcher:
                         recovery_probe = (
                             (signature, time.monotonic() + recovery_delay)
                             if signature is not None else None
+                        )
+                        recovery_deadline = (
+                            time.monotonic() + max(5.0, self._max_retry_interval)
+                            if recovery_probe is not None else None
                         )
                     if link_replaced and link_wd is not None:
                         # A watched symlink target was removed or moved. Its
@@ -416,14 +460,28 @@ class ConfigFileWatcher:
                     current_signature = config_signature()
                     if current_signature is None:
                         recovery_probe = None
+                    elif (recovery_deadline is not None
+                            and time.monotonic() >= recovery_deadline):
+                        # Do not poll an unleaseable filesystem forever.
+                        # A later CLOSE_WRITE or MOVED_TO still reloads it.
+                        _LOG.warning(
+                            "Config recovery could not verify completed writes: %s",
+                            self.path,
+                        )
+                        recovery_probe = None
                     elif current_signature != previous_signature:
                         recovery_probe = (
                             current_signature, time.monotonic() + recovery_delay
                         )
-                    else:
+                    elif notify_if_closed(current_signature):
                         recovery_probe = None
                         pending = None
-                        notify()
+                    else:
+                        # A write-open file must not become authoritative
+                        # because its size and timestamps stopped changing.
+                        recovery_probe = (
+                            current_signature, time.monotonic() + recovery_delay
+                        )
                 if not healthy:
                     retry_delay = min(retry_delay * 2, self._max_retry_interval)
         finally:

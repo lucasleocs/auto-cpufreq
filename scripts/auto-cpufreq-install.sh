@@ -124,6 +124,35 @@ function directory_contains_only {
     return 0
 }
 
+function runit_supervise_is_managed {
+    local supervise="$1" resolved entry name
+    if [ ! -e "$supervise" ] && [ ! -L "$supervise" ]; then
+      return 0
+    fi
+    if [ -L "$supervise" ]; then
+      resolved="$(readlink -f -- "$supervise")" || return 1
+      case "$resolved" in
+        /run/*auto-cpufreq*|/var/run/*auto-cpufreq*) ;;
+        *) return 1 ;;
+      esac
+      [ -d "$resolved" ] || return 1
+      [ "$(stat -c '%u' -- "$resolved" 2>/dev/null)" = 0 ] || return 1
+    fi
+    [ -d "$supervise" ] || return 1
+    for entry in "$supervise"/* "$supervise"/.[!.]* "$supervise"/..?*; do
+      [ -e "$entry" ] || [ -L "$entry" ] || continue
+      [ ! -L "$entry" ] || return 1
+      name="${entry##*/}"
+      case "$name" in
+        control|ok) [ -p "$entry" ] || return 1 ;;
+        lock|pid|stat|status|down|pid.new|stat.new|status.new)
+          [ -f "$entry" ] || return 1 ;;
+        *) return 1 ;;
+      esac
+    done
+    return 0
+}
+
 function runit_service_is_managed {
     local managed_run="$SHARE_DIR/scripts/auto-cpufreq-runit"
     local service_dir="$1"
@@ -141,9 +170,7 @@ function runit_service_is_managed {
       return 1
     fi
 
-    [ ! -e "$service_dir/supervise" ] \
-      && [ ! -L "$service_dir/supervise" ] \
-      || [ -d "$service_dir/supervise" ]
+    runit_supervise_is_managed "$service_dir/supervise"
 }
 
 function s6_service_is_managed {
@@ -182,7 +209,7 @@ function s6_bundle_entry_is_managed {
 # Recognize its stable source signature; do not overwrite an unrelated regular
 # file merely because its file type is safe. A missing file is a retry state.
 function daemon_helper_is_managed {
-    local path="$1" kind="$2" function_name
+    local path="$1" kind="$2" template legacy_blob digest
 
     if [ ! -e "$path" ] && [ ! -L "$path" ]; then
         return 0
@@ -191,14 +218,29 @@ function daemon_helper_is_managed {
     [ "$(stat -c '%u' -- "$path" 2>/dev/null)" = 0 ] || return 1
 
     case "$kind" in
-        install) function_name=install; kind="install" ;;
-        remove) function_name=remove; kind="removal" ;;
-        *) return 1 ;;
+      install)
+        template="$SHARE_DIR/scripts/auto-cpufreq-install.sh"
+        # Verified upstream helper in the merged PR #975/#985 generation.
+        legacy_blob=ed088b544b5d4e36a4ae45105e9f16d32dd12ac0
+        ;;
+      remove)
+        template="$SHARE_DIR/scripts/auto-cpufreq-remove.sh"
+        legacy_blob=3004e13b49c0dc71f5c91a253280a0467134a2c0
+        ;;
+      *) return 1 ;;
     esac
-    [ "$(sed -n '1p' "$path")" = '#!/usr/bin/env bash' ] \
-        && [ "$(sed -n '3p' "$path")" = "# auto-cpufreq daemon $kind script" ] \
-        && [ "$(sed -n '4p' "$path")" = '# reference: https://github.com/AdnanHodzic/auto-cpufreq' ] \
-        && grep -Fqx "function auto_cpufreq_$function_name {" "$path"
+
+    # Trust exact current templates and verified historical releases, not
+    # a few easy-to-forge header lines in an arbitrary root-owned script.
+    if [ -f "$template" ] && cmp -s -- "$template" "$path"; then
+        return 0
+    fi
+    command -v sha1sum >/dev/null 2>&1 || return 1
+    digest="$(
+      { printf 'blob %s\0' "$(wc -c < "$path")"; cat -- "$path"; } |
+        sha1sum
+    )" || return 1
+    [ "${digest%% *}" = "$legacy_blob" ]
 }
 
 function daemon_install_preflight {

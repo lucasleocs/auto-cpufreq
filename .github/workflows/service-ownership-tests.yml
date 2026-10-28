@@ -1,0 +1,28 @@
+name: Service Ownership Regression Tests
+
+on:
+  push:
+    paths:
+      - "scripts/auto-cpufreq-install.sh"
+      - "scripts/auto-cpufreq-remove.sh"
+      - "tests/test_service_ownership.py"
+      - ".github/workflows/service-ownership-tests.yml"
+  pull_request:
+    paths:
+      - "scripts/auto-cpufreq-install.sh"
+      - "scripts/auto-cpufreq-remove.sh"
+      - "tests/test_service_ownership.py"
+      - ".github/workflows/service-ownership-tests.yml"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.9"
+      - name: Test helper verification and Runit removal safeguards
+        run: python -m unittest discover -s tests -p test_service_ownership.py -v

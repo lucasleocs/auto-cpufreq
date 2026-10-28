@@ -1,0 +1,174 @@
+"""Focused regressions for daemon helper provenance and Runit ownership.
+
+No host services or system installation paths are modified.
+"""
+import os
+from pathlib import Path
+import shutil
+import subprocess
+import tempfile
+import unittest
+
+
+ROOT = Path(__file__).resolve().parents[1]
+INSTALL = (ROOT / "scripts/auto-cpufreq-install.sh").read_text()
+REMOVE = (ROOT / "scripts/auto-cpufreq-remove.sh").read_text()
+
+
+def extract(source, start, end):
+    return source[source.index(start):source.index(end, source.index(start))]
+
+
+HELPER = extract(
+    INSTALL, "function daemon_helper_is_managed {",
+    "function daemon_install_preflight {",
+)
+INSTALL_VALIDATORS = extract(
+    INSTALL, "function directory_contains_only {",
+    "function daemon_helper_is_managed {",
+)
+REMOVE_VALIDATORS = extract(
+    REMOVE, "function directory_contains_only {",
+    "function openrc_disable {",
+)
+REMOVE_RUNIT = extract(
+    REMOVE, "    rm_sv() {",
+    "    if [ -f /etc/os-release ]; then",
+)
+
+
+def bash(script, *args):
+    return subprocess.run(
+        ["bash", "-c", script, "--", *(str(a) for a in args)],
+        capture_output=True, text=True, timeout=10,
+    )
+
+
+class HelpersTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        self.templates = self.root / "share" / "scripts"
+        self.templates.mkdir(parents=True)
+        for name in ("install", "remove"):
+            shutil.copyfile(
+                ROOT / ("scripts/auto-cpufreq-" + name + ".sh"),
+                self.templates / ("auto-cpufreq-" + name + ".sh"),
+            )
+
+    def validate(self, target, kind):
+        # Fake only the UID check, because CI builds are unprivileged.
+        stub = """stat() {
+            if [ "$1" = "-c" ] && [ "$2" = "%u" ]; then
+              echo 0
+              return 0
+            fi
+            command stat "$@"
+        }
+        """
+        return bash(
+            'SHARE_DIR="$1"\n' + stub + HELPER +
+            '\ndaemon_helper_is_managed "$2" "$3"\n',
+            self.templates.parent, target, kind,
+        )
+
+    def test_exact_installed_templates_are_recognized(self):
+        for kind in ("install", "remove"):
+            with self.subTest(kind=kind):
+                self.assertEqual(
+                    self.validate(
+                        self.templates / ("auto-cpufreq-" + kind + ".sh"),
+                        kind,
+                    ).returncode, 0,
+                )
+
+    def test_modified_helper_with_original_header_is_rejected(self):
+        for kind in ("install", "remove"):
+            with self.subTest(kind=kind):
+                target = self.root / (kind + "-helper")
+                target.write_text(
+                    (self.templates / ("auto-cpufreq-" + kind + ".sh")).read_text()
+                    + "\necho 'malicious addition'\n"
+                )
+                self.assertNotEqual(self.validate(target, kind).returncode, 0)
+
+    def test_verified_previous_generation_is_recognized(self):
+        # The Git blob identity is from upstream before the review branch.
+        for kind in ("install", "remove"):
+            with self.subTest(kind=kind):
+                original = subprocess.run(
+                    ["git", "show",
+                     "fe7b13baeca002b368b1261bcc681ca9995055cf:"
+                     "scripts/auto-cpufreq-" + kind + ".sh"],
+                    cwd=ROOT, capture_output=True, check=True,
+                ).stdout
+                target = self.root / (kind + "-previous")
+                target.write_bytes(original)
+                self.assertEqual(self.validate(target, kind).returncode, 0)
+
+
+class RunitSuperviseTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        self.share = self.root / "share" / "scripts"
+        self.share.mkdir(parents=True)
+        shutil.copyfile(
+            ROOT / "scripts/auto-cpufreq-runit",
+            self.share / "auto-cpufreq-runit",
+        )
+        self.etc = self.root / "etc"
+        self.var = self.root / "var"
+        self.service = self.etc / "sv" / "auto-cpufreq"
+        self.link = self.var / "service" / "auto-cpufreq"
+        self.service.mkdir(parents=True)
+        self.link.parent.mkdir(parents=True)
+        shutil.copyfile(self.share / "auto-cpufreq-runit",
+                        self.service / "run")
+        self.link.symlink_to(self.service)
+
+    def remove(self):
+        script = (
+            'SHARE_DIR="$1"\n'
+            + REMOVE_VALIDATORS + "\n" + REMOVE_RUNIT
+            + '\nsv() { return 0; }\nrm_sv "$2" "$3"\n'
+        )
+        return bash(script, self.share.parent, self.etc, self.var)
+
+    def test_known_runit_files_can_be_removed(self):
+        supervise = self.service / "supervise"
+        supervise.mkdir()
+        (supervise / "status").write_bytes(b"status")
+        (supervise / "lock").write_bytes(b"")
+        os.mkfifo(supervise / "ok")
+        os.mkfifo(supervise / "control")
+        result = self.remove()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(self.service.exists())
+        self.assertFalse(self.link.is_symlink())
+
+    def test_unexpected_supervise_entries_are_preserved(self):
+        supervise = self.service / "supervise"
+        supervise.mkdir()
+        (supervise / "administrator-notes").write_text("preserve")
+        result = self.remove()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertTrue((supervise / "administrator-notes").exists())
+        self.assertTrue((self.service / "run").exists())
+        self.assertTrue(self.link.is_symlink())
+
+    def test_untrusted_supervise_symlink_is_not_followed(self):
+        other = self.root / "other-service"
+        other.mkdir()
+        (other / "status").write_text("preserve")
+        (self.service / "supervise").symlink_to(other)
+        result = self.remove()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertTrue((other / "status").exists())
+        self.assertTrue((self.service / "supervise").is_symlink())
+
+
+if __name__ == "__main__":
+    unittest.main()
