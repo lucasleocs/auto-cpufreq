@@ -143,6 +143,8 @@ class ConfigFileWatcher:
         link_replaced = False
         pending = None
         pending_deletion = False
+        recovery_probe = None
+        recovery_delay = max(1.0, self._retry_interval)
         parent = os.path.dirname(self.path)
         basename = os.path.basename(self.path)
         retry_delay = self._retry_interval
@@ -169,9 +171,23 @@ class ConfigFileWatcher:
             except Exception:
                 _LOG.exception("Configuration reload callback failed")
 
+        def config_signature():
+            # No kernel event survives a missing watch; this checks that an
+            # existing regular file has not changed over a recovery interval.
+            try:
+                info = os.stat(self.path)
+            except OSError:
+                return None
+            if not stat.S_ISREG(info.st_mode):
+                return None
+            return (info.st_dev, info.st_ino, info.st_size,
+                    info.st_mtime_ns, info.st_ctime_ns)
+
         def close_notifier():
             nonlocal notifier, wd, watched_dir, watched_identity
             nonlocal link_wd, link_target, link_identity, link_replaced
+            nonlocal recovery_probe
+            recovery_probe = None
             if notifier is not None:
                 try:
                     notifier.close()
@@ -251,7 +267,18 @@ class ConfigFileWatcher:
             while not stop_event.is_set():
                 try:
                     ensure_inotify()
+                    previous_watch = (wd, watched_dir, watched_identity)
                     changed_watch = reconcile()
+                    if (previous_watch[0] is None
+                            or watched_dir != previous_watch[1]
+                            or watched_identity != previous_watch[2]):
+                        # On directory recovery, close/write events may have
+                        # happened before the new observation was installed.
+                        signature = config_signature()
+                        recovery_probe = (
+                            (signature, time.monotonic() + recovery_delay)
+                            if signature is not None else None
+                        )
                     if link_replaced and link_wd is not None:
                         # A watched symlink target was removed or moved. Its
                         # replacement may arrive after the loss event: retain
@@ -259,6 +286,7 @@ class ConfigFileWatcher:
                         link_replaced = False
                         pending = time.monotonic()
                         pending_deletion = False
+                        recovery_probe = None
                     if changed_watch and not os.path.lexists(self.path):
                         # A recovered watch cannot establish that an existing
                         # file was closed. Wait for CLOSE_WRITE or an atomic
@@ -276,6 +304,8 @@ class ConfigFileWatcher:
                 wait = self._retry_interval if healthy else retry_delay
                 if pending is not None:
                     wait = min(wait, max(0.0, pending - time.monotonic()))
+                if recovery_probe is not None:
+                    wait = min(wait, max(0.0, recovery_probe[1] - time.monotonic()))
                 sources = [stop_read]
                 if healthy:
                     sources.append(notifier.fileno())
@@ -310,6 +340,13 @@ class ConfigFileWatcher:
                         continue
                     reset_stream = False
                     for event in events:
+                        # Any observed activity on the selected file supersedes
+                        # a speculative resync; CLOSE_WRITE/MOVED_TO remain the
+                        # authoritative completion signals.
+                        if (event.mask & flags.Q_OVERFLOW
+                                or (event.wd == wd and event.name == basename)
+                                or (link_wd is not None and event.wd == link_wd)):
+                            recovery_probe = None
                         if event.mask & flags.Q_OVERFLOW:
                             reset_stream = True
                             # Lost events mean a writer may still be open.
@@ -373,6 +410,19 @@ class ConfigFileWatcher:
                 if pending is not None and time.monotonic() >= pending:
                     pending = None
                     if not pending_deletion or not os.path.lexists(self.path):
+                        notify()
+                if recovery_probe is not None and time.monotonic() >= recovery_probe[1]:
+                    previous_signature = recovery_probe[0]
+                    current_signature = config_signature()
+                    if current_signature is None:
+                        recovery_probe = None
+                    elif current_signature != previous_signature:
+                        recovery_probe = (
+                            current_signature, time.monotonic() + recovery_delay
+                        )
+                    else:
+                        recovery_probe = None
+                        pending = None
                         notify()
                 if not healthy:
                     retry_delay = min(retry_delay * 2, self._max_retry_interval)
