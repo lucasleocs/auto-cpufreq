@@ -1,0 +1,22 @@
+name: PR 975 Lifecycle Failure Audit
+
+on:
+  push:
+    paths:
+      - "auto-cpufreq-installer"
+      - "tests/test_installer_failure_paths.py"
+      - ".github/workflows/pr975-failure-audit.yml"
+  workflow_dispatch:
+
+jobs:
+  isolated-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.9"
+      - name: Audit isolated installer rollback and removal
+        run: |
+          bash -n auto-cpufreq-installer
+          python -m unittest discover -s tests -p 'test_installer_failure_paths.py' -v
