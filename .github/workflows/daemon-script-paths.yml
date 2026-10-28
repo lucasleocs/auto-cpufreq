@@ -8,6 +8,10 @@ on:
       - "auto_cpufreq/bin/auto_cpufreq.py"
       - "auto-cpufreq-installer"
       - "tests/test_daemon_script_paths.py"
+      - "tests/test_daemon_lifecycle_integration.py"
+      - "tests/test_daemon_update_flow.py"
+      - "scripts/auto-cpufreq-install.sh"
+      - "scripts/auto-cpufreq-remove.sh"
       - ".github/workflows/daemon-script-paths.yml"
   pull_request:
     paths:
@@ -16,6 +20,10 @@ on:
       - "auto_cpufreq/bin/auto_cpufreq.py"
       - "auto-cpufreq-installer"
       - "tests/test_daemon_script_paths.py"
+      - "tests/test_daemon_lifecycle_integration.py"
+      - "tests/test_daemon_update_flow.py"
+      - "scripts/auto-cpufreq-install.sh"
+      - "scripts/auto-cpufreq-remove.sh"
       - ".github/workflows/daemon-script-paths.yml"
 
 jobs:
@@ -30,5 +38,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
-      - name: Test script generation pinning and legacy marker
-        run: python -m unittest discover -s tests -p 'test_daemon_script_paths.py' -v
+      - name: Test pinned lifecycle scripts, update recovery and legacy marker
+        run: |
+          python -m unittest discover -s tests -p 'test_daemon_script_paths.py' -v
+          python -m unittest discover -s tests -p 'test_daemon_lifecycle_integration.py' -v
+          python -m unittest discover -s tests -p 'test_daemon_update_flow.py' -v

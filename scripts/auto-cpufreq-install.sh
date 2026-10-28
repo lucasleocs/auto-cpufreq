@@ -5,8 +5,22 @@
 # Thanks to https://github.com/errornonamer for openrc fix
 
 MID="$((`tput cols` / 2))"
-SHARE_DIR=/opt/auto-cpufreq/current/share
-[ -d "$SHARE_DIR/scripts" ] || SHARE_DIR=/usr/local/share/auto-cpufreq
+# When run from a source generation, use its own templates rather than
+# looking through 'current' again (which can move during an update).
+# Legacy helpers copied into /usr/local/bin retain the historical fallback.
+SCRIPT_PATH="$(readlink -e -- "${BASH_SOURCE[0]}")" || {
+  echo "Error: Cannot resolve auto-cpufreq install script." >&2
+  exit 1
+}
+case "$SCRIPT_PATH" in
+  */scripts/auto-cpufreq-install.sh)
+    SHARE_DIR="${SCRIPT_PATH%/scripts/auto-cpufreq-install.sh}"
+    ;;
+  *)
+    SHARE_DIR=/opt/auto-cpufreq/current/share
+    [ -d "$SHARE_DIR/scripts" ] || SHARE_DIR=/usr/local/share/auto-cpufreq
+    ;;
+esac
 
 echo
 printf "%0.s─" $(seq $(( (MID-(${#1}/2)-2) / 2 )))
