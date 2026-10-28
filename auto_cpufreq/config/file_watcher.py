@@ -186,6 +186,19 @@ class ConfigFileWatcher:
             return (info.st_dev, info.st_ino, info.st_size,
                     info.st_mtime_ns, info.st_ctime_ns)
 
+        def schedule_probe():
+            """Check a newly linked target only after its writer is closed."""
+            nonlocal recovery_probe, recovery_deadline
+            signature = config_signature()
+            recovery_probe = (
+                (signature, time.monotonic() + recovery_delay)
+                if signature is not None else None
+            )
+            recovery_deadline = (
+                time.monotonic() + max(5.0, self._max_retry_interval)
+                if recovery_probe is not None else None
+            )
+
         def notify_if_closed(signature):
             """Resync only while the kernel can exclude an open writer.
 
@@ -314,23 +327,15 @@ class ConfigFileWatcher:
                             or watched_identity != previous_watch[2]):
                         # On directory recovery, close/write events may have
                         # happened before the new observation was installed.
-                        signature = config_signature()
-                        recovery_probe = (
-                            (signature, time.monotonic() + recovery_delay)
-                            if signature is not None else None
-                        )
-                        recovery_deadline = (
-                            time.monotonic() + max(5.0, self._max_retry_interval)
-                            if recovery_probe is not None else None
-                        )
+                        schedule_probe()
                     if link_replaced and link_wd is not None:
                         # A watched symlink target was removed or moved. Its
                         # replacement may arrive after the loss event: retain
                         # the notice until its new inode can be observed.
                         link_replaced = False
-                        pending = time.monotonic()
+                        pending = None
                         pending_deletion = False
-                        recovery_probe = None
+                        schedule_probe()
                     if changed_watch and not os.path.lexists(self.path):
                         # A recovered watch cannot establish that an existing
                         # file was closed. Wait for CLOSE_WRITE or an atomic
@@ -425,19 +430,23 @@ class ConfigFileWatcher:
                             break
                         if watched_dir == parent and event.name == basename:
                             if event.mask & self._CHANGED:
-                                pending = time.monotonic()
                                 pending_deletion = False
-                            elif event.mask & flags.CREATE:
                                 if os.path.islink(self.path):
-                                    # Link creation itself is atomic; regular
-                                    # file creation does not imply write close.
-                                    pending = time.monotonic()
-                                    pending_deletion = False
-                                else:
-                                    # Hard links are indistinguishable from
-                                    # newly opened files here: require a later
-                                    # CLOSE_WRITE or atomic MOVED_TO.
+                                    # MOVED_TO can install a symlink to a file
+                                    # whose writer has not finished yet.
                                     pending = None
+                                    schedule_probe()
+                                else:
+                                    pending = time.monotonic()
+                            elif event.mask & flags.CREATE:
+                                pending_deletion = False
+                                pending = None
+                                if os.path.islink(self.path):
+                                    # Symlink creation is atomic, but writes to
+                                    # the target can still be in progress.
+                                    schedule_probe()
+                                # Ordinary CREATE / hardlink: await close or
+                                # a later atomic replacement event.
                             elif event.mask & flags.MODIFY:
                                 # New writes supersede any pending reload.
                                 pending = None

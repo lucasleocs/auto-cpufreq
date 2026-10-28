@@ -397,19 +397,32 @@ def deploy_daemon():
     if preflight_status != 0:
         return preflight_status
 
+    # Stage and atomically validate helpers before changing host power state.
+    # The earlier shell preflight is advisory; it cannot close race windows.
+    from auto_cpufreq.modules.daemon_helper_publish import publish_daemon_helper
+
+    try:
+        print("\n* Deploy auto-cpufreq install script")
+        publish_daemon_helper(
+            SCRIPTS_DIR / "auto-cpufreq-install.sh",
+            "/usr/local/bin/auto-cpufreq-install",
+            "ed088b544b5d4e36a4ae45105e9f16d32dd12ac0",
+        )
+        print("\n* Deploy auto-cpufreq remove script")
+        publish_daemon_helper(
+            SCRIPTS_DIR / "auto-cpufreq-remove.sh",
+            "/usr/local/bin/auto-cpufreq-remove",
+            "3004e13b49c0dc71f5c91a253280a0467134a2c0",
+        )
+    except (OSError, RuntimeError) as error:
+        print(f"Failed to publish daemon helpers: {error}")
+        return 1
+
     cpufreqctl() # deploy cpufreqctl script func call
 
     bluetooth_disable() # turn off bluetooth on boot
 
     auto_cpufreq_stats_path.touch(exist_ok=True)
-
-    print("\n* Deploy auto-cpufreq install script")
-    copy(SCRIPTS_DIR / "auto-cpufreq-install.sh", "/usr/local/bin/auto-cpufreq-install")
-    call(["chmod", "a+x", "/usr/local/bin/auto-cpufreq-install"])
-
-    print("\n* Deploy auto-cpufreq remove script")
-    copy(SCRIPTS_DIR / "auto-cpufreq-remove.sh", "/usr/local/bin/auto-cpufreq-remove")
-    call(["chmod", "a+x", "/usr/local/bin/auto-cpufreq-remove"])
 
     # output warning if gnome power profile is running
     gnome_power_detect_install()

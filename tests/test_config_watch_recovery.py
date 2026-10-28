@@ -117,6 +117,42 @@ class ConfigWatchRecoveryTests(unittest.TestCase):
                 watcher.stop()
                 self.assertFalse(watcher.is_alive())
 
+    def test_symlink_create_waits_for_open_target_writer(self):
+        self._verify_unfinished_symlink(atomic_move=False)
+
+    def test_symlink_atomic_move_waits_for_open_target_writer(self):
+        self._verify_unfinished_symlink(atomic_move=True)
+
+    def _verify_unfinished_symlink(self, atomic_move):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            watched = root / "watched"
+            watched.mkdir()
+            external = root / "destination.conf"
+            target = watched / "auto-cpufreq.conf"
+            config, watcher = self.create_watcher(target)
+            try:
+                with external.open("w") as writer:
+                    writer.write("[profile]\nvalue = partial\n")
+                    writer.flush()
+                    link = watched / ("staged-link" if atomic_move else target.name)
+                    link.symlink_to(external)
+                    if atomic_move:
+                        link.replace(target)
+                    # The link's creation/rename does not imply its target
+                    # was closed. Wait beyond the speculative settle timer.
+                    time.sleep(1.6)
+                    self.assertIsNone(self.value(config))
+                    writer.seek(0)
+                    writer.truncate()
+                    writer.write("[profile]\nvalue = complete\n")
+                self.assertTrue(self.until(
+                    lambda: self.value(config) == "complete"
+                ))
+            finally:
+                watcher.stop()
+                self.assertFalse(watcher.is_alive())
+
     def test_regular_file_waits_for_close_write(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

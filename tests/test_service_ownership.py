@@ -8,6 +8,9 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+from unittest import mock
+
+from auto_cpufreq.modules import daemon_helper_publish as publishing
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -108,6 +111,70 @@ class HelpersTest(unittest.TestCase):
                 self.assertEqual(self.validate(target, kind).returncode, 0)
 
 
+
+class AtomicHelperPublishTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        self.template = self.root / "install-script"
+        self.target = self.root / "auto-cpufreq-install"
+        self.template.write_bytes(b"new trusted helper")
+
+    def publish(self):
+        with mock.patch.object(publishing, "_root_owned_regular", return_value=True):
+            publishing.publish_daemon_helper(
+                self.template, self.target, "deadbeef",
+            )
+
+    def test_first_install_refuses_to_clobber_racing_file(self):
+        original = publishing.os.link
+
+        def race(stage, path):
+            Path(path).write_bytes(b"foreign helper")
+            return original(stage, path)
+
+        with mock.patch.object(publishing.os, "link", side_effect=race):
+            with self.assertRaises(FileExistsError):
+                self.publish()
+        self.assertEqual(self.target.read_bytes(), b"foreign helper")
+
+    def test_install_into_empty_path(self):
+        self.publish()
+        self.assertEqual(self.target.read_bytes(), b"new trusted helper")
+        self.assertTrue(self.target.stat().st_mode & 0o111)
+
+    def test_replaces_identical_known_helper(self):
+        self.target.write_bytes(b"new trusted helper")
+        self.publish()
+        self.assertEqual(self.target.read_bytes(), b"new trusted helper")
+
+    def test_refuses_foreign_existing_helper(self):
+        self.target.write_bytes(b"foreign helper")
+        with self.assertRaises(PermissionError):
+            self.publish()
+        self.assertEqual(self.target.read_bytes(), b"foreign helper")
+
+    def test_rolls_back_foreign_file_swapped_after_preflight(self):
+        self.target.write_bytes(b"new trusted helper")
+        exchange = publishing._exchange
+        swapped = []
+
+        def race(stage, path):
+            if not swapped:
+                swapped.append(True)
+                Path(path).write_bytes(b"foreign concurrent edit")
+            return exchange(stage, path)
+
+        with mock.patch.object(publishing, "_exchange", side_effect=race):
+            with self.assertRaises(PermissionError):
+                self.publish()
+        self.assertEqual(self.target.read_bytes(), b"foreign concurrent edit")
+        self.assertEqual(
+            list(self.root.glob(".auto-cpufreq-install.*")), [],
+        )
+
+
 class RunitDestinationTest(unittest.TestCase):
     def test_only_service_specific_run_paths_are_accepted(self):
         allowed = (
@@ -115,11 +182,11 @@ class RunitDestinationTest(unittest.TestCase):
             "/run/runit/supervise/auto-cpufreq",
             "/run/sv.auto-cpufreq",
             "/run/auto-cpufreq-supervise",
-        )
-        refused = (
             "/run/sv.other-auto-cpufreq",
             "/run/auto-cpufreq-other/supervise",
-            "/run/other-auto-cpufreq-service",
+            "/run/custom-runit-supervisor",
+        )
+        refused = (
             "/tmp/auto-cpufreq",
             "/etc/auto-cpufreq",
         )

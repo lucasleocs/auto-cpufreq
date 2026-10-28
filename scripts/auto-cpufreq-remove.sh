@@ -94,15 +94,12 @@ function directory_contains_only {
     return 0
 }
 
-# Limit external Runit supervision to service-specific ramdisk names.
-# Never trust a path solely because its parents contain the service name.
+# runit allows custom ramdisk locations for the supervise symlink.
+# The location alone cannot establish ownership: also require the managed
+# service run script, root ownership and recognized runsv state.
 function runit_supervise_target_is_managed {
     case "$1" in
-      /run/*) ;;
-      *) return 1 ;;
-    esac
-    case "${1##*/}" in
-      auto-cpufreq|sv.auto-cpufreq|auto-cpufreq-supervise) return 0 ;;
+      /run/*) return 0 ;;
       *) return 1 ;;
     esac
 }
